@@ -1,0 +1,11 @@
+{
+  "category": "electronics",
+  "fields": [
+    "voltage",
+    "wattage",
+    "power_source_type",
+    "connectivity_technology",
+    "noise_cancellation",
+    "waterproof_rating"
+  ]
+}

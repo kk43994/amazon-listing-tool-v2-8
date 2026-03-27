@@ -1,0 +1,3312 @@
+// ===== Amazon Listing Tool V2.8 - Frontend JavaScript =====
+
+// ===== 1. i18n =====
+const i18n = {
+  en: {
+    workspace:'Workspace', settings:'Settings', total_products:'Total',
+    ai_processed:'AI Done', pending:'Pending', errors:'Errors',
+    upload_excel:'Import Excel', download_template:'Template', export:'Export',
+    batch_ai_copy:'Batch AI Copy', batch_ai_image:'Batch AI Image',
+    validate_all:'Validate', submit_amazon:'Submit',
+    rewrite_title:'Rewrite Title', rewrite_bullets:'Rewrite Bullets', rewrite_all:'Rewrite All',
+    regen_main:'Regen Main Image', regen_all:'Regen All Images',
+    preview_validate:'Preview Validate', submit_now:'Submit Now',
+    sku:'SKU', product_name:'Product Name', main_image:'Image', price:'Price',
+    stock:'Stock', ai_status:'AI Status', validation:'Valid', actions:'Actions',
+    brand:'Brand', product_type:'Type', variant_type:'Variant', color:'Color',
+    size:'Size', fulfillment:'Fulfill', submit_status:'Listing', column_settings:'Columns',
+    all:'All', ai_copy:'AI Copy', ai_image:'AI Image', validate:'Validate',
+    submit:'Submit', selected:'Selected', items:'items', clear_selection:'Cancel',
+    save:'Save', test_connection:'Test', add:'Add', api_config:'API Config',
+    amazon_accounts:'Amazon Accounts', general_settings:'General Settings',
+    ai_model:'Text Model', img_model:'Image Model', output_dir:'Output Dir',
+    default_lang:'Language', batch_limit:'Import Limit', ai_concurrency:'AI Concurrency',
+    image_concurrency:'Image Concurrency', media_store_enabled:'Media Store',
+    media_store_provider:'Provider', media_s3_bucket:'S3 Bucket', media_s3_region:'S3 Region',
+    media_s3_prefix:'Object Prefix', media_submit_scheme:'Submit Locator', media_preview_base:'Preview Base',
+    account_name:'Account', marketplace:'Market',
+    status:'Status', no_data_title:'No Products', no_data_desc:'Import Excel to start',
+    processing:'Processing...', cancel_process:'Cancel', search:'Search SKU/title...',
+    copywriting:'Copy', images:'Images', attributes:'Attrs', offer:'Offer',
+    compliance:'Compliance', save_changes:'Save', validate_this:'Validate',
+    validation_passed:'Valid', has_errors:'Errors',
+    original:'Original', ai_generated:'AI Generated', regenerate:'Regenerate',
+    adopt:'Adopt', adopt_all:'Adopt All', generate_all:'Generate All',
+    edit:'Edit', ai_process:'AI', more:'More', connected:'Connected',
+    loading_data:'Loading...', manufacturer:'Manufacturer', model_number:'Model',
+    product_category:'Category', material:'Material', department:'Department',
+    country_of_origin:'Country', condition:'Condition', upc_ean:'UPC/EAN',
+    pure_white:'White', scene:'Scene', gradient:'Gradient',
+    main_img:'Main Image', sub_images:'Sub Images',
+    generate:'Generate', price_usd:'Price (USD)', inventory:'Inventory',
+    needs_battery:'Needs Battery', includes_battery:'Includes Battery',
+    battery_type:'Battery Type', hazmat:'Hazmat/Safety',
+    delete_confirm:'Confirm delete?', no_accounts:'No accounts',
+    set_default:'Set Default', delete:'Delete', add_account:'Add Account',
+    cancel:'Cancel', close:'Close',
+    shipping:'Shipping', variation:'Variation',
+    item_weight:'Weight', weight_unit:'Weight Unit', item_length:'Length',
+    item_width:'Width', item_height:'Height', dimension_unit:'Dimension Unit',
+    pkg_weight:'Pkg Weight', pkg_weight_unit:'Pkg Weight Unit',
+    pkg_length:'Pkg Length', pkg_width:'Pkg Width', pkg_height:'Pkg Height',
+    parent_sku:'Parent SKU', parentage_level:'Parentage', variation_theme:'Variation Theme',
+    target_gender:'Target Gender', age_range:'Age Range', currency:'Currency',
+    img_label:'Image',
+    sale_price:'Sale Price', sale_from_date:'Sale Start', sale_end_date:'Sale End',
+    list_price:'List Price (MSRP)', max_order_quantity:'Max Order Qty',
+    handling_time:'Handling Time (days)', merchant_shipping_group:'Shipping Template',
+    product_tax_code:'Tax Code', item_type_keyword:'Item Type Keyword',
+    product_identity_mode:'Identity Mode', identity_real_gtin:'Real GTIN',
+    identity_exemption:'GTIN Exemption', identity_internal:'Internal Code',
+    external_product_id_type:'Product ID Type', number_of_items:'Items in Package',
+    cpsia_warning:'CPSIA Warning', legal_disclaimer:'Legal Disclaimer',
+    safety_warning:'Safety Warning', num_batteries:'Number of Batteries',
+    battery_composition:'Battery Composition', lithium_packaging:'Lithium Packaging',
+    lithium_energy:'Lithium Energy (Wh)', lithium_weight:'Lithium Weight (g)',
+    style_name:'Style', pattern_type:'Pattern', closure_type:'Closure',
+    unit_count:'Unit Count', unit_count_type:'Unit Type',
+    category_fields:'Category Fields', select_category:'Select Category',
+    field_selector:'Field Selector', search_fields:'Search fields...',
+    selected_fields:'Selected Fields', no_category_fields:'No category fields configured. Click the gear icon to set up.',
+    configure_fields:'Configure', apply_fields:'Apply', clear_fields:'Clear All',
+    diagnostics:'Diagnostics', diagnose_missing:'Diagnose Missing',
+    diagnose_this:'Diagnose This SKU', last_checked:'Last Checked',
+    missing_fields:'Missing Fields', media_check:'Media Check',
+    preview_issues:'Preview Issues', listing_issues:'Listing Issues',
+  },
+  zh: {
+    workspace:'工作台', settings:'设置', total_products:'总商品',
+    ai_processed:'AI已处理', pending:'待处理', errors:'校验错误',
+    upload_excel:'导入Excel', download_template:'下载模板', export:'导出',
+    batch_ai_copy:'批量AI文案', batch_ai_image:'批量AI生图',
+    validate_all:'校验', submit_amazon:'提交上架',
+    rewrite_title:'仿写标题', rewrite_bullets:'仿写卖点', rewrite_all:'全部仿写',
+    regen_main:'重生主图', regen_all:'重生全部图片',
+    preview_validate:'预览验证', submit_now:'正式提交',
+    sku:'SKU', product_name:'商品名称', main_image:'主图', price:'价格',
+    stock:'库存', ai_status:'AI状态', validation:'校验', actions:'操作',
+    brand:'品牌', product_type:'类型', variant_type:'变体', color:'颜色',
+    size:'尺寸', fulfillment:'配送', submit_status:'上架状态', column_settings:'列设置',
+    all:'全部', ai_copy:'AI文案', ai_image:'AI生图', validate:'校验',
+    submit:'上架', selected:'已选择', items:'项', clear_selection:'取消选择',
+    save:'保存', test_connection:'测试连接', add:'添加', api_config:'API配置',
+    amazon_accounts:'亚马逊账号', general_settings:'通用设置',
+    ai_model:'文本模型', img_model:'图片模型', output_dir:'输出目录',
+    default_lang:'默认语言', batch_limit:'单次导入上限', ai_concurrency:'AI并发数',
+    image_concurrency:'AI生图并发', media_store_enabled:'媒体存储', media_store_provider:'存储类型',
+    media_s3_bucket:'S3 Bucket', media_s3_region:'S3 区域', media_s3_prefix:'对象前缀',
+    media_submit_scheme:'提交地址格式', media_preview_base:'预览基地址', account_name:'账号名称', marketplace:'站点',
+    status:'状态', no_data_title:'暂无商品数据', no_data_desc:'导入Excel文件或下载模板开始铺货',
+    processing:'处理中...', cancel_process:'取消处理', search:'搜索SKU/商品名...',
+    copywriting:'文案', images:'图片', attributes:'属性', offer:'报价',
+    compliance:'合规', save_changes:'保存修改', validate_this:'校验此商品',
+    validation_passed:'校验通过', has_errors:'有错误',
+    original:'原始', ai_generated:'AI仿写', regenerate:'重新生成',
+    adopt:'采用', adopt_all:'全部采用', generate_all:'全部生成',
+    edit:'编辑', ai_process:'AI处理', more:'更多', connected:'已连接',
+    loading_data:'加载数据中...', manufacturer:'制造商', model_number:'型号',
+    product_category:'产品类型', material:'材质', department:'部门',
+    country_of_origin:'原产国', condition:'商品状况', upc_ean:'UPC/EAN',
+    pure_white:'纯白', scene:'场景', gradient:'渐变',
+    main_img:'主图', sub_images:'副图',
+    generate:'生成', price_usd:'价格 (USD)', inventory:'库存',
+    needs_battery:'需要电池', includes_battery:'含电池',
+    battery_type:'电池类型', hazmat:'危化品/安全声明',
+    delete_confirm:'确认删除此账号？', no_accounts:'暂无账号',
+    set_default:'设为默认', delete:'删除', add_account:'添加亚马逊账号',
+    cancel:'取消', close:'关闭',
+    shipping:'物流', variation:'变体',
+    item_weight:'商品重量', weight_unit:'重量单位', item_length:'长度',
+    item_width:'宽度', item_height:'高度', dimension_unit:'尺寸单位',
+    pkg_weight:'包装重量', pkg_weight_unit:'包装重量单位',
+    pkg_length:'包装长度', pkg_width:'包装宽度', pkg_height:'包装高度',
+    parent_sku:'父SKU', parentage_level:'父子关系', variation_theme:'变体主题',
+    target_gender:'目标性别', age_range:'年龄范围', currency:'币种',
+    img_label:'图',
+    sale_price:'促销价', sale_from_date:'促销开始', sale_end_date:'促销结束',
+    list_price:'建议零售价 (MSRP)', max_order_quantity:'最大订购量',
+    handling_time:'发货处理时间 (天)', merchant_shipping_group:'配送模板',
+    product_tax_code:'税码', item_type_keyword:'商品类型关键词',
+    product_identity_mode:'商品标识模式', identity_real_gtin:'真实GTIN',
+    identity_exemption:'GTIN免码', identity_internal:'内部码',
+    external_product_id_type:'产品ID类型', number_of_items:'包装件数',
+    cpsia_warning:'CPSIA安全声明', legal_disclaimer:'法律免责声明',
+    safety_warning:'安全警告', num_batteries:'电池数量',
+    battery_composition:'电池成分', lithium_packaging:'锂电池包装',
+    lithium_energy:'锂电池能量 (Wh)', lithium_weight:'锂电池重量 (g)',
+    style_name:'风格', pattern_type:'图案', closure_type:'闭合类型',
+    unit_count:'单位数量', unit_count_type:'单位类型',
+    category_fields:'品类字段', select_category:'选择品类',
+    field_selector:'字段选择器', search_fields:'搜索字段...',
+    selected_fields:'已选字段', no_category_fields:'未配置品类字段，点击齿轮图标进行设置。',
+    configure_fields:'配置', apply_fields:'应用', clear_fields:'清空',
+    diagnostics:'诊断', diagnose_missing:'缺项诊断',
+    diagnose_this:'诊断此商品', last_checked:'最近诊断',
+    missing_fields:'缺失字段', media_check:'媒体检查',
+    preview_issues:'预览问题', listing_issues:'后台问题',
+  }
+};
+
+// ===== 2. Global State =====
+let lang = 'zh';
+let products = [];
+let filteredProducts = [];
+let currentFile = '';
+let currentFileMeta = { type: '', warning: '', xlsPreserveSupported: false };
+let selectedSkus = new Set();
+let currentPage = 1;
+let pageSize = 50;
+let currentFilter = 'all';
+let searchQuery = '';
+let expandedParents = new Set();
+let drawerProduct = null;
+let drawerTab = 'copy';
+let processing = false;
+let cancelRequested = false;
+let visibleCols = {};
+let categoryFieldsConfig = { category: '', fields: [] };
+let fieldRegistry = null;
+let amazonAccounts = [];
+let selectedAccountId = '';
+let pendingSubmitPayload = null;
+let taskCenterData = { current: null, history: [] };
+let templateCandidates = [];
+let selectedTemplateType = '';
+let activeTemplateTaskId = '';
+
+// ===== 3. i18n Functions =====
+function t(key) { return (i18n[lang] && i18n[lang][key]) || key; }
+function setLanguage(nextLang) {
+  lang = nextLang === 'en' ? 'en' : 'zh';
+  document.getElementById('langText').textContent = lang === 'zh' ? '中文' : 'EN';
+  applyLang();
+}
+function applyLang() {
+  document.querySelectorAll('[data-t]').forEach(el => {
+    const k = el.getAttribute('data-t');
+    if (i18n[lang][k]) el.textContent = i18n[lang][k];
+  });
+  document.querySelectorAll('[data-t-placeholder]').forEach(el => {
+    const k = el.getAttribute('data-t-placeholder');
+    if (i18n[lang][k]) el.placeholder = i18n[lang][k];
+  });
+}
+function toggleLang() {
+  setLanguage(lang === 'zh' ? 'en' : 'zh');
+}
+
+// ===== 4. Navigation =====
+function showPage(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.s-item').forEach(s => s.classList.remove('active'));
+  const pageEl = document.getElementById('page-' + page);
+  const navEl = document.querySelector(`[data-page="${page}"]`);
+  if (pageEl) pageEl.classList.add('active');
+  if (navEl) navEl.classList.add('active');
+  document.getElementById('pageTitle').textContent = t(page);
+  if (page === 'settings') { loadConfig(); loadAccounts(); }
+  closeMobileSidebar();
+}
+function isMobileViewport() {
+  return window.innerWidth <= 768;
+}
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  if (isMobileViewport()) {
+    const willOpen = !sidebar.classList.contains('mobile-open');
+    sidebar.classList.remove('collapsed');
+    sidebar.classList.toggle('mobile-open', willOpen);
+    if (backdrop) backdrop.classList.toggle('show', willOpen);
+    return;
+  }
+  sidebar.classList.toggle('collapsed');
+}
+function closeMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('sidebarBackdrop');
+  if (sidebar) sidebar.classList.remove('mobile-open');
+  if (backdrop) backdrop.classList.remove('show');
+}
+
+// ===== 5. Utility =====
+function escHtml(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function hasHttpUrl(value) {
+  return /^https?:\/\//i.test(String(value || '').trim());
+}
+
+function getProductImageCandidates(product) {
+  const urls = [];
+  const pushUnique = (value) => {
+    const text = String(value || '').trim();
+    if (hasHttpUrl(text) && !urls.includes(text)) urls.push(text);
+  };
+  pushUnique(product.main_image_url);
+  for (let i = 2; i <= 9; i++) {
+    pushUnique(product['image_' + i]);
+    pushUnique(product['other_image_url_' + (i - 1)]);
+  }
+  return urls;
+}
+
+function isRowDisabled(product) {
+  const candidates = [
+    product.enabled,
+    product.is_active,
+    product.active,
+    product.status,
+    product.row_status,
+    product.listing_status,
+    product.action,
+    product.update_delete,
+    product._raw && product._raw.enabled,
+    product._raw && product._raw.status,
+    product._raw && product._raw.action,
+  ];
+  return candidates.some(value => {
+    const text = String(value == null ? '' : value).trim().toLowerCase();
+    return ['false', '0', 'disabled', 'disable', 'inactive', 'off', '停用', '禁用', '暂停', '删除'].includes(text);
+  });
+}
+
+function getSelectedActionableSkus() {
+  const actionableSet = new Set(
+    products
+      .filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p))
+      .map(p => p.sku)
+      .filter(Boolean)
+  );
+  return Array.from(selectedSkus).filter(sku => actionableSet.has(sku));
+}
+
+function getFilteredActionableSkus() {
+  return products
+    .filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p))
+    .filter(p => matchFilter(p) && matchSearch(p))
+    .map(p => p.sku)
+    .filter(Boolean);
+}
+
+function syncSelectionState() {
+  const validSkus = new Set(
+    products
+      .filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p))
+      .map(p => p.sku)
+      .filter(Boolean)
+  );
+  selectedSkus.forEach(sku => {
+    if (!validSkus.has(sku)) selectedSkus.delete(sku);
+  });
+  updateBatchBar();
+  const filteredSkus = getFilteredActionableSkus();
+  const selectAllCb = document.getElementById('selectAllCb');
+  if (selectAllCb) {
+    selectAllCb.checked = filteredSkus.length > 0 && filteredSkus.every(sku => selectedSkus.has(sku));
+    selectAllCb.indeterminate = filteredSkus.some(sku => selectedSkus.has(sku)) && !selectAllCb.checked;
+  }
+}
+
+function renderFileHealth() {
+  const banner = document.getElementById('fileHealthBanner');
+  const text = document.getElementById('fileHealthText');
+  const fileInfo = document.getElementById('fileInfo');
+  if (!banner || !text || !fileInfo) return;
+
+  const warningText = currentFileMeta.warning || (currentFileMeta.type === 'xls'
+    ? '当前文件是 `.xls`，建议尽快另存为 `.xlsx`；复杂样式保留依赖本机 Excel/WPS。'
+    : '');
+
+  if (currentFileMeta.type === 'xls' && warningText) {
+    banner.classList.add('show');
+    text.textContent = warningText;
+    fileInfo.textContent = `${fileInfo.textContent || ''} · XLS兼容模式`.trim();
+  } else {
+    banner.classList.remove('show');
+    text.textContent = '';
+  }
+}
+
+function collectActionPlan(action, scope) {
+  const selectedOnly = selectedSkus.size > 0;
+  const requestedProducts = selectedOnly
+    ? products.filter(p => selectedSkus.has(p.sku))
+    : products.filter(p => p.parentage_level !== 'parent');
+
+  const actionableSkus = [];
+  const skipped = [];
+  const attention = [];
+  const seen = new Set();
+
+  const addSkipped = (product, reason) => {
+    skipped.push({ sku: product.sku || '-', reason });
+  };
+
+  requestedProducts.forEach(product => {
+    const sku = product.sku || '';
+    if (seen.has(sku)) return;
+    seen.add(sku);
+
+    if (product.parentage_level === 'parent') {
+      addSkipped(product, '父体行仅用于分组展示，请处理子 SKU');
+      return;
+    }
+    if (!sku) {
+      addSkipped(product, '缺少 SKU');
+      return;
+    }
+    if (isRowDisabled(product)) {
+      addSkipped(product, '该行处于停用/禁用状态');
+      return;
+    }
+
+    const title = product.title || product.item_name || '';
+    const price = product.price || product.standard_price || '';
+    const mainImage = product.main_image_url || '';
+    const allImages = getProductImageCandidates(product);
+
+    if (action === 'rewrite') {
+      if (!title) {
+        addSkipped(product, '缺少标题，无法稳定生成文案');
+        return;
+      }
+    }
+
+    if (action === 'image') {
+      if (scope === 'all') {
+        if (allImages.length === 0) {
+          addSkipped(product, '缺少可用图片 URL');
+          return;
+        }
+      } else if (!hasHttpUrl(mainImage)) {
+        addSkipped(product, '缺少主图 URL');
+        return;
+      }
+    }
+
+    if (action === 'submit' || action === 'preview') {
+      const missing = [];
+      if (!title) missing.push('标题');
+      if (!price) missing.push('价格');
+      if (!hasHttpUrl(mainImage)) missing.push('主图');
+      if (missing.length > 0) {
+        addSkipped(product, `缺少${missing.join('、')}`);
+        return;
+      }
+    }
+
+    if (action === 'validate') {
+      const warnings = [];
+      if (!title) warnings.push('缺少标题');
+      if (!price) warnings.push('缺少价格');
+      if (!hasHttpUrl(mainImage)) warnings.push('缺少主图');
+      if (warnings.length > 0) {
+        attention.push({ sku, reason: warnings.join('、') });
+      }
+    }
+
+    actionableSkus.push(sku);
+  });
+
+  const reasonCounts = {};
+  skipped.forEach(item => { reasonCounts[item.reason] = (reasonCounts[item.reason] || 0) + 1; });
+  const attentionCounts = {};
+  attention.forEach(item => { attentionCounts[item.reason] = (attentionCounts[item.reason] || 0) + 1; });
+
+  return {
+    action,
+    scope,
+    selectedOnly,
+    requestedCount: requestedProducts.length,
+    actionableSkus,
+    skipped,
+    attention,
+    reasonCounts,
+    attentionCounts,
+  };
+}
+
+function getPlanTitle(action, scope) {
+  if (action === 'rewrite') {
+    if (scope === 'title') return '批量AI文案（标题）';
+    if (scope === 'bullets') return '批量AI文案（卖点）';
+    return '批量AI文案';
+  }
+  if (action === 'image') return scope === 'all' ? '批量AI生图（全部图片）' : '批量AI生图（主图）';
+  if (action === 'validate') return '批量校验';
+  if (action === 'submit') return '正式提交';
+  if (action === 'preview') return '预览验证';
+  if (action === 'export') return '导出';
+  return '批量处理';
+}
+
+function renderReasonSummary(mapObj, toneClass) {
+  const entries = Object.entries(mapObj || {});
+  if (entries.length === 0) return '<div class="preflight-empty">无</div>';
+  return `<div class="preflight-tags">${entries.map(([reason, count]) =>
+    `<span class="preflight-tag ${toneClass}">${escHtml(reason)} × ${count}</span>`
+  ).join('')}</div>`;
+}
+
+function showActionPreflight(plan, onConfirm) {
+  const title = getPlanTitle(plan.action, plan.scope);
+  const skippedHtml = renderReasonSummary(plan.reasonCounts, 'warn');
+  const attentionHtml = renderReasonSummary(plan.attentionCounts, 'info');
+  showModal(title + ' - 执行摘要', `
+    <div class="preflight-panel">
+      <div class="preflight-stat-grid">
+        <div class="preflight-stat"><span>候选商品</span><strong>${plan.requestedCount}</strong></div>
+        <div class="preflight-stat"><span>实际处理</span><strong>${plan.actionableSkus.length}</strong></div>
+        <div class="preflight-stat"><span>自动跳过</span><strong>${plan.skipped.length}</strong></div>
+        <div class="preflight-stat"><span>风险提醒</span><strong>${plan.attention.length}</strong></div>
+      </div>
+      <div class="preflight-block">
+        <div class="preflight-title">自动跳过原因</div>
+        ${skippedHtml}
+      </div>
+      <div class="preflight-block">
+        <div class="preflight-title">执行前提醒</div>
+        ${attentionHtml}
+      </div>
+      ${plan.skipped.length > 0 ? `<div class="preflight-note">系统将只处理可执行 SKU，避免把父体行、无图行或明显不完整的商品带入流程。</div>` : ''}
+    </div>
+  `);
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary btn-sm" id="preflightConfirmBtn">继续处理 ${plan.actionableSkus.length} 个 SKU</button>`;
+  document.getElementById('preflightConfirmBtn').onclick = () => {
+    closeModal();
+    onConfirm();
+  };
+}
+
+function normalizeProductForValidation(p) {
+  return {
+    sku: p.sku || '',
+    title: p.title || p.item_name || '',
+    brand: p.brand || p.brand_name || '',
+    description: p.description || p.product_description || '',
+    keywords: p.keywords || p.generic_keywords || '',
+    price: p.price || p.standard_price || '',
+    currency: p.currency || 'USD',
+    quantity: p.quantity || '',
+    condition_type: p.condition_type || '',
+    fulfillment_channel: p.fulfillment_channel || '',
+    product_type: p.product_type || '',
+    upc: p.upc || p.ean || p.product_id || '',
+    external_product_id_type: p.external_product_id_type || '',
+    product_identity_mode: p.product_identity_mode || '',
+    item_type_keyword: p.item_type_keyword || '',
+    main_image_url: p.main_image_url || '',
+    bullet_point_1: p.bullet_point_1 || '',
+    bullet_point_2: p.bullet_point_2 || '',
+    bullet_point_3: p.bullet_point_3 || '',
+    bullet_point_4: p.bullet_point_4 || '',
+    bullet_point_5: p.bullet_point_5 || '',
+    color: p.color || '',
+    size: p.size || '',
+    material: p.material || '',
+    manufacturer: p.manufacturer || '',
+    model_number: p.model_number || '',
+    country_of_origin: p.country_of_origin || '',
+    list_price: p.list_price || '',
+    unit_count: p.unit_count || '',
+    number_of_items: p.number_of_items || '',
+    included_components: p.included_components || '',
+    care_instructions: p.care_instructions || '',
+    special_feature: p.special_feature || '',
+    item_weight: p.item_weight || '',
+    item_weight_unit: p.item_weight_unit || '',
+    item_length: p.item_length || '',
+    item_width: p.item_width || '',
+    item_height: p.item_height || '',
+    dimension_unit: p.dimension_unit || '',
+    package_weight: p.package_weight || '',
+    package_weight_unit: p.package_weight_unit || '',
+    package_length: p.package_length || '',
+    package_width: p.package_width || '',
+    package_height: p.package_height || '',
+    batteries_required: p.batteries_required || '',
+    batteries_included: p.batteries_included || '',
+    battery_type: p.battery_type || '',
+    number_of_batteries: p.number_of_batteries || '',
+    battery_cell_composition: p.battery_cell_composition || '',
+    lithium_battery_packaging: p.lithium_battery_packaging || '',
+    lithium_battery_energy_content: p.lithium_battery_energy_content || '',
+    lithium_battery_weight: p.lithium_battery_weight || '',
+    hazmat_declaration: p.hazmat_declaration || '',
+    parent_sku: p.parent_sku || '',
+    parentage_level: p.parentage_level || '',
+    variation_theme: p.variation_theme || '',
+  };
+}
+
+function applyValidationResult(product, result) {
+  const issues = result.issues || [];
+  const errors = issues.filter(issue => issue.level === 'error').map(issue => issue.message);
+  const warnings = issues.filter(issue => issue.level === 'warning').map(issue => issue.message);
+  product._validPass = errors.length === 0;
+  product._validErrors = errors;
+  product._validWarnings = warnings;
+  product._validationIssues = issues;
+  product._schemaRequiredMissing = result.schema_required_missing || [];
+}
+
+function applyListingCheckResult(product, result) {
+  product._listingCheck = result || null;
+  product.listing_check_status = result?.status || '';
+  product.listing_check_summary = result?.summary_text || '';
+  product.listing_check_time = result?.checked_at || '';
+  product.listing_check_account = result?.account_name || product.listing_check_account || '';
+  product.listing_check_missing_fields = (result?.missing_fields || [])
+    .map(item => `${item.title || item.name} (${item.name})`)
+    .join('; ');
+  const issueMessages = [];
+  (result?.preview?.issues || []).forEach(issue => { if (issue.message) issueMessages.push(issue.message); });
+  (result?.listing?.issues || []).forEach(issue => { if (issue.message) issueMessages.push(issue.message); });
+  (result?.media?.checks || []).forEach(item => {
+    if (!item.ok && item.message) issueMessages.push(`${item.field}: ${item.message}`);
+  });
+  product.listing_check_issues = issueMessages.join(' | ');
+}
+
+function showValidationIssues(sku) {
+  const product = products.find(p => p.sku === sku);
+  if (!product) return;
+
+  const errors = product._validErrors || [];
+  const warnings = product._validWarnings || [];
+  const schemaMissing = product._schemaRequiredMissing || [];
+  const lines = [];
+
+  if (errors.length) {
+    lines.push(`<div style="margin-bottom:12px"><strong style="color:#cf1322">错误</strong><ul style="margin:8px 0 0 18px">${errors.map(msg => `<li>${escHtml(msg)}</li>`).join('')}</ul></div>`);
+  }
+  if (warnings.length) {
+    lines.push(`<div style="margin-bottom:12px"><strong style="color:#d48806">警告</strong><ul style="margin:8px 0 0 18px">${warnings.map(msg => `<li>${escHtml(msg)}</li>`).join('')}</ul></div>`);
+  }
+  if (schemaMissing.length) {
+    lines.push(`<div><strong>类目必填缺失</strong><ul style="margin:8px 0 0 18px">${schemaMissing.map(item => `<li>${escHtml(item.title || item.name || '')} (${escHtml(item.name || '')})</li>`).join('')}</ul></div>`);
+  }
+
+  if (lines.length === 0) {
+    lines.push('<p>当前无校验问题。</p>');
+  }
+
+  showModal(`校验结果 - ${sku}`, lines.join(''));
+}
+
+async function fetchAccounts(force = false) {
+  if (!force && amazonAccounts.length > 0) return amazonAccounts;
+  const response = await fetch('/api/accounts');
+  const data = await response.json();
+  if (data.error) throw new Error(data.error);
+  amazonAccounts = (data.accounts || []).filter(account => account.enabled !== false);
+  if (amazonAccounts.length === 0) {
+    selectedAccountId = '';
+    return amazonAccounts;
+  }
+  if (!selectedAccountId || !amazonAccounts.some(account => account.seller_id === selectedAccountId)) {
+    const defaultAccount = amazonAccounts.find(account => account.is_default) || amazonAccounts[0];
+    selectedAccountId = defaultAccount ? defaultAccount.seller_id : '';
+  }
+  return amazonAccounts;
+}
+
+function getActionableSkus() {
+  const actionableProducts = products.filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p));
+  if (selectedSkus.size === 0) {
+    return actionableProducts.map(p => p.sku).filter(Boolean);
+  }
+  const actionableSkuSet = new Set(actionableProducts.map(p => p.sku).filter(Boolean));
+  return Array.from(selectedSkus).filter(sku => actionableSkuSet.has(sku));
+}
+
+function renderTemplateCandidates() {
+  const container = document.getElementById('templateCandidates');
+  if (!container) return;
+  if (!templateCandidates || templateCandidates.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = templateCandidates.map(item => {
+    const productType = item.product_type || '';
+    const active = productType === selectedTemplateType ? 'active' : '';
+    const score = item.score ? ` · ${(Number(item.score) * 100).toFixed(0)}%` : '';
+    return `<button class="template-candidate-chip ${active}" onclick="chooseTemplateCandidate('${escHtml(productType)}')">
+      <strong>${escHtml(item.display_name || productType)}</strong>
+      <span>${escHtml(productType)}${escHtml(score)}</span>
+    </button>`;
+  }).join('');
+}
+
+function chooseTemplateCandidate(productType) {
+  selectedTemplateType = productType || '';
+  const input = document.getElementById('templateProductTypeInput');
+  if (input) input.value = selectedTemplateType;
+  renderTemplateCandidates();
+}
+
+function renderTemplateTaskStatus(task) {
+  const el = document.getElementById('templateTaskStatus');
+  if (!el) return;
+  if (!task) {
+    el.innerHTML = '';
+    return;
+  }
+  const total = Number(task.total || 0);
+  const progress = Number(task.progress || 0);
+  const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((progress / total) * 100))) : 20;
+  const detail = task.current_item || task.message || '';
+  const statusText = task.stage_name || task.status || '处理中';
+  el.innerHTML = `<div class="template-task-card">
+    <div class="template-task-stage">${escHtml(statusText)}</div>
+    <div class="template-task-meta">${escHtml(detail)}</div>
+    <div class="template-progress-bar"><span style="width:${percent}%"></span></div>
+    <div class="template-task-meta" style="margin-top:8px;">${escHtml(String(progress || 0))}/${escHtml(String(total || 0 || 1))}</div>
+  </div>`;
+}
+
+function renderTemplateResult(result) {
+  const el = document.getElementById('templateResultBox');
+  if (!el) return;
+  if (!result) {
+    el.innerHTML = '';
+    return;
+  }
+  if (result.results) {
+    el.innerHTML = `<div class="template-result-card">
+      <div class="template-task-stage">模板自动诊断完成</div>
+      <div class="template-result-grid">
+        <div class="template-result-item"><span class="template-result-label">总 SKU</span><strong class="template-result-value">${escHtml(String(result.total || 0))}</strong></div>
+        <div class="template-result-item"><span class="template-result-label">通过</span><strong class="template-result-value">${escHtml(String(result.pass || 0))}</strong></div>
+        <div class="template-result-item"><span class="template-result-label">警告</span><strong class="template-result-value">${escHtml(String(result.warn || 0))}</strong></div>
+        <div class="template-result-item"><span class="template-result-label">失败</span><strong class="template-result-value">${escHtml(String(result.fail || 0))}</strong></div>
+      </div>
+      ${(result.template && result.template.template_id) ? `<div class="template-task-meta">模板：${escHtml(result.template.product_type || '')} · ${escHtml(result.template.variation_mode || 'single')}</div>` : ''}
+      ${(result.column_issues && result.column_issues.length) ? `<div class="template-task-meta">模板列问题：${escHtml(result.column_issues.map(item => item.message).join('；'))}</div>` : ''}
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = `<div class="template-result-card">
+    <div class="template-task-stage">官方模板已生成</div>
+    <div class="template-result-grid">
+      <div class="template-result-item"><span class="template-result-label">产品类型</span><strong class="template-result-value">${escHtml(result.product_type || '')}</strong></div>
+      <div class="template-result-item"><span class="template-result-label">模板结构</span><strong class="template-result-value">${escHtml(result.variation_mode || 'single')}</strong></div>
+      <div class="template-result-item"><span class="template-result-label">必填字段</span><strong class="template-result-value">${escHtml(String(result.required_total || 0))}</strong></div>
+      <div class="template-result-item"><span class="template-result-label">总列数</span><strong class="template-result-value">${escHtml(String(result.column_count || 0))}</strong></div>
+    </div>
+    ${result.download_url ? `<div class="template-task-meta" style="margin-top:12px;"><a class="btn-link" href="${escHtml(result.download_url)}">下载模板 Excel</a></div>` : ''}
+  </div>`;
+}
+
+async function pollTaskDetail(taskId, onComplete) {
+  if (!taskId) return;
+  activeTemplateTaskId = taskId;
+  try {
+    const response = await fetch('/api/tasks/' + encodeURIComponent(taskId));
+    const task = await response.json();
+    if (task.error) throw new Error(task.error);
+    renderTemplateTaskStatus(task);
+    loadTaskCenter();
+    if (task.status === 'completed') {
+      activeTemplateTaskId = '';
+      renderTemplateTaskStatus(null);
+      renderTemplateResult(task.result || {});
+      if (typeof onComplete === 'function') onComplete(task.result || {});
+      return;
+    }
+    if (task.status === 'failed') {
+      activeTemplateTaskId = '';
+      showToast('error', task.error || task.message || '任务失败');
+      return;
+    }
+    setTimeout(() => pollTaskDetail(taskId, onComplete), 1200);
+  } catch (e) {
+    activeTemplateTaskId = '';
+    showToast('error', '任务查询失败: ' + e.message);
+  }
+}
+
+async function recommendTemplate() {
+  const source = (document.getElementById('templateSourceInput') || {}).value || '';
+  const keyword = (document.getElementById('templateKeywordInput') || {}).value || '';
+  if (!source && !keyword) return showToast('warning', '请先输入商品链接、标题或关键词');
+  try {
+    const response = await fetch('/api/templates/recommend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_url: source,
+        title: source && !/^https?:\/\//i.test(source) ? source : '',
+        keyword
+      })
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    templateCandidates = data.candidates || [];
+    if (templateCandidates.length > 0) {
+      chooseTemplateCandidate(templateCandidates[0].product_type || '');
+    } else {
+      renderTemplateCandidates();
+      showToast('warning', '未找到官方候选类目，请手动填写 product_type');
+    }
+  } catch (e) {
+    showToast('error', '类目推荐失败: ' + e.message);
+  }
+}
+
+async function generateTemplateTask() {
+  const input = document.getElementById('templateProductTypeInput');
+  const variationInput = document.getElementById('templateVariationMode');
+  const productType = ((input && input.value) || selectedTemplateType || '').trim();
+  const variationMode = ((variationInput && variationInput.value) || 'single').trim();
+  if (!productType) return showToast('warning', '请先选择或填写 product_type');
+  try {
+    renderTemplateResult(null);
+    const response = await fetch('/api/templates/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_type: productType, variation_mode: variationMode })
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    showToast('info', '正在生成官方模板...');
+    pollTaskDetail(data.task_id, (result) => {
+      if (result && result.download_url) showToast('success', '模板生成完成，可直接下载');
+    });
+  } catch (e) {
+    showToast('error', '模板生成失败: ' + e.message);
+  }
+}
+
+function uploadTemplateFile(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  if (selectedAccountId) fd.append('account_id', selectedAccountId);
+  fetch('/api/template-upload', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) throw new Error(d.error);
+      currentFile = d.filepath || d.filename || file.name;
+      currentFileMeta = { type: (d.filename || '').toLowerCase().endsWith('.xls') ? 'xls' : 'xlsx', warning: '', xlsPreserveSupported: true };
+      const fileInfo = document.getElementById('fileInfo');
+      if (fileInfo) {
+        fileInfo.dataset.baseName = d.filename || file.name;
+        fileInfo.textContent = d.filename || file.name;
+      }
+      const uploadInfo = document.getElementById('templateUploadInfo');
+      if (uploadInfo) uploadInfo.textContent = (d.template && d.template.template_id) ? `模板 ${d.template.product_type || ''} 已识别，正在自动诊断...` : '已上传，正在自动诊断...';
+      showToast('info', '模板文件已上传，正在自动诊断');
+      loadProducts();
+      pollTaskDetail(d.task_id, () => {
+        loadProducts();
+        showToast('success', '模板诊断完成，请查看缺项诊断与预览状态');
+      });
+    })
+    .catch(e => showToast('error', '模板上传失败: ' + e.message));
+  const input = document.getElementById('templateUploadInput');
+  if (input) input.value = '';
+}
+
+// ===== 6. Excel Upload =====
+function uploadExcel(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  showToast('info', '正在上传: ' + file.name);
+  fetch('/api/upload', { method: 'POST', body: fd })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => {
+      if (d.error) return showToast('error', d.error);
+      currentFile = d.filepath || d.filename || file.name;
+      currentFileMeta = {
+        type: d.file_type || '',
+        warning: d.warning || '',
+        xlsPreserveSupported: !!d.xls_preserve_supported,
+      };
+      selectedSkus.clear();
+      expandedParents.clear();
+      document.getElementById('fileInfo').dataset.baseName = d.filename || file.name;
+      document.getElementById('fileInfo').textContent = d.filename || file.name;
+      renderFileHealth();
+      showToast('success', '上传成功');
+      if (d.warning) showToast('warning', d.warning);
+      loadProducts();
+      loadTaskCenter();
+    })
+    .catch(e => showToast('error', '上传失败: ' + e.message));
+  document.getElementById('fileInput').value = '';
+}
+
+// ===== 7. Load Products =====
+function loadProducts() {
+  if (!currentFile) return;
+  // Preserve validation states before reload
+  const validationMap = new Map();
+  products.forEach(p => {
+    if (p._validPass !== undefined || (p._validErrors && p._validErrors.length > 0) || (p._validWarnings && p._validWarnings.length > 0)) {
+      validationMap.set(p.sku, {
+        _validPass: p._validPass,
+        _validErrors: p._validErrors,
+        _validWarnings: p._validWarnings,
+      });
+    }
+  });
+  // Clear search box
+  const searchInput = document.getElementById('searchInput');
+  if (searchInput) searchInput.value = '';
+  searchQuery = '';
+
+  // Show loading spinner
+  const loadingEl = document.getElementById('tableLoading');
+  const tableWrap = document.getElementById('tableWrap');
+  if (loadingEl) loadingEl.style.display = 'flex';
+  if (tableWrap) tableWrap.style.display = 'none';
+
+  fetch('/api/products?file=' + encodeURIComponent(currentFile))
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => {
+      if (loadingEl) loadingEl.style.display = 'none';
+      if (tableWrap) tableWrap.style.display = '';
+      if (d.error) return showToast('error', d.error);
+      products = flattenProducts(d.products || []);
+      if (!document.getElementById('fileInfo').dataset.baseName) {
+        document.getElementById('fileInfo').dataset.baseName = currentFile.split(/[\\/]/).pop() || currentFile;
+      }
+      document.getElementById('fileInfo').textContent = document.getElementById('fileInfo').dataset.baseName || '';
+      // Restore validation states: first from server data, then from memory
+      products.forEach(p => {
+        // Server-persisted validation
+        const persistedErrors = (p.validation_errors || '').split('; ').filter(Boolean);
+        const persistedWarnings = (p.validation_warnings || '').split('; ').filter(Boolean);
+        if (p.validation_status === 'pass') {
+          p._validPass = true;
+          p._validErrors = [];
+          p._validWarnings = [];
+        } else if (p.validation_status === 'warn') {
+          p._validPass = true;
+          p._validErrors = [];
+          p._validWarnings = persistedWarnings;
+        } else if (p.validation_status === 'fail') {
+          p._validPass = false;
+          p._validErrors = persistedErrors;
+          p._validWarnings = persistedWarnings;
+        }
+        // Memory-cached validation takes precedence
+        const saved = validationMap.get(p.sku);
+        if (saved) {
+          p._validPass = saved._validPass;
+          p._validErrors = saved._validErrors;
+          p._validWarnings = saved._validWarnings || [];
+        }
+      });
+      syncSelectionState();
+      applyFilter();
+      updateStats();
+      enableToolbar(products.length > 0);
+      if (!activeTemplateTaskId && d.template && d.template.template_id) {
+        renderTemplateResult(d.template);
+      }
+      renderFileHealth();
+      loadTaskCenter();
+    })
+    .catch(e => {
+      if (loadingEl) loadingEl.style.display = 'none';
+      if (tableWrap) tableWrap.style.display = '';
+      showToast('error', '加载失败: ' + e.message);
+    });
+}
+
+function flattenProducts(groups) {
+  const flat = [];
+  // Build a set of parent_sku values from "parent" type groups
+  // so we can skip standalone rows that are actually parent rows
+  const parentSkuSet = new Set();
+  groups.forEach(g => {
+    if (g.type === 'parent') parentSkuSet.add(g.parent_sku);
+  });
+
+  groups.forEach(g => {
+    const skus = g.skus || [];
+
+    // Skip standalone rows whose SKU matches a parent group
+    // (these are parent rows in Excel that got separated)
+    if (g.type === 'standalone' && skus.length === 1 && parentSkuSet.has(skus[0].sku)) {
+      return;
+    }
+
+    if (g.type === 'parent' && skus.length >= 1) {
+      // Find matching standalone parent row for title/brand
+      const parentRow = groups.find(og =>
+        og.type === 'standalone' && og.skus && og.skus[0] && og.skus[0].sku === g.parent_sku
+      );
+      const parentSource = (parentRow && parentRow.skus && parentRow.skus[0]) || skus[0] || {};
+      const parentTitle = (parentRow && parentRow.title) || g.title || skus[0].title || '';
+      const parentBrand = (parentRow && parentRow.brand) || g.brand || '';
+
+      // Parent row
+      flat.push({
+        ...parentSource,
+        sku: g.parent_sku,
+        title: parentTitle,
+        item_name: parentTitle,
+        brand: parentBrand,
+        parentage_level: 'parent',
+        parent_sku: '',
+        variation_theme: g.variation_theme || '',
+        main_image_url: parentSource.main_image_url || skus[0].main_image_url || '',
+        price: '',
+        quantity: '',
+        ai_status: parentSource.ai_status || '',
+        submit_status: parentSource.submit_status || '',
+        _raw: parentSource._raw || {},
+      });
+      // Child rows
+      skus.forEach(s => {
+        flat.push({
+          ...s,
+          parentage_level: 'child',
+          parent_sku: g.parent_sku,
+          brand: parentBrand || s.brand || '',
+          variation_theme: g.variation_theme || '',
+        });
+      });
+    } else {
+      // Standalone product (single SKU, no parent group)
+      const s = skus[0] || {};
+      flat.push({
+        ...s,
+        brand: g.brand || s.brand || '',
+        variation_theme: g.variation_theme || '',
+        parentage_level: '',
+        parent_sku: '',
+      });
+    }
+  });
+  return flat;
+}
+
+function enableToolbar(enabled) {
+  ['btnBatchCopy','btnBatchImg','btnValidate','btnListingCheck','btnSubmit','btnExport'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
+  });
+}
+
+// ===== 8. Stats =====
+function updateStats() {
+  let total = 0, processed = 0, pending = 0, errors = 0, previewPass = 0, previewFail = 0;
+  products.forEach(p => {
+    if (p.parentage_level === 'parent') return;
+    total++;
+    const st = p.ai_status || '';
+    const previewStatus = String(p.preview_status || '').toUpperCase();
+    if (st === 'completed' || st === 'done') processed++;
+    else pending++;
+    if (p._validErrors && p._validErrors.length > 0) errors++;
+    if (previewStatus === 'VALID') previewPass++;
+    else if (previewStatus) previewFail++;
+  });
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statProcessed').textContent = processed;
+  document.getElementById('statPending').textContent = pending;
+  document.getElementById('statErrors').textContent = errors;
+  // Filter counts
+  document.getElementById('filterCountAll').textContent = total;
+  document.getElementById('filterCountPending').textContent = pending;
+  document.getElementById('filterCountProcessed').textContent = processed;
+  const validCount = products.filter(p => p.parentage_level !== 'parent' && p._validPass).length;
+  document.getElementById('filterCountValid').textContent = validCount;
+  document.getElementById('filterCountError').textContent = errors;
+  const previewPassEl = document.getElementById('filterCountPreviewPass');
+  const previewFailEl = document.getElementById('filterCountPreviewFail');
+  if (previewPassEl) previewPassEl.textContent = previewPass;
+  if (previewFailEl) previewFailEl.textContent = previewFail;
+}
+
+// ===== 9. Filter & Search =====
+function filterByStatus(status) {
+  currentFilter = status;
+  currentPage = 1;
+  document.querySelectorAll('.filter-tab').forEach(t => {
+    t.classList.toggle('active', t.getAttribute('data-filter') === status);
+  });
+  applyFilter();
+}
+
+function filterTable(query) {
+  searchQuery = query.toLowerCase().trim();
+  currentPage = 1;
+  applyFilter();
+}
+
+function applyFilter() {
+  filteredProducts = [];
+  const parentMap = {};
+  // Build parent map
+  products.forEach(p => {
+    if (p.parentage_level === 'parent') parentMap[p.sku] = [];
+  });
+  products.forEach(p => {
+    if (p.parentage_level === 'child' && p.parent_sku && parentMap[p.parent_sku]) {
+      parentMap[p.parent_sku].push(p);
+    }
+  });
+
+  products.forEach(p => {
+    // Skip children (they will be added under their parent)
+    if (p.parentage_level === 'child' && p.parent_sku && parentMap[p.parent_sku]) return;
+
+    if (p.parentage_level === 'parent') {
+      const children = parentMap[p.sku] || [];
+      const matchingChildren = children.filter(c => matchFilter(c) && matchSearch(c));
+      if (matchingChildren.length > 0 || matchSearch(p)) {
+        filteredProducts.push(p);
+        const expanded = expandedParents.has(p.sku);
+        if (expanded) {
+          matchingChildren.forEach(c => filteredProducts.push(c));
+        }
+      }
+    } else {
+      // Independent product
+      if (matchFilter(p) && matchSearch(p)) filteredProducts.push(p);
+    }
+  });
+  syncSelectionState();
+  renderTable();
+}
+
+function matchFilter(p) {
+  if (currentFilter === 'all') return true;
+  const st = p.ai_status || '';
+  const previewStatus = String(p.preview_status || '').toUpperCase();
+  if (currentFilter === 'pending') return st !== 'completed' && st !== 'done';
+  if (currentFilter === 'processed') return st === 'completed' || st === 'done';
+  if (currentFilter === 'valid') return p._validPass === true;
+  if (currentFilter === 'error') return p._validErrors && p._validErrors.length > 0;
+  if (currentFilter === 'previewPass') return previewStatus === 'VALID';
+  if (currentFilter === 'previewFail') return previewStatus && previewStatus !== 'VALID';
+  return true;
+}
+
+function matchSearch(p) {
+  if (!searchQuery) return true;
+  const sku = (p.sku || '').toLowerCase();
+  const title = (p.title || p.item_name || '').toLowerCase();
+  return sku.includes(searchQuery) || title.includes(searchQuery);
+}
+
+// ===== 10. Table Rendering =====
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  const empty = document.getElementById('emptyState');
+  const pag = document.getElementById('pagination');
+
+  if (filteredProducts.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'flex';
+    pag.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Pagination
+  const totalPages = Math.ceil(filteredProducts.length / pageSize);
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * pageSize;
+  const pageItems = filteredProducts.slice(start, start + pageSize);
+
+  pag.style.display = filteredProducts.length > pageSize ? 'flex' : 'none';
+  document.getElementById('pageInfo').textContent =
+    `共 ${filteredProducts.length} 条`;
+  document.getElementById('pageNum').textContent =
+    `${currentPage} / ${totalPages}`;
+  document.getElementById('btnPrev').disabled = currentPage <= 1;
+  document.getElementById('btnNext').disabled = currentPage >= totalPages;
+
+  let rowNum = 0;
+  let html = '';
+  pageItems.forEach((p, idx) => {
+    const sku = p.sku || '';
+    const title = p.title || p.item_name || '';
+    const imgUrl = resolveProductMainPreview(p) || p.ai_main_image || '';
+    const price = p.price || p.standard_price || '';
+    const stock = p.quantity || '';
+    const isParent = p.parentage_level === 'parent';
+    const isChild = p.parentage_level === 'child';
+    const checked = !isParent && selectedSkus.has(sku);
+    const rowClass = isChild ? 'row-child' : (checked ? 'selected' : '');
+
+    if (!isChild) rowNum++;
+
+    // AI status badge
+    const aiSt = p.ai_status || '';
+    let aiBadge;
+    if (aiSt === 'completed' || aiSt === 'done') aiBadge = `<span class="badge badge-success">${t('ai_processed')}</span>`;
+    else if (aiSt === 'processing') aiBadge = `<span class="badge badge-processing">处理中</span>`;
+    else if (aiSt === 'failed') aiBadge = `<span class="badge badge-danger">失败</span>`;
+    else aiBadge = `<span class="badge badge-default">${t('pending')}</span>`;
+
+    // Validation
+    let validCell;
+    if (p._validErrors && p._validErrors.length > 0) validCell = `<span class="valid-fail" onclick="showValidationIssues('${escHtml(sku)}')" title="${escHtml(p._validErrors.join('; '))}">&#10007;</span>`;
+    else if (p._validWarnings && p._validWarnings.length > 0) validCell = `<span class="valid-warn" onclick="showValidationIssues('${escHtml(sku)}')" title="${escHtml(p._validWarnings.join('; '))}">&#9888;</span>`;
+    else if (p._validPass === true) validCell = '<span class="valid-pass">&#10003;</span>';
+    else validCell = '<span class="valid-none">-</span>';
+
+    // SKU cell
+    let skuCell;
+    if (isParent) {
+      const exp = expandedParents.has(sku);
+      skuCell = `<div class="sku-cell"><span class="sku-toggle ${exp?'expanded':''}" onclick="toggleParent('${escHtml(sku)}')">&#9654;</span><span class="sku-text">${escHtml(sku)}</span></div>`;
+    } else if (isChild) {
+      const isLast = (idx === pageItems.length - 1) || (pageItems[idx+1] && pageItems[idx+1].parentage_level !== 'child');
+      const line = isLast ? '&#9492;' : '&#9500;';
+      skuCell = `<div class="sku-cell sku-child-indent"><span class="sku-tree-line">${line}</span><span class="sku-child-text">${escHtml(sku)}</span></div>`;
+    } else {
+      skuCell = `<div class="sku-cell"><span class="sku-text">${escHtml(sku)}</span></div>`;
+    }
+
+    // Image cell
+    const imgCell = imgUrl
+      ? `<img class="img-thumb" src="${escHtml(imgUrl)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" onmouseenter="showImgPreview(event,'${escHtml(imgUrl)}')" onmouseleave="hideImgPreview()"><div class="img-placeholder" style="display:none">-</div>`
+      : '<div class="img-placeholder">-</div>';
+
+    // Price cell (inline edit)
+    const priceDisplay = price ? `$${parseFloat(price).toFixed(2)}` : '-';
+    const priceCell = isParent ? '-' : `<span class="inline-edit" ondblclick="inlineEdit(this,'price','${escHtml(sku)}')">${priceDisplay}</span>`;
+
+    // Stock cell
+    const stockDisplay = stock || '-';
+    const stockCell = isParent ? '-' : `<span class="inline-edit" ondblclick="inlineEdit(this,'quantity','${escHtml(sku)}')">${stockDisplay}</span>`;
+
+    // Optional columns
+    const optCols = buildOptionalCols(p);
+
+    // Action links
+    const actions = `<div class="action-links">
+      <button class="btn-link" onclick="openDrawer('${escHtml(sku)}')">${t('edit')}</button>
+      <span class="action-sep">|</span>
+      <button class="btn-link" onclick="processSingle('${escHtml(sku)}')">${t('ai_process')}</button>
+    </div>`;
+
+    html += `<tr class="${rowClass}" data-sku="${escHtml(sku)}">
+      <td class="col-cb col-fixed-left"><input type="checkbox" ${checked?'checked':''} ${isParent ? 'disabled title="父体行不可直接处理"' : ''} onchange="toggleSelect('${escHtml(sku)}',this.checked)"></td>
+      <td class="col-num col-fixed-left">${isChild ? '' : rowNum}</td>
+      <td class="col-sku col-fixed-left">${skuCell}</td>
+      <td class="col-title" title="${escHtml(title)}">${escHtml(title)}</td>
+      <td class="col-img">${imgCell}</td>
+      <td class="col-price">${priceCell}</td>
+      <td class="col-stock">${stockCell}</td>
+      ${optCols}
+      <td class="col-ai">${aiBadge}</td>
+      <td class="col-valid">${validCell}</td>
+      <td class="col-actions col-fixed-right">${actions}</td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function buildOptionalCols(p) {
+  const cols = ['brand','productType','variantType','upc','color','size','fulfillment','previewStatus','submitStatus','asin'];
+  return cols.map(col => {
+    const visible = visibleCols[col];
+    const style = visible ? '' : 'style="display:none"';
+    let val = '';
+    switch(col) {
+      case 'brand': val = p.brand || p.brand_name || ''; break;
+      case 'productType': val = p.product_type || ''; break;
+      case 'variantType': val = p.parentage_level || ''; break;
+      case 'upc': val = p.upc || p.ean || p.product_id || ''; break;
+      case 'color': val = p.color || p.color_name || ''; break;
+      case 'size': val = p.size || p.size_name || ''; break;
+      case 'fulfillment': val = p.fulfillment_channel || ''; break;
+      case 'previewStatus': val = p.preview_status || ''; break;
+      case 'submitStatus': val = p.submit_status || ''; break;
+      case 'asin': val = p.asin || ''; break;
+    }
+    return `<td class="col-optional" data-col="${col}" ${style}>${escHtml(val)}</td>`;
+  }).join('');
+}
+
+// ===== 11. Pagination =====
+function goPage(dir) {
+  const totalPages = Math.ceil(filteredProducts.length / pageSize);
+  if (dir === 'prev' && currentPage > 1) currentPage--;
+  else if (dir === 'next' && currentPage < totalPages) currentPage++;
+  renderTable();
+}
+function changePageSize(val) {
+  pageSize = parseInt(val) || 50;
+  currentPage = 1;
+  renderTable();
+}
+
+// ===== 12. Selection =====
+function toggleSelect(sku, checked) {
+  const product = products.find(x => x.sku === sku);
+  if (!product || product.parentage_level === 'parent') return;
+  if (checked) selectedSkus.add(sku);
+  else selectedSkus.delete(sku);
+  updateBatchBar();
+  const row = document.querySelector(`tr[data-sku="${sku}"]`);
+  if (row) row.classList.toggle('selected', checked);
+}
+function toggleSelectAll(checked) {
+  getFilteredActionableSkus().forEach(sku => {
+    if (checked) selectedSkus.add(sku);
+    else selectedSkus.delete(sku);
+  });
+  filteredProducts.forEach(p => {
+    if (p.parentage_level === 'parent') return;
+    if (checked) selectedSkus.add(p.sku);
+    else selectedSkus.delete(p.sku);
+  });
+  updateBatchBar();
+  renderTable();
+}
+function clearSelection() {
+  selectedSkus.clear();
+  const selectAllCb = document.getElementById('selectAllCb');
+  if (selectAllCb) {
+    selectAllCb.checked = false;
+    selectAllCb.indeterminate = false;
+  }
+  updateBatchBar();
+  renderTable();
+}
+function updateBatchBar() {
+  const bar = document.getElementById('batchBar');
+  const rawCount = selectedSkus.size;
+  const actionableCount = getSelectedActionableSkus().length;
+  document.getElementById('selectedCount').textContent = actionableCount;
+  const rawCountEl = document.getElementById('selectedRawCount');
+  const noteEl = document.getElementById('selectedNote');
+  if (rawCountEl) rawCountEl.textContent = rawCount;
+  if (noteEl) {
+    const ignored = rawCount - actionableCount;
+    noteEl.textContent = ignored > 0 ? `（已忽略 ${ignored} 个无效/父体选择）` : '';
+  }
+  bar.classList.toggle('hidden', actionableCount === 0);
+}
+
+// ===== 13. Column Settings =====
+function toggleColumnSettings() {
+  const panel = document.getElementById('colSettingsPanel');
+  panel.classList.toggle('show');
+}
+function toggleColumn(col, show) {
+  visibleCols[col] = show;
+  document.querySelectorAll(`[data-col="${col}"]`).forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+// ===== 14. Parent Toggle =====
+function toggleParent(parentSku) {
+  if (expandedParents.has(parentSku)) expandedParents.delete(parentSku);
+  else expandedParents.add(parentSku);
+  applyFilter();
+}
+
+// ===== 15. Inline Edit =====
+function inlineEdit(el, field, sku) {
+  const current = el.textContent.replace('$','').trim();
+  const input = document.createElement('input');
+  input.className = 'inline-input';
+  input.value = current === '-' ? '' : current;
+  input.type = field === 'price' || field === 'quantity' ? 'number' : 'text';
+  input.step = field === 'price' ? '0.01' : '1';
+
+  const save = () => {
+    const val = input.value;
+    // Price validation: reject non-positive numbers
+    if ((field === 'price' || field === 'quantity') && val !== '') {
+      const num = parseFloat(val);
+      if (isNaN(num) || (field === 'price' && num <= 0) || (field === 'quantity' && num < 0)) {
+        showToast('error', field === 'price' ? '价格必须为正数' : '库存不能为负数');
+        el.textContent = current === '-' ? '-' : (field === 'price' ? '$' + current : current);
+        return;
+      }
+    }
+    const p = products.find(x => x.sku === sku);
+    if (p) { p[field] = val; }
+    // Persist to Excel
+    if (currentFile) {
+      fetch('/api/update-field', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: currentFile, sku, field, value: val })
+      }).catch(err => { showToast('error', '保存失败: ' + err.message); el.textContent = current; });
+    }
+    if (field === 'price') el.textContent = val ? '$' + parseFloat(val).toFixed(2) : '-';
+    else el.textContent = val || '-';
+  };
+
+  input.onblur = save;
+  input.onkeydown = e => {
+    if (e.key === 'Enter') { save(); input.blur(); }
+    if (e.key === 'Escape') { input.onblur = null; el.textContent = current === '-' ? '-' : (field === 'price' ? '$' + current : current); }
+  };
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  input.select();
+}
+
+// ===== 16. Image Preview =====
+function showImgPreview(e, url) {
+  let tip = document.getElementById('imgPreviewTip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'imgPreviewTip';
+    tip.className = 'img-preview-tooltip';
+    document.body.appendChild(tip);
+  }
+  tip.innerHTML = `<img src="${escHtml(url)}" alt="">`;
+  tip.style.display = 'block';
+  tip.style.left = (e.clientX + 16) + 'px';
+  tip.style.top = Math.min(e.clientY - 60, window.innerHeight - 260) + 'px';
+}
+function hideImgPreview() {
+  const tip = document.getElementById('imgPreviewTip');
+  if (tip) tip.style.display = 'none';
+}
+
+// ===== 17. Right Drawer =====
+function openDrawer(sku) {
+  drawerProduct = products.find(p => p.sku === sku);
+  if (!drawerProduct) return;
+  document.body.classList.add('drawer-open');
+  document.getElementById('drawerSku').textContent = sku;
+  document.getElementById('drawerName').textContent = drawerProduct.title || drawerProduct.item_name || '';
+  switchDrawerTab('copy');
+}
+function closeDrawer() {
+  document.body.classList.remove('drawer-open');
+  drawerProduct = null;
+}
+function switchDrawerTab(tab) {
+  drawerTab = tab;
+  document.querySelectorAll('.drawer-tab').forEach(t => {
+    t.classList.toggle('active', t.getAttribute('data-tab') === tab);
+  });
+  renderDrawerContent();
+}
+
+function renderDrawerContent() {
+  const body = document.getElementById('drawerBody');
+  if (!drawerProduct) { body.innerHTML = ''; return; }
+  const p = drawerProduct;
+  let innerHtml = '';
+
+  switch(drawerTab) {
+    case 'copy': innerHtml = renderCopyTab(p); break;
+    case 'images': innerHtml = renderImagesTab(p); break;
+    case 'attrs': innerHtml = renderAttrsTab(p); break;
+    case 'offer': innerHtml = renderOfferTab(p); break;
+    case 'compliance': innerHtml = renderComplianceTab(p); break;
+    case 'shipping': innerHtml = renderShippingTab(p); break;
+    case 'variation': innerHtml = renderVariationTab(p); break;
+    case 'category': innerHtml = renderCategoryFieldsTab(p); break;
+    case 'diagnostics': innerHtml = renderDiagnosticsTab(p); break;
+    default: innerHtml = '';
+  }
+  body.innerHTML = renderStatusOverview(p) + innerHtml;
+}
+
+function isWebImageUrl(url) {
+  return /^https?:\/\//i.test(String(url || ''));
+}
+
+function isMediaLocator(url) {
+  return /^s3:\/\//i.test(String(url || '')) || isWebImageUrl(url);
+}
+
+function resolveProductMainPreview(p) {
+  return p.main_image_preview_url || (isWebImageUrl(p.main_image_url) ? p.main_image_url : '') || p.ai_main_image || '';
+}
+
+function resolveProductSubPreview(p, slot) {
+  return p['image_' + slot + '_preview_url']
+    || (isWebImageUrl(p['image_' + slot]) ? p['image_' + slot] : '')
+    || (isWebImageUrl(p['other_image_url_' + (slot - 1)]) ? p['other_image_url_' + (slot - 1)] : '');
+}
+
+function renderStatusOverview(p) {
+  const aiStatus = p.ai_status || 'PENDING';
+  const localValidation = p._validErrors && p._validErrors.length > 0
+    ? '本地校验失败'
+    : (p._validWarnings && p._validWarnings.length > 0 ? '本地校验有警告' : (p._validPass ? '本地校验通过' : '本地校验未执行'));
+  const previewStatus = p.preview_status || '未预览';
+  const listingCheckStatus = p.listing_check_status || '';
+  const requiredTotal = Number(p.template_required_total || 0);
+  const requiredFilled = Number(p.template_required_filled || 0);
+  const requiredMissing = Number(p.template_required_missing_count || 0);
+  const templateReady = String(p.template_ready_to_submit || '').toLowerCase() === 'yes';
+  let submitStatus = p.submit_status || '未提交';
+  if (submitStatus === 'ACCEPTED') submitStatus = 'ACCEPTED（待平台最终处理）';
+  if (submitStatus === 'PENDING') submitStatus = '未提交';
+  let imageHint = '暂无 AI 图片';
+  if (p.ai_media_locator || p.ai_public_image_url) imageHint = `AI 主图已就绪，可直接采用 (${p.ai_upload_status || 'ready'})`;
+  else if (p.ai_main_image || p.ai_image_url) imageHint = 'AI 主图已生成，但目前仅本地预览';
+  const listingCheckHint = p.listing_check_summary || (listingCheckStatus ? `最近诊断: ${listingCheckStatus}` : '尚未执行缺项诊断');
+  const templateHint = requiredTotal > 0 ? `${requiredFilled}/${requiredTotal} 已填` : '未使用专属模板';
+
+  const chips = [
+    { label: '模板必填', value: templateHint, tone: requiredMissing > 0 ? 'danger' : (requiredTotal > 0 ? 'success' : 'default') },
+    { label: 'AI', value: aiStatus, tone: aiStatus === 'completed' ? 'success' : (aiStatus === 'failed' ? 'danger' : 'default') },
+    { label: '本地校验', value: localValidation, tone: p._validErrors && p._validErrors.length > 0 ? 'danger' : (p._validWarnings && p._validWarnings.length > 0 ? 'warn' : 'success') },
+    { label: 'Amazon预览', value: previewStatus, tone: String(previewStatus).toUpperCase() === 'VALID' ? 'success' : (previewStatus && previewStatus !== '未预览' ? 'warn' : 'default') },
+    { label: '提交', value: submitStatus, tone: String(p.submit_status).toUpperCase() === 'ACCEPTED' ? 'info' : (p.submit_status && p.submit_status !== 'PENDING' ? 'warn' : 'default') },
+    { label: '缺项诊断', value: listingCheckHint, tone: listingCheckStatus === 'pass' ? 'success' : (listingCheckStatus === 'warn' ? 'warn' : (listingCheckStatus === 'fail' ? 'danger' : 'default')) },
+    { label: '提交就绪', value: templateReady ? '允许提交' : '需先补齐阻断项', tone: templateReady ? 'success' : 'danger' },
+    { label: '图片就绪', value: imageHint, tone: (p.ai_media_locator || p.ai_public_image_url) ? 'success' : ((p.ai_main_image || p.ai_image_url) ? 'warn' : 'default') },
+  ];
+
+  return `<div class="drawer-status-panel">
+    ${chips.map(chip => `<div class="drawer-status-chip ${chip.tone}">
+      <span class="drawer-status-label">${chip.label}</span>
+      <strong>${escHtml(chip.value)}</strong>
+    </div>`).join('')}
+  </div>`;
+}
+
+function renderCopyTab(p) {
+  const fields = [
+    { key: 'title', aiKey: 'ai_title', label: '标题 (item_name)', origKey: 'item_name' },
+    { key: 'bullet_1', aiKey: 'ai_bullet_1', label: '卖点 1', origKey: 'bullet_point_1' },
+    { key: 'bullet_2', aiKey: 'ai_bullet_2', label: '卖点 2', origKey: 'bullet_point_2' },
+    { key: 'bullet_3', aiKey: 'ai_bullet_3', label: '卖点 3', origKey: 'bullet_point_3' },
+    { key: 'bullet_4', aiKey: 'ai_bullet_4', label: '卖点 4', origKey: 'bullet_point_4' },
+    { key: 'bullet_5', aiKey: 'ai_bullet_5', label: '卖点 5', origKey: 'bullet_point_5' },
+    { key: 'description', aiKey: 'ai_description', label: '描述', origKey: 'product_description' },
+    { key: 'keywords', aiKey: 'ai_keywords', label: '搜索词', origKey: 'generic_keywords' },
+  ];
+
+  return fields.map(f => {
+    const orig = p[f.origKey] || (p._raw && (p._raw[f.origKey] || p._raw[f.key])) || p[f.key] || '';
+    const ai = p[f.aiKey] || (p._raw && p._raw[f.aiKey]) || '';
+    return `<div class="compare-group">
+      <div class="compare-label">${f.label}</div>
+      <div class="compare-row">
+        <div class="compare-box">
+          <div class="compare-box-label">${t('original')}</div>
+          ${escHtml(orig) || '<em style="color:var(--text-disabled)">-</em>'}
+        </div>
+        <div class="compare-box compare-box-ai">
+          <div class="compare-box-label">${t('ai_generated')}</div>
+          ${escHtml(ai) || '<em style="color:var(--text-disabled)">-</em>'}
+        </div>
+      </div>
+      <div class="compare-actions">
+        <button class="btn btn-outline btn-sm" onclick="regenerateField('${p.sku}','${f.key}')">${t('regenerate')}</button>
+        <button class="btn btn-primary btn-sm" onclick="adoptField('${p.sku}','${f.key}')" ${ai?'':'disabled'}>${t('adopt')}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderImagesTab(p) {
+  const mainOrig = resolveProductMainPreview(p);
+  const mainAi = p.ai_main_image || p.ai_image_url || '';
+  const bgStyle = p._bgStyle || 'white';
+  const hasAnyAiSub = Array.from({ length: 8 }, (_, idx) => idx + 2)
+    .some(i => !!(p['ai_image_' + i] || p['ai_media_locator_' + i] || p['ai_public_image_' + i]));
+
+  let html = `<div class="drawer-section">
+    <div class="drawer-section-title">${t('main_img')}</div>
+    <div class="img-compare-grid">
+      <div class="img-compare-item">
+        ${mainOrig ? `<img src="${escHtml(mainOrig)}" alt="">` : `<div class="sub-img-empty">${t('no_data_title')}</div>`}
+        <div class="img-label">${t('original')}</div>
+      </div>
+      <div class="img-compare-item ai-img">
+        ${mainAi ? `<img src="${escHtml(mainAi)}" alt="">` : `<div class="sub-img-empty">${t('no_data_title')}</div>`}
+        <div class="img-label">${t('ai_generated')}</div>
+      </div>
+    </div>
+    <div class="sub-img-label" style="margin:8px 0 0;color:var(--text-secondary);">
+      ${p.ai_media_locator ? `提交地址：${escHtml(p.ai_media_locator)}` : (p.ai_upload_error ? `上传失败：${escHtml(p.ai_upload_error)}` : '尚未上传到媒体存储')}
+    </div>
+    <div class="bg-selector">
+      <span class="bg-opt ${bgStyle === 'white' ? 'active' : ''}" onclick="selectBg(this,'white')">${t('pure_white')}</span>
+      <span class="bg-opt ${bgStyle === 'scene' ? 'active' : ''}" onclick="selectBg(this,'scene')">${t('scene')}</span>
+      <span class="bg-opt ${bgStyle === 'gradient' ? 'active' : ''}" onclick="selectBg(this,'gradient')">${t('gradient')}</span>
+    </div>
+    <div class="compare-actions">
+      <button class="btn btn-outline btn-sm" onclick="regenerateImage('${p.sku}','main')">${t('generate')}</button>
+      <button class="btn btn-primary btn-sm" onclick="adoptImage('${p.sku}','main')" ${mainAi?'':'disabled'}>${t('adopt')}</button>
+    </div>
+  </div>`;
+
+  html += `<div class="drawer-section">
+    <div class="drawer-section-title">${t('sub_images')}</div>
+    <div class="sub-images-grid">`;
+
+  for (let i = 2; i <= 9; i++) {
+    const url = resolveProductSubPreview(p, i);
+    const aiUrl = p['ai_image_' + i] || '';
+    const displayUrl = aiUrl || url;
+    const label = aiUrl ? `AI ${t('img_label')}${i}` : `${t('img_label')}${i}`;
+    html += `<div class="sub-img-item">
+      ${displayUrl ? `<img src="${escHtml(displayUrl)}" alt="">` : '<div class="sub-img-empty">' + i + '</div>'}
+      <div class="sub-img-label">${label}${p['ai_media_locator_' + i] ? ' · 已上传' : ''}</div>
+    </div>`;
+  }
+
+  html += `</div>
+    <div class="compare-actions" style="margin-top:10px">
+      <button class="btn btn-outline btn-sm" onclick="regenerateImage('${p.sku}','all')">${t('generate_all')}</button>
+      <button class="btn btn-primary btn-sm" onclick="adoptImage('${p.sku}','all')" ${hasAnyAiSub || mainAi ? '' : 'disabled'}>${t('adopt_all')}</button>
+    </div>
+  </div>`;
+
+  return html;
+}
+
+function renderDiagnosticsTab(p) {
+  const check = p._listingCheck || null;
+  const summary = (check && check.summary_text) || p.listing_check_summary || '尚未执行缺项诊断';
+  const checkedAt = (check && check.checked_at) || p.listing_check_time || '';
+  const status = (check && check.status) || p.listing_check_status || '';
+  const missingFields = (check && check.missing_fields) || [];
+  const previewIssues = (check && check.preview && check.preview.issues) || [];
+  const listingIssues = (check && check.listing && check.listing.issues) || [];
+  const mediaChecks = (check && check.media && check.media.checks) || [];
+  const localErrors = (check && check.local && check.local.errors) || [];
+  const localWarnings = (check && check.local && check.local.warnings) || [];
+  const templateRequiredMissing = (p.template_required_missing_fields || '').split(';').map(s => s.trim()).filter(Boolean);
+  const templateRecommendedMissing = (p.template_recommended_missing_fields || '').split(';').map(s => s.trim()).filter(Boolean);
+  const templateBlocking = (p.template_blocking_issues || '').split(';').map(s => s.trim()).filter(Boolean);
+  const templateLabel = p.template_product_type ? `${p.template_product_type} · ${p.template_variation_mode || 'single'}` : '未绑定模板';
+
+  const statusTone = status === 'pass' ? 'success' : (status === 'warn' ? 'warn' : (status === 'fail' ? 'danger' : 'default'));
+  const issueList = (items, emptyText) => {
+    if (!items || items.length === 0) return `<div class="sub-img-empty">${emptyText}</div>`;
+    return `<ul style="margin:8px 0 0 18px; line-height:1.6;">${items.map(item => `<li>${escHtml(item)}</li>`).join('')}</ul>`;
+  };
+  const issueBlock = (title, bodyHtml) => `
+    <div class="drawer-section">
+      <div class="drawer-section-title">${escHtml(title)}</div>
+      ${bodyHtml}
+    </div>
+  `;
+  const previewMessages = previewIssues.map(issue => {
+    const prefix = [issue.severity || issue.level || '', issue.code || ''].filter(Boolean).join('/');
+    return prefix ? `[${prefix}] ${issue.message || ''}` : (issue.message || '');
+  }).filter(Boolean);
+  const listingMessages = listingIssues.map(issue => {
+    const prefix = [issue.severity || issue.level || '', issue.code || ''].filter(Boolean).join('/');
+    return prefix ? `[${prefix}] ${issue.message || ''}` : (issue.message || '');
+  }).filter(Boolean);
+  const mediaMessages = mediaChecks.map(item => {
+    const prefix = item.ok ? 'OK' : 'FAIL';
+    const code = item.status_code ? ` (${item.status_code})` : '';
+    return `${prefix} ${item.field}${code}: ${item.message || item.url || ''}`;
+  });
+
+  let html = `
+    <div class="drawer-section">
+      <div class="drawer-section-title">${t('diagnostics')}</div>
+      <div class="drawer-status-panel" style="margin-top:0;">
+        <div class="drawer-status-chip ${statusTone}">
+          <span class="drawer-status-label">${t('status')}</span>
+          <strong>${escHtml(status || '未执行')}</strong>
+        </div>
+        <div class="drawer-status-chip default">
+          <span class="drawer-status-label">${t('last_checked')}</span>
+          <strong>${escHtml(checkedAt || '-')}</strong>
+        </div>
+      </div>
+      <div style="margin-top:12px; color:var(--text-secondary); line-height:1.6;">${escHtml(summary)}</div>
+      <div style="margin-top:8px; color:var(--text-secondary); line-height:1.6;">模板：${escHtml(templateLabel)}</div>
+      <div class="compare-actions" style="margin-top:12px;">
+        <button class="btn btn-primary btn-sm" onclick="runListingCheck('${escHtml(p.sku)}')">${t('diagnose_this')}</button>
+      </div>
+    </div>
+  `;
+
+  html += issueBlock('模板阻断项', issueList(
+    templateBlocking,
+    '当前模板没有阻断项。'
+  ));
+  html += issueBlock('模板必填缺失', issueList(
+    templateRequiredMissing,
+    '当前模板必填字段已补齐。'
+  ));
+  html += issueBlock('模板建议补充', issueList(
+    templateRecommendedMissing,
+    '当前模板建议字段已基本补齐。'
+  ));
+  html += issueBlock(t('missing_fields'), issueList(
+    missingFields.map(item => `${item.title || item.name} (${item.name}) — 来源: ${item.source || '-'}`),
+    '当前未发现缺失字段。'
+  ));
+  html += issueBlock('本地校验详情', issueList(
+    [].concat(localErrors.map(msg => `错误: ${msg}`), localWarnings.map(msg => `警告: ${msg}`)),
+    '当前无本地校验问题。'
+  ));
+  html += issueBlock(t('preview_issues'), issueList(
+    previewMessages.length ? previewMessages : ((check && check.preview && check.preview.message) ? [check.preview.message] : []),
+    '当前无 Amazon 预览问题。'
+  ));
+  html += issueBlock(t('listing_issues'), issueList(
+    listingMessages,
+    '当前无后台 issues。'
+  ));
+  html += issueBlock(t('media_check'), issueList(
+    mediaMessages,
+    '当前未检测到图片链接。'
+  ));
+
+  return html;
+}
+
+function renderAttrsTab(p) {
+  const fields = [
+    ['brand', t('brand'), p.brand || p.brand_name || ''],
+    ['manufacturer', t('manufacturer'), p.manufacturer || ''],
+    ['model_number', t('model_number'), p.model_number || p.part_number || ''],
+    ['product_type', t('product_category'), p.product_type || ''],
+    ['item_type_keyword', t('item_type_keyword'), p.item_type_keyword || ''],
+    ['color', t('color'), p.color || p.color_name || ''],
+    ['size', t('size'), p.size || p.size_name || ''],
+    ['material', t('material'), p.material || p.material_type || ''],
+    ['style_name', t('style_name'), p.style_name || ''],
+    ['pattern_type', t('pattern_type'), p.pattern_type || p.pattern_name || ''],
+    ['closure_type', t('closure_type'), p.closure_type || ''],
+    ['department', t('department'), p.department || p.department_name || ''],
+    ['target_gender', t('target_gender'), p.target_gender || ''],
+    ['age_range', t('age_range'), p.age_range || ''],
+    ['country_of_origin', t('country_of_origin'), p.country_of_origin || ''],
+    ['number_of_items', t('number_of_items'), p.number_of_items || ''],
+    ['unit_count', t('unit_count'), p.unit_count || ''],
+    ['unit_count_type', t('unit_count_type'), p.unit_count_type || ''],
+  ];
+  return `<div class="drawer-form-grid">${fields.map(([key, label, val]) =>
+    `<div class="drawer-form-group">
+      <label class="drawer-form-label">${label}</label>
+      <input class="drawer-form-input" data-field="${key}" value="${escHtml(val)}">
+    </div>`
+  ).join('')}</div>`;
+}
+
+function renderOfferTab(p) {
+  const price = p.price || p.standard_price || '';
+  const qty = p.quantity || '';
+  const cond = p.condition_type || 'New';
+  const fulfill = p.fulfillment_channel || '';
+  const upc = p.upc || p.product_id || '';
+  const cur = p.currency || 'USD';
+  const salePrice = p.sale_price || '';
+  const saleFrom = p.sale_from_date || '';
+  const saleEnd = p.sale_end_date || '';
+  const listPrice = p.list_price || '';
+  const maxQty = p.max_order_quantity || '';
+  const handling = p.handling_time || '';
+  const shipGroup = p.merchant_shipping_group_name || '';
+  const taxCode = p.product_tax_code || '';
+  const idType = p.external_product_id_type || 'UPC';
+  const identityMode = p.product_identity_mode || '';
+
+  return `<div class="drawer-form-grid">
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('price_usd')}</label>
+      <input class="drawer-form-input" type="number" step="0.01" min="0.01" data-field="price" value="${escHtml(price)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('currency')}</label>
+      <select class="drawer-form-select" data-field="currency">
+        <option value="USD" ${cur==='USD'?'selected':''}>USD</option>
+        <option value="CAD" ${cur==='CAD'?'selected':''}>CAD</option>
+        <option value="GBP" ${cur==='GBP'?'selected':''}>GBP</option>
+        <option value="EUR" ${cur==='EUR'?'selected':''}>EUR</option>
+        <option value="JPY" ${cur==='JPY'?'selected':''}>JPY</option>
+        <option value="MXN" ${cur==='MXN'?'selected':''}>MXN</option>
+        <option value="AUD" ${cur==='AUD'?'selected':''}>AUD</option>
+        <option value="INR" ${cur==='INR'?'selected':''}>INR</option>
+        <option value="SGD" ${cur==='SGD'?'selected':''}>SGD</option>
+        <option value="SAR" ${cur==='SAR'?'selected':''}>SAR</option>
+        <option value="AED" ${cur==='AED'?'selected':''}>AED</option>
+        <option value="PLN" ${cur==='PLN'?'selected':''}>PLN</option>
+        <option value="SEK" ${cur==='SEK'?'selected':''}>SEK</option>
+        <option value="BRL" ${cur==='BRL'?'selected':''}>BRL</option>
+        <option value="TRY" ${cur==='TRY'?'selected':''}>TRY</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('list_price')}</label>
+      <input class="drawer-form-input" type="number" step="0.01" min="0" data-field="list_price" value="${escHtml(listPrice)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('sale_price')}</label>
+      <input class="drawer-form-input" type="number" step="0.01" min="0" data-field="sale_price" value="${escHtml(salePrice)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('sale_from_date')}</label>
+      <input class="drawer-form-input" type="date" data-field="sale_from_date" value="${escHtml(saleFrom)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('sale_end_date')}</label>
+      <input class="drawer-form-input" type="date" data-field="sale_end_date" value="${escHtml(saleEnd)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('inventory')}</label>
+      <input class="drawer-form-input" type="number" data-field="quantity" value="${escHtml(qty)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('max_order_quantity')}</label>
+      <input class="drawer-form-input" type="number" min="1" data-field="max_order_quantity" value="${escHtml(maxQty)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('condition')}</label>
+      <select class="drawer-form-select" data-field="condition_type">
+        <option value="New" ${cond==='New'?'selected':''}>New</option>
+        <option value="Refurbished" ${cond==='Refurbished'?'selected':''}>Refurbished</option>
+        <option value="UsedLikeNew" ${cond==='UsedLikeNew'?'selected':''}>Used - Like New</option>
+        <option value="UsedVeryGood" ${cond==='UsedVeryGood'?'selected':''}>Used - Very Good</option>
+        <option value="UsedGood" ${cond==='UsedGood'?'selected':''}>Used - Good</option>
+        <option value="UsedAcceptable" ${cond==='UsedAcceptable'?'selected':''}>Used - Acceptable</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('fulfillment')}</label>
+      <select class="drawer-form-select" data-field="fulfillment_channel">
+        <option value="DEFAULT" ${fulfill==='DEFAULT'?'selected':''}>FBM</option>
+        <option value="AMAZON_NA" ${fulfill==='AMAZON_NA'?'selected':''}>FBA (NA)</option>
+        <option value="AMAZON_EU" ${fulfill==='AMAZON_EU'?'selected':''}>FBA (EU)</option>
+        <option value="AMAZON_IN" ${fulfill==='AMAZON_IN'?'selected':''}>FBA (IN)</option>
+        <option value="AMAZON_JP" ${fulfill==='AMAZON_JP'?'selected':''}>FBA (JP)</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('handling_time')}</label>
+      <input class="drawer-form-input" type="number" min="0" data-field="handling_time" value="${escHtml(handling)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('merchant_shipping_group')}</label>
+      <input class="drawer-form-input" data-field="merchant_shipping_group_name" value="${escHtml(shipGroup)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('product_tax_code')}</label>
+      <input class="drawer-form-input" data-field="product_tax_code" value="${escHtml(taxCode)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('upc_ean')}</label>
+      <input class="drawer-form-input" data-field="upc" value="${escHtml(upc)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('product_identity_mode')}</label>
+      <select class="drawer-form-select" data-field="product_identity_mode">
+        <option value="" ${!identityMode?'selected':''}>-</option>
+        <option value="real_gtin" ${identityMode==='real_gtin'?'selected':''}>${t('identity_real_gtin')}</option>
+        <option value="gtin_exemption" ${identityMode==='gtin_exemption'?'selected':''}>${t('identity_exemption')}</option>
+        <option value="internal_code" ${identityMode==='internal_code'?'selected':''}>${t('identity_internal')}</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('external_product_id_type')}</label>
+      <select class="drawer-form-select" data-field="external_product_id_type">
+        <option value="UPC" ${idType==='UPC'?'selected':''}>UPC</option>
+        <option value="EAN" ${idType==='EAN'?'selected':''}>EAN</option>
+        <option value="GTIN" ${idType==='GTIN'?'selected':''}>GTIN</option>
+        <option value="ISBN" ${idType==='ISBN'?'selected':''}>ISBN</option>
+        <option value="ASIN" ${idType==='ASIN'?'selected':''}>ASIN</option>
+      </select>
+    </div>
+    <div class="drawer-form-group" style="grid-column:1/-1;">
+      <label class="drawer-form-label">Hint</label>
+      <div style="padding:10px 12px;border:1px solid var(--border);border-radius:10px;color:var(--text-secondary);font-size:12px;line-height:1.6;">
+        ${lang==='zh'
+          ? '真实GTIN: 提交真实 UPC/EAN/GTIN。GTIN免码: 不提交条码，但店铺必须已有免码资格。内部码: 只用于你们内部识别，系统会阻止正式新建。'
+          : 'Real GTIN: submit a real UPC/EAN/GTIN. GTIN Exemption: no barcode is submitted, but the store must already have approval. Internal Code: only for internal ERP use and will be blocked from listing creation.'}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderComplianceTab(p) {
+  const batReq = p.batteries_required || '';
+  const batInc = p.batteries_included || p.are_batteries_included || '';
+  const batType = p.battery_type || '';
+  const numBat = p.number_of_batteries || '';
+  const batComp = p.battery_cell_composition || '';
+  const lithPkg = p.lithium_battery_packaging || '';
+  const lithEnergy = p.lithium_battery_energy_content || '';
+  const lithWeight = p.lithium_battery_weight || '';
+  const hazmat = p.hazmat_declaration || '';
+  const cpsia = p.cpsia_cautionary_statement || '';
+  const legalDisc = p.legal_disclaimer || '';
+  const safetyWarn = p.safety_warning || '';
+
+  return `<div class="drawer-form-grid">
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('needs_battery')}</label>
+      <select class="drawer-form-select" data-field="batteries_required">
+        <option value="" ${!batReq?'selected':''}>-</option>
+        <option value="Yes" ${batReq==='Yes'?'selected':''}>Yes</option>
+        <option value="No" ${batReq==='No'?'selected':''}>No</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('includes_battery')}</label>
+      <select class="drawer-form-select" data-field="batteries_included">
+        <option value="" ${!batInc?'selected':''}>-</option>
+        <option value="Yes" ${batInc==='Yes'?'selected':''}>Yes</option>
+        <option value="No" ${batInc==='No'?'selected':''}>No</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('battery_type')}</label>
+      <input class="drawer-form-input" data-field="battery_type" value="${escHtml(batType)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('num_batteries')}</label>
+      <input class="drawer-form-input" type="number" min="0" data-field="number_of_batteries" value="${escHtml(numBat)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('battery_composition')}</label>
+      <input class="drawer-form-input" data-field="battery_cell_composition" value="${escHtml(batComp)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('lithium_packaging')}</label>
+      <select class="drawer-form-select" data-field="lithium_battery_packaging">
+        <option value="" ${!lithPkg?'selected':''}>-</option>
+        <option value="batteries_contained_in_equipment" ${lithPkg==='batteries_contained_in_equipment'?'selected':''}>Contained in equipment</option>
+        <option value="batteries_packed_with_equipment" ${lithPkg==='batteries_packed_with_equipment'?'selected':''}>Packed with equipment</option>
+        <option value="batteries_only" ${lithPkg==='batteries_only'?'selected':''}>Batteries only</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('lithium_energy')}</label>
+      <input class="drawer-form-input" type="number" step="0.01" min="0" data-field="lithium_battery_energy_content" value="${escHtml(lithEnergy)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('lithium_weight')}</label>
+      <input class="drawer-form-input" type="number" step="0.01" min="0" data-field="lithium_battery_weight" value="${escHtml(lithWeight)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('hazmat')}</label>
+      <input class="drawer-form-input" data-field="hazmat_declaration" value="${escHtml(hazmat)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('cpsia_warning')}</label>
+      <input class="drawer-form-input" data-field="cpsia_cautionary_statement" value="${escHtml(cpsia)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('safety_warning')}</label>
+      <input class="drawer-form-input" data-field="safety_warning" value="${escHtml(safetyWarn)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('legal_disclaimer')}</label>
+      <input class="drawer-form-input" data-field="legal_disclaimer" value="${escHtml(legalDisc)}">
+    </div>
+  </div>`;
+}
+
+function renderShippingTab(p) {
+  const fields = [
+    ['item_weight', t('item_weight'), p.item_weight || ''],
+    ['item_weight_unit', t('weight_unit'), p.item_weight_unit || ''],
+    ['item_length', t('item_length'), p.item_length || ''],
+    ['item_width', t('item_width'), p.item_width || ''],
+    ['item_height', t('item_height'), p.item_height || ''],
+    ['dimension_unit', t('dimension_unit'), p.dimension_unit || ''],
+    ['package_weight', t('pkg_weight'), p.package_weight || ''],
+    ['package_weight_unit', t('pkg_weight_unit'), p.package_weight_unit || ''],
+    ['package_length', t('pkg_length'), p.package_length || ''],
+    ['package_width', t('pkg_width'), p.package_width || ''],
+    ['package_height', t('pkg_height'), p.package_height || ''],
+  ];
+  return `<div class="drawer-form-grid">${fields.map(([key, label, val]) =>
+    `<div class="drawer-form-group">
+      <label class="drawer-form-label">${label}</label>
+      <input class="drawer-form-input" data-field="${key}" value="${escHtml(val)}">
+    </div>`
+  ).join('')}</div>`;
+}
+
+function renderVariationTab(p) {
+  const pSku = p.parent_sku || '';
+  const level = p.parentage_level || '';
+  const theme = p.variation_theme || '';
+
+  return `<div class="drawer-form-grid">
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('parent_sku')}</label>
+      <input class="drawer-form-input" data-field="parent_sku" value="${escHtml(pSku)}">
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('parentage_level')}</label>
+      <select class="drawer-form-select" data-field="parentage_level">
+        <option value="" ${!level?'selected':''}>-</option>
+        <option value="parent" ${level==='parent'?'selected':''}>Parent</option>
+        <option value="child" ${level==='child'?'selected':''}>Child</option>
+      </select>
+    </div>
+    <div class="drawer-form-group">
+      <label class="drawer-form-label">${t('variation_theme')}</label>
+      <select class="drawer-form-select" data-field="variation_theme">
+        <option value="" ${!theme?'selected':''}>-</option>
+        <option value="Color" ${theme==='Color'?'selected':''}>Color</option>
+        <option value="Size" ${theme==='Size'?'selected':''}>Size</option>
+        <option value="ColorSize" ${theme==='ColorSize'?'selected':''}>Color + Size</option>
+        <option value="SizeName" ${theme==='SizeName'?'selected':''}>Size Name</option>
+        <option value="ColorName" ${theme==='ColorName'?'selected':''}>Color Name</option>
+        <option value="SizeColor" ${theme==='SizeColor'?'selected':''}>Size + Color</option>
+      </select>
+    </div>
+  </div>`;
+}
+
+// ===== 17b. Category Fields Tab =====
+function renderCategoryFieldsTab(p) {
+  const fields = categoryFieldsConfig.fields || [];
+  if (!fields.length) {
+    return `<div style="text-align:center;padding:40px 20px;color:var(--text-secondary);">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:12px;opacity:.5;">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 8.82 1.65 1.65 0 0 0 4.27 7l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"></path>
+      </svg>
+      <div style="font-size:14px;margin-bottom:8px;">${t('no_category_fields')}</div>
+      <button class="btn btn-primary btn-sm" onclick="openFieldSelector()">${t('configure_fields')}</button>
+    </div>`;
+  }
+
+  const raw = p._raw || p;
+  const catName = categoryFieldsConfig.category || '';
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <span style="font-size:13px;color:var(--text-secondary);">${catName ? (lang==='zh'? _getCatZhName(catName): _getCatEnName(catName)) : t('category_fields')} (${fields.length})</span>
+    <button class="btn btn-outline btn-sm" onclick="openFieldSelector()" style="padding:2px 8px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 8.82 1.65 1.65 0 0 0 4.27 7l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"></path></svg>
+    </button>
+  </div>
+  <div class="drawer-form-grid">`;
+
+  for (const f of fields) {
+    const val = raw[f.key] || p[f.key] || '';
+    const label = lang === 'zh' ? (f.label_zh || f.key) : (f.label_en || f.key);
+    if (f.type === 'select' && f.options) {
+      html += `<div class="drawer-form-group">
+        <label class="drawer-form-label">${escHtml(label)}</label>
+        <select class="drawer-form-select" data-field="${f.key}">
+          <option value="" ${!val?'selected':''}>-</option>
+          ${f.options.map(o => `<option value="${escHtml(o)}" ${val===o?'selected':''}>${escHtml(o)}</option>`).join('')}
+        </select>
+      </div>`;
+    } else {
+      html += `<div class="drawer-form-group">
+        <label class="drawer-form-label">${escHtml(label)}</label>
+        <input class="drawer-form-input" data-field="${f.key}" value="${escHtml(val)}"
+          ${f.type==='number'?'type="number"':'type="text"'}
+          ${f.example?`placeholder="${escHtml(f.example)}"`:''}>
+      </div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function _getCatZhName(key) {
+  if (!fieldRegistry) return key;
+  const cat = fieldRegistry.categories[key];
+  return cat ? cat.name_zh : key;
+}
+function _getCatEnName(key) {
+  if (!fieldRegistry) return key;
+  const cat = fieldRegistry.categories[key];
+  return cat ? cat.name_en : key;
+}
+
+// ===== 17c. Field Selector Modal =====
+async function loadFieldRegistry() {
+  if (fieldRegistry) return fieldRegistry;
+  try {
+    const r = await fetch('/api/field-registry');
+    const d = await r.json();
+    if (d.success) fieldRegistry = d.registry;
+    return fieldRegistry;
+  } catch(e) { return null; }
+}
+
+async function loadSelectedFields() {
+  try {
+    const r = await fetch('/api/selected-fields');
+    const d = await r.json();
+    if (d.success && d.config) {
+      categoryFieldsConfig = d.config;
+      // 需要从注册表补全字段定义
+      if (categoryFieldsConfig.fields && categoryFieldsConfig.fields.length && typeof categoryFieldsConfig.fields[0] === 'string') {
+        await loadFieldRegistry();
+        if (fieldRegistry) {
+          const allFields = {};
+          for (const cat of Object.values(fieldRegistry.categories || {})) {
+            for (const f of cat.fields || []) allFields[f.key] = f;
+          }
+          for (const f of fieldRegistry.cross_category_fields || []) allFields[f.key] = f;
+          categoryFieldsConfig.fields = categoryFieldsConfig.fields.map(k => allFields[k] || {key:k, label_en:k, label_zh:k, type:'text'});
+        }
+      }
+    }
+  } catch(e) {}
+}
+
+async function openFieldSelector() {
+  await loadFieldRegistry();
+  if (!fieldRegistry) { showToast('error', 'Failed to load field registry'); return; }
+
+  const selectedKeys = new Set((categoryFieldsConfig.fields || []).map(f => typeof f === 'string' ? f : f.key));
+  const currentCat = categoryFieldsConfig.category || '';
+
+  let html = `<div class="field-selector-modal" id="fieldSelectorModal">
+    <div class="field-selector-backdrop" onclick="closeFieldSelector()"></div>
+    <div class="field-selector-dialog">
+      <div class="field-selector-header">
+        <h3>${t('field_selector')}</h3>
+        <button class="drawer-close" onclick="closeFieldSelector()">&times;</button>
+      </div>
+      <div class="field-selector-body">
+        <div class="field-selector-cats">
+          <div class="field-selector-cat-title">${t('select_category')}</div>`;
+
+  // Category buttons
+  for (const [key, cat] of Object.entries(fieldRegistry.categories)) {
+    const name = lang === 'zh' ? cat.name_zh : cat.name_en;
+    const icon = cat.icon || '';
+    html += `<button class="field-cat-btn ${currentCat===key?'active':''}"
+      onclick="selectFieldCategory('${key}')" data-cat="${key}">
+      ${icon} ${name} <span class="field-cat-count">${cat.fields.length}</span>
+    </button>`;
+  }
+
+  html += `</div>
+        <div class="field-selector-fields" id="fieldSelectorFields">
+          <div class="field-selector-search">
+            <input type="text" placeholder="${t('search_fields')}" oninput="filterFieldList(this.value)" id="fieldSearchInput">
+          </div>
+          <div class="field-selector-list" id="fieldSelectorList">`;
+
+  // If a category is selected, show its fields; otherwise show cross-category
+  const fieldsToShow = currentCat && fieldRegistry.categories[currentCat]
+    ? fieldRegistry.categories[currentCat].fields
+    : fieldRegistry.cross_category_fields || [];
+
+  for (const f of fieldsToShow) {
+    const checked = selectedKeys.has(f.key) ? 'checked' : '';
+    const label = lang === 'zh' ? (f.label_zh || f.key) : (f.label_en || f.key);
+    html += `<label class="field-item" data-key="${f.key}" data-search="${f.key} ${f.label_en||''} ${f.label_zh||''}">
+      <input type="checkbox" ${checked} value="${f.key}" onchange="toggleFieldSelection(this)">
+      <span class="field-item-label">${escHtml(label)}</span>
+      <span class="field-item-key">${f.key}</span>
+    </label>`;
+  }
+
+  // cross-category fields at bottom
+  if (currentCat) {
+    html += `<div class="field-section-divider">${lang==='zh'?'跨品类通用字段':'Cross-Category Fields'}</div>`;
+    for (const f of fieldRegistry.cross_category_fields || []) {
+      const checked = selectedKeys.has(f.key) ? 'checked' : '';
+      const label = lang === 'zh' ? (f.label_zh || f.key) : (f.label_en || f.key);
+      html += `<label class="field-item" data-key="${f.key}" data-search="${f.key} ${f.label_en||''} ${f.label_zh||''}">
+        <input type="checkbox" ${checked} value="${f.key}" onchange="toggleFieldSelection(this)">
+        <span class="field-item-label">${escHtml(label)}</span>
+        <span class="field-item-key">${f.key}</span>
+      </label>`;
+    }
+  }
+
+  html += `</div></div>
+        <div class="field-selector-selected" id="fieldSelectorSelected">
+          <div class="field-selector-cat-title">${t('selected_fields')} (<span id="selectedCount">${selectedKeys.size}</span>)</div>
+          <div class="field-selected-list" id="fieldSelectedList">`;
+  for (const key of selectedKeys) {
+    html += `<span class="field-tag" data-key="${key}">${key} <button onclick="removeFieldSelection('${key}')">&times;</button></span>`;
+  }
+  html += `</div></div></div>
+      <div class="field-selector-footer">
+        <button class="btn btn-outline" onclick="closeFieldSelector()">${t('cancel')}</button>
+        <button class="btn btn-primary" onclick="applyFieldSelection()">${t('apply_fields')}</button>
+      </div>
+    </div>
+  </div>`;
+
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeFieldSelector() {
+  const modal = document.getElementById('fieldSelectorModal');
+  if (modal) modal.remove();
+}
+
+function selectFieldCategory(catKey) {
+  if (!fieldRegistry) return;
+  // Update active button
+  document.querySelectorAll('.field-cat-btn').forEach(b => b.classList.toggle('active', b.dataset.cat === catKey));
+  // Update category in config
+  categoryFieldsConfig.category = catKey;
+
+  // Collect selected keys from right panel TAGS (not checkboxes - those get destroyed on category switch)
+  const selectedKeys = new Set();
+  document.querySelectorAll('#fieldSelectedList .field-tag').forEach(tag => selectedKeys.add(tag.dataset.key));
+
+  const cat = fieldRegistry.categories[catKey];
+  if (!cat) return;
+
+  let html = '';
+  for (const f of cat.fields) {
+    const checked = selectedKeys.has(f.key) ? 'checked' : '';
+    const label = lang === 'zh' ? (f.label_zh || f.key) : (f.label_en || f.key);
+    html += `<label class="field-item" data-key="${f.key}" data-search="${f.key} ${f.label_en||''} ${f.label_zh||''}">
+      <input type="checkbox" ${checked} value="${f.key}" onchange="toggleFieldSelection(this)">
+      <span class="field-item-label">${escHtml(label)}</span>
+      <span class="field-item-key">${f.key}</span>
+    </label>`;
+  }
+  // Cross-category
+  html += `<div class="field-section-divider">${lang==='zh'?'跨品类通用字段':'Cross-Category Fields'}</div>`;
+  for (const f of fieldRegistry.cross_category_fields || []) {
+    const checked = selectedKeys.has(f.key) ? 'checked' : '';
+    const label = lang === 'zh' ? (f.label_zh || f.key) : (f.label_en || f.key);
+    html += `<label class="field-item" data-key="${f.key}" data-search="${f.key} ${f.label_en||''} ${f.label_zh||''}">
+      <input type="checkbox" ${checked} value="${f.key}" onchange="toggleFieldSelection(this)">
+      <span class="field-item-label">${escHtml(label)}</span>
+      <span class="field-item-key">${f.key}</span>
+    </label>`;
+  }
+
+  document.getElementById('fieldSelectorList').innerHTML = html;
+  // Clear search
+  const si = document.getElementById('fieldSearchInput');
+  if (si) si.value = '';
+}
+
+function filterFieldList(query) {
+  const q = query.toLowerCase().trim();
+  document.querySelectorAll('#fieldSelectorList .field-item').forEach(el => {
+    const search = (el.dataset.search || '').toLowerCase();
+    el.style.display = !q || search.includes(q) ? '' : 'none';
+  });
+}
+
+function toggleFieldSelection(cb) {
+  const key = cb.value;
+  const list = document.getElementById('fieldSelectedList');
+  const countEl = document.getElementById('selectedCount');
+  if (cb.checked) {
+    // Avoid duplicate tags
+    if (!list.querySelector(`[data-key="${key}"]`)) {
+      list.insertAdjacentHTML('beforeend',
+        `<span class="field-tag" data-key="${key}">${key} <button onclick="removeFieldSelection('${key}')">&times;</button></span>`);
+    }
+  } else {
+    const tag = list.querySelector(`[data-key="${key}"]`);
+    if (tag) tag.remove();
+  }
+  countEl.textContent = list.querySelectorAll('.field-tag').length;
+}
+
+function removeFieldSelection(key) {
+  // Uncheck the checkbox
+  const cb = document.querySelector(`#fieldSelectorList input[value="${key}"]`);
+  if (cb) cb.checked = false;
+  // Remove tag
+  const tag = document.querySelector(`#fieldSelectedList [data-key="${key}"]`);
+  if (tag) tag.remove();
+  document.getElementById('selectedCount').textContent =
+    document.querySelectorAll('#fieldSelectedList .field-tag').length;
+}
+
+async function applyFieldSelection() {
+  const selectedKeys = [];
+  document.querySelectorAll('#fieldSelectedList .field-tag').forEach(tag => {
+    selectedKeys.push(tag.dataset.key);
+  });
+
+  const catKey = categoryFieldsConfig.category || '';
+
+  // Build full field definitions from registry
+  const allFields = {};
+  if (fieldRegistry) {
+    for (const cat of Object.values(fieldRegistry.categories || {})) {
+      for (const f of cat.fields || []) allFields[f.key] = f;
+    }
+    for (const f of fieldRegistry.cross_category_fields || []) allFields[f.key] = f;
+  }
+
+  categoryFieldsConfig = {
+    category: catKey,
+    fields: selectedKeys.map(k => allFields[k] || {key:k, label_en:k, label_zh:k, type:'text'})
+  };
+
+  // Save to server
+  try {
+    await fetch('/api/selected-fields', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ category: catKey, fields: selectedKeys })
+    });
+  } catch(e) {}
+
+  closeFieldSelector();
+  showToast('success', lang==='zh' ? `已选择 ${selectedKeys.length} 个品类字段` : `${selectedKeys.length} category fields selected`);
+  // Re-render drawer if open
+  if (drawerProduct && drawerTab === 'category') renderDrawerContent();
+}
+
+// ===== 18. Drawer Actions =====
+async function saveDrawerChanges() {
+  if (!drawerProduct) return;
+  const inputs = document.querySelectorAll('#drawerBody [data-field]');
+  const updates = {};
+  inputs.forEach(inp => {
+    const field = inp.getAttribute('data-field');
+    updates[field] = inp.value;
+    drawerProduct[field] = inp.value;
+  });
+
+  if (currentFile) {
+    try {
+      const response = await fetch('/api/update-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: currentFile, sku: drawerProduct.sku, updates })
+      });
+      const data = await response.json();
+      if (data.error) return showToast('error', data.error);
+    } catch (e) {
+      return showToast('error', '保存失败: ' + e.message);
+    }
+  }
+
+  showToast('success', '已保存到文件');
+  applyFilter();
+}
+
+async function validateDrawerProduct() {
+  if (!drawerProduct) return;
+  try {
+    const response = await fetch('/api/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ products: [normalizeProductForValidation(drawerProduct)] })
+    });
+    const data = await response.json();
+    if (data.error) return showToast('error', data.error);
+    if (data.results && data.results[0]) {
+      applyValidationResult(drawerProduct, data.results[0]);
+      renderDrawerContent();
+      updateStats();
+      applyFilter();
+      loadTaskCenter();
+      if (drawerProduct._validErrors && drawerProduct._validErrors.length > 0) {
+        showValidationIssues(drawerProduct.sku);
+      } else {
+        showToast(drawerProduct._validWarnings && drawerProduct._validWarnings.length > 0 ? 'warning' : 'success', '校验完成');
+      }
+    }
+  } catch (e) {
+    showToast('error', '校验失败: ' + e.message);
+  }
+}
+
+function showListingCheckReport(results) {
+  const rows = (results || []).map(result => {
+    const status = result.status || '-';
+    const summary = result.summary_text || '-';
+    const missing = (result.missing_fields || []).map(item => item.name).join(', ');
+    return `
+      <div style="padding:10px 0; border-bottom:1px solid var(--line);">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:center;">
+          <strong>${escHtml(result.sku || '-')}</strong>
+          <span>${escHtml(status)}</span>
+        </div>
+        <div style="margin-top:6px; color:var(--text-secondary); line-height:1.6;">${escHtml(summary)}</div>
+        ${missing ? `<div style="margin-top:6px; font-size:12px; color:var(--text-secondary);">缺失字段: ${escHtml(missing)}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+  showModal('缺项诊断结果', `<div style="max-height:55vh; overflow:auto;">${rows || '<p>暂无结果</p>'}</div>`);
+}
+
+async function runListingCheck(targetSku = '', overrideSkus = null) {
+  if (!currentFile) return showToast('warning', '请先导入文件');
+  const skus = Array.isArray(overrideSkus) && overrideSkus.length > 0
+    ? overrideSkus
+    : (targetSku ? [targetSku] : getSelectedActionableSkus());
+  if (skus.length === 0) return showToast('warning', '没有可诊断的商品');
+
+  try {
+    showToast('info', `正在诊断 ${skus.length} 个商品...`);
+    const response = await fetch('/api/listing-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: currentFile, skus, account_id: selectedAccountId || '' })
+    });
+    const data = await response.json();
+    if (data.error) return showToast('error', data.error);
+    if (data.account_message) showToast('warning', data.account_message);
+
+    (data.results || []).forEach(result => {
+      const product = products.find(item => item.sku === result.sku);
+      if (product) applyListingCheckResult(product, result);
+    });
+
+    renderTable();
+    updateStats();
+
+    if (drawerProduct) {
+      const refreshed = products.find(item => item.sku === drawerProduct.sku);
+      if (refreshed) drawerProduct = refreshed;
+      renderDrawerContent();
+    }
+
+    if (skus.length === 1 && drawerProduct && drawerProduct.sku === skus[0]) {
+      switchDrawerTab('diagnostics');
+    } else {
+      showListingCheckReport(data.results || []);
+    }
+
+    const fail = Number(data.fail || 0);
+    const warn = Number(data.warn || 0);
+    const tone = fail > 0 ? 'warning' : (warn > 0 ? 'warning' : 'success');
+    showToast(tone, `诊断完成：${data.pass || 0} 通过，${warn} 警告，${fail} 失败`);
+  } catch (e) {
+    showToast('error', '缺项诊断失败: ' + e.message);
+  }
+}
+
+function batchListingCheck() {
+  const plan = collectActionPlan('validate', 'all');
+  if (plan.actionableSkus.length === 0) return showToast('warning', '没有可诊断的商品');
+  runListingCheck('', plan.actionableSkus);
+}
+
+function regenerateField(sku, field) {
+  showToast('info', '正在生成 ' + field + '...');
+  const textFieldMap = {
+    title: ['title'],
+    bullet_1: ['bullets'],
+    bullet_2: ['bullets'],
+    bullet_3: ['bullets'],
+    bullet_4: ['bullets'],
+    bullet_5: ['bullets'],
+    bullets: ['bullets'],
+    description: ['description'],
+    keywords: ['keywords'],
+  };
+  fetch('/api/process-single', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sku, field, text_fields: textFieldMap[field] || ['title','bullets','description','keywords'], file: currentFile, action: 'rewrite' })
+  }).then(r => r.json()).then(d => {
+    if (d.error) return showToast('error', d.error);
+    const p = products.find(x => x.sku === sku);
+    if (p && d.result) Object.assign(p, d.result);
+    if (drawerProduct && drawerProduct.sku === sku) renderDrawerContent();
+    showToast('success', field + ' 生成完成');
+  }).catch(e => showToast('error', e.message));
+}
+
+function adoptField(sku, field) {
+  const p = products.find(x => x.sku === sku);
+  if (!p) return;
+  const aiKeyMap = { title:'ai_title', bullet_1:'ai_bullet_1', bullet_2:'ai_bullet_2',
+    bullet_3:'ai_bullet_3', bullet_4:'ai_bullet_4', bullet_5:'ai_bullet_5',
+    description:'ai_description', keywords:'ai_keywords' };
+  const origKeyMap = { title:'item_name', bullet_1:'bullet_point_1', bullet_2:'bullet_point_2',
+    bullet_3:'bullet_point_3', bullet_4:'bullet_point_4', bullet_5:'bullet_point_5',
+    description:'product_description', keywords:'generic_keywords' };
+  const aiVal = p[aiKeyMap[field]];
+  if (!aiVal) return;
+  const targetField = origKeyMap[field] || field;
+
+  fetch('/api/update-field', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: currentFile, sku, field: targetField, value: aiVal })
+  }).then(r => r.json()).then(d => {
+    if (d.error) return showToast('error', d.error);
+    p[targetField] = aiVal;
+    if (field === 'title') {
+      p.title = aiVal;
+      p.item_name = aiVal;
+    }
+    if (drawerProduct && drawerProduct.sku === sku) renderDrawerContent();
+    showToast('success', '已采用AI结果');
+    applyFilter();
+  }).catch(e => showToast('error', e.message));
+}
+
+function regenerateImage(sku, scope) {
+  showToast('info', '正在生成图片...');
+  const bgStyle = (drawerProduct && drawerProduct.sku === sku && drawerProduct._bgStyle) || 'white';
+  fetch('/api/process-single', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sku, action: 'image', scope, bg_style: bgStyle, file: currentFile })
+  }).then(r => r.json()).then(d => {
+    if (d.error) return showToast('error', d.error);
+    const p = products.find(x => x.sku === sku);
+    if (p && d.result) Object.assign(p, d.result);
+    if (drawerProduct && drawerProduct.sku === sku) renderDrawerContent();
+    showToast('success', '图片生成完成');
+  }).catch(e => showToast('error', e.message));
+}
+
+async function adoptImage(sku, scope) {
+  const p = products.find(x => x.sku === sku);
+  if (!p) return;
+  const aiLocator = p.ai_media_locator || p.ai_public_image_url || (isMediaLocator(p.ai_image_url) ? p.ai_image_url : '');
+  const aiPreview = p.ai_main_image_preview || p.ai_main_image || (isWebImageUrl(p.ai_image_url) ? p.ai_image_url : '');
+  const snapshot = JSON.parse(JSON.stringify({
+    main_image_url: p.main_image_url || '',
+    main_image_preview_url: p.main_image_preview_url || '',
+    images: Object.fromEntries(Array.from({ length: 8 }, (_, idx) => {
+      const i = idx + 2;
+      return [i, {
+        image: p['image_' + i] || '',
+        other: p['other_image_url_' + (i - 1)] || '',
+        preview: p['image_' + i + '_preview_url'] || '',
+      }];
+    })),
+  }));
+
+  if (scope === 'main') {
+    if (!aiLocator) return showToast('warning', '当前图片尚未完成媒体上传，暂不能提交到亚马逊');
+    p.main_image_url = aiLocator;
+    p.main_image_preview_url = aiPreview;
+    // Persist to Excel
+    if (currentFile) {
+      try {
+        const response = await fetch('/api/update-field', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: currentFile, sku, field: 'main_image_url', value: aiLocator })
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          throw new Error(data.error || ('HTTP ' + response.status));
+        }
+      } catch (err) {
+        p.main_image_url = snapshot.main_image_url;
+        p.main_image_preview_url = snapshot.main_image_preview_url;
+        if (drawerProduct && drawerProduct.sku === sku) renderDrawerContent();
+        applyFilter();
+        return showToast('error', '保存失败: ' + err.message);
+      }
+    }
+  } else if (scope === 'all') {
+    const updates = {};
+    // Adopt main image
+    if (aiLocator) {
+      p.main_image_url = aiLocator;
+      p.main_image_preview_url = aiPreview;
+      updates.main_image_url = aiLocator;
+    }
+    // Adopt sub images
+    for (let i = 2; i <= 9; i++) {
+      const aiSub = p['ai_media_locator_' + i] || p['ai_public_image_' + i] || '';
+      const aiSubPreview = p['ai_image_' + i + '_preview'] || p['ai_image_' + i] || '';
+      if (aiSub) {
+        p['image_' + i] = aiSub;
+        p['other_image_url_' + (i - 1)] = aiSub;
+        p['image_' + i + '_preview_url'] = aiSubPreview;
+        updates['image_' + i] = aiSub;
+      }
+    }
+    if (currentFile && Object.keys(updates).length > 0) {
+      try {
+        const response = await fetch('/api/update-product', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: currentFile, sku, updates })
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          throw new Error(data.error || ('HTTP ' + response.status));
+        }
+      } catch (err) {
+        p.main_image_url = snapshot.main_image_url;
+        p.main_image_preview_url = snapshot.main_image_preview_url;
+        for (let i = 2; i <= 9; i++) {
+          p['image_' + i] = snapshot.images[i].image;
+          p['other_image_url_' + (i - 1)] = snapshot.images[i].other;
+          p['image_' + i + '_preview_url'] = snapshot.images[i].preview;
+        }
+        if (drawerProduct && drawerProduct.sku === sku) renderDrawerContent();
+        applyFilter();
+        return showToast('error', '保存失败: ' + err.message);
+      }
+    } else if (!aiLocator && Object.keys(updates).length === 0) {
+      return showToast('warning', '当前图片尚未完成媒体上传，暂不能提交到亚马逊');
+    }
+  }
+
+  if (drawerProduct && drawerProduct.sku === sku) renderDrawerContent();
+  applyFilter();
+  showToast('success', '已采用AI图片');
+}
+
+function selectBg(el, bg) {
+  el.parentElement.querySelectorAll('.bg-opt').forEach(o => o.classList.remove('active'));
+  el.classList.add('active');
+  // Store background preference for current drawer product
+  if (drawerProduct) {
+    drawerProduct._bgStyle = bg;
+  }
+}
+
+// ===== 19. AI Processing =====
+function processSingle(sku) {
+  showToast('info', '正在AI处理: ' + sku);
+  fetch('/api/process-single', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sku, file: currentFile, action: 'rewrite' })
+  }).then(r => r.json()).then(d => {
+    if (d.error) return showToast('error', d.error);
+    const p = products.find(x => x.sku === sku);
+    if (p && d.result) { Object.assign(p, d.result); p.ai_status = 'completed'; }
+    if (drawerProduct && drawerProduct.sku === sku) renderDrawerContent();
+    updateStats(); applyFilter();
+    showToast('success', 'AI处理完成: ' + sku);
+  }).catch(e => showToast('error', e.message));
+}
+
+function batchProcess(action, scope) {
+  const plan = collectActionPlan(action, scope);
+  if (plan.actionableSkus.length === 0) {
+    return showToast('warning', plan.skipped.length > 0 ? '没有可执行商品，请先修复摘要中的问题' : '没有可处理的商品');
+  }
+  closeAllDropdowns();
+  showActionPreflight(plan, () => {
+    processing = true;
+    cancelRequested = false;
+    showProgress(action === 'image' ? '批量生图' : '批量AI文案', 0, plan.actionableSkus.length);
+
+    const options = { selected_skus: plan.actionableSkus };
+    if (action === 'rewrite') {
+      options.process_text = true;
+      options.process_images = false;
+      options.text_fields = scope === 'title' ? ['title']
+        : scope === 'bullets' ? ['bullets']
+        : ['title', 'bullets', 'description', 'keywords'];
+    } else {
+      options.process_text = false;
+      options.process_images = true;
+      options.image_scope = scope === 'all' ? 'all' : 'main';
+      options.image_style = (drawerProduct && drawerProduct._bgStyle) || 'white';
+    }
+
+    fetch('/api/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage: 1, file: currentFile, action, scope, options })
+    }).then(r => r.json()).then(d => {
+      if (d.error) { processing = false; hideProgress(); return showToast('error', d.error); }
+      pollRetries = 0;
+      loadTaskCenter();
+      pollStatus();
+    }).catch(e => { processing = false; hideProgress(); showToast('error', e.message); });
+  });
+}
+
+let pollRetries = 0;
+const MAX_POLL_RETRIES = 40; // ~60 seconds
+
+function pollStatus() {
+  if (!processing) return;
+  if (pollRetries >= MAX_POLL_RETRIES) {
+    processing = false;
+    cancelRequested = false;
+    hideProgress();
+    showToast('error', '轮询超时，请检查任务状态');
+    return;
+  }
+  pollRetries++;
+  fetch('/api/status').then(r => r.json()).then(d => {
+    loadTaskCenter();
+    const done = d.completed ?? d.progress ?? 0;
+    const total = d.total || 1;
+    const current = d.current_sku || d.current_item || '';
+    updateProgress(done, total, current);
+
+    if (d.status === 'cancelling') {
+      document.getElementById('progressTitle').textContent = '正在取消...';
+      document.getElementById('progressItem').textContent = '等待当前任务安全停止';
+      setTimeout(pollStatus, 1000);
+      return;
+    }
+
+    if (d.status === 'cancelled') {
+      processing = false;
+      cancelRequested = false;
+      hideProgress();
+      loadProducts();
+      showToast('info', '任务已取消，已保留当前结果');
+    } else if (d.status === 'completed' || (!d.running && done >= total)) {
+      processing = false;
+      cancelRequested = false;
+      hideProgress();
+      loadProducts();
+      showToast('success', `处理完成: ${done}/${total}`);
+    } else {
+      setTimeout(pollStatus, 1500);
+    }
+  }).catch(() => {
+    if (pollRetries >= MAX_POLL_RETRIES) { processing = false; cancelRequested = false; hideProgress(); showToast('error', '轮询超时'); return; }
+    setTimeout(pollStatus, 3000);
+  });
+}
+
+function cancelProcess() {
+  if (!processing || cancelRequested) return;
+  cancelRequested = true;
+  fetch('/api/process/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  }).then(r => r.json()).then(d => {
+    if (d.error) {
+      cancelRequested = false;
+      return showToast('error', d.error);
+    }
+    document.getElementById('progressTitle').textContent = '正在取消...';
+    document.getElementById('progressItem').textContent = '等待当前任务安全停止';
+    showToast('info', d.message || '正在取消');
+  }).catch(e => {
+    cancelRequested = false;
+    showToast('error', '取消失败: ' + e.message);
+  });
+}
+
+// ===== 20. Validation =====
+function validateRow(p) {
+  const errors = [];
+  if (!p.sku) errors.push('缺少SKU');
+  if (p.parentage_level === 'parent') { p._validPass = true; p._validErrors = []; return; }
+  const title = p.title || p.item_name || '';
+  if (!title) errors.push('缺少标题');
+  if (title && title.length > 200) errors.push('标题超200字符');
+  const price = p.price || p.standard_price;
+  if (!price) errors.push('缺少价格');
+  p._validErrors = errors;
+  p._validPass = errors.length === 0;
+}
+
+async function batchValidate() {
+  if (!currentFile) return showToast('warning', '请先导入文件');
+
+  const plan = collectActionPlan('validate', 'all');
+  if (plan.actionableSkus.length === 0) return showToast('warning', '没有可校验的商品');
+
+  showActionPreflight(plan, async () => {
+    showToast('info', `正在校验 ${plan.actionableSkus.length} 个商品...`);
+
+    try {
+      const response = await fetch('/api/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input_file: currentFile, skus: plan.actionableSkus })
+      });
+      const data = await response.json();
+      if (data.error) return showToast('error', data.error);
+
+      const resultMap = new Map((data.results || []).map(result => [result.sku, result]));
+      products.forEach(product => {
+        const result = resultMap.get(product.sku);
+        if (result) applyValidationResult(product, result);
+      });
+
+      updateStats();
+      applyFilter();
+      loadTaskCenter();
+
+      const errorCount = (data.results || []).filter(result =>
+        (result.issues || []).some(issue => issue.level === 'error')
+      ).length;
+      const warningCount = (data.results || []).filter(result =>
+        !(result.issues || []).some(issue => issue.level === 'error') &&
+        (result.issues || []).some(issue => issue.level === 'warning')
+      ).length;
+
+      let message = `校验完成: ${(data.results || []).length - errorCount} 通过, ${errorCount} 有错误`;
+      if (warningCount > 0) message += `, ${warningCount} 有警告`;
+      showToast(errorCount > 0 ? 'warning' : 'success', message);
+    } catch (e) {
+      showToast('error', '校验失败: ' + e.message);
+    }
+  });
+}
+
+// ===== 21. Export =====
+function exportData() {
+  if (!currentFile) return;
+  const plan = collectActionPlan('export', 'sp-api');
+  if (selectedSkus.size > 0 && plan.actionableSkus.length === 0) {
+    return showToast('warning', '当前所选内容里没有可导出的真实 SKU，请取消父体选择后重试');
+  }
+  if (plan.actionableSkus.length === 0) return showToast('warning', '没有可导出的商品');
+  showActionPreflight(plan, () => {
+    fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file: currentFile,
+        format: 'sp-api',
+        selected_skus: selectedSkus.size > 0 ? plan.actionableSkus : []
+      })
+    }).then(r => r.json()).then(d => {
+      if (d.error) return showToast('error', d.error);
+      loadTaskCenter();
+      if (d.filename) window.location.href = '/api/download/' + encodeURIComponent(d.filename);
+    }).catch(e => showToast('error', e.message));
+  });
+}
+
+function downloadTemplate() {
+  window.location.href = '/api/download-template';
+}
+
+// ===== 22. Submit =====
+async function submitToAmazon(mode) {
+  if (!currentFile) return showToast('warning', '请先导入文件');
+  const plan = collectActionPlan(mode === 'preview' ? 'preview' : 'submit', 'all');
+  if (plan.actionableSkus.length === 0) return showToast('warning', '没有可提交的商品');
+  closeAllDropdowns();
+
+  let accounts = [];
+  try {
+    accounts = await fetchAccounts(true);
+  } catch (e) {
+    return showToast('error', '加载账号失败: ' + e.message);
+  }
+
+  const readyAccounts = accounts.filter(account => account.has_credentials !== false);
+  if (readyAccounts.length === 0) {
+    return showToast('error', '没有可用的亚马逊账号，请先在设置页添加账号并补全凭证');
+  }
+
+  if (readyAccounts.length === 1) {
+    selectedAccountId = readyAccounts[0].seller_id;
+    return showActionPreflight(plan, () => executeSubmit(mode, selectedAccountId, plan.actionableSkus));
+  }
+
+  const preferredId = readyAccounts.some(account => account.seller_id === selectedAccountId)
+    ? selectedAccountId
+    : ((readyAccounts.find(account => account.is_default) || readyAccounts[0] || {}).seller_id || '');
+  selectedAccountId = preferredId;
+  pendingSubmitPayload = { mode, skus: plan.actionableSkus, plan };
+
+  document.getElementById('modalTitle').textContent = mode === 'preview' ? '选择预览验证账号' : '选择提交账号';
+  document.getElementById('modalBody').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:13px;color:var(--text-secondary);">预检后将处理 ${plan.actionableSkus.length} 个商品，请选择要使用的亚马逊账号。</div>
+      ${readyAccounts.map(account => {
+        const checked = account.seller_id === preferredId ? 'checked' : '';
+        const site = account.marketplace_name || account.marketplace_id || '-';
+        const defaultBadge = account.is_default ? '<span class="badge badge-success">默认</span>' : '';
+        return `<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border-light);border-radius:8px;cursor:pointer;">
+          <input type="radio" name="submitAccountRadio" value="${escHtml(account.seller_id)}" ${checked} style="margin-top:2px;">
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <strong>${escHtml(account.name || account.seller_id)}</strong>
+              ${defaultBadge}
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);">Seller ID: ${escHtml(account.seller_id)}</div>
+            <div style="font-size:12px;color:var(--text-muted);">站点: ${escHtml(site)}</div>
+          </div>
+        </label>`;
+      }).join('')}
+    </div>`;
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary btn-sm" onclick="confirmSubmitAccount()">继续</button>`;
+  document.getElementById('modal').classList.add('show');
+}
+
+function confirmSubmitAccount() {
+  if (!pendingSubmitPayload) return;
+  const checked = document.querySelector('input[name="submitAccountRadio"]:checked');
+  if (!checked) return showToast('warning', '请选择一个账号');
+  selectedAccountId = checked.value;
+  const payload = pendingSubmitPayload;
+  closeModal();
+  showActionPreflight(payload.plan, () => executeSubmit(payload.mode, selectedAccountId, payload.skus));
+}
+
+async function executeSubmit(mode, accountId, skus) {
+  const isPreview = mode === 'preview';
+  showToast('info', `正在${isPreview ? '预览验证' : '提交上架'} ${skus.length} 个商品...`);
+
+  try {
+    const response = await fetch('/api/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skus, file: currentFile, preview: isPreview, account_id: accountId })
+    });
+    const data = await response.json();
+    if (data.error) return showToast('error', data.error);
+    if (currentFile) loadProducts();
+    if (data.persist_warning) showToast('warning', data.persist_warning);
+    loadTaskCenter();
+
+    if (data.results && data.results.length > 0) {
+      showSubmitResults(data, isPreview);
+    } else {
+      showToast('success', data.message || '完成');
+    }
+  } catch (e) {
+    showToast('error', '请求失败: ' + e.message);
+  }
+}
+
+function showSubmitResults(data, isPreview) {
+  const results = data.results || [];
+  let html = `<div style="max-height:60vh;overflow-y:auto;">`;
+  html += `<p style="margin-bottom:12px;font-weight:600;">${data.message}</p>`;
+  html += `<table style="width:100%;border-collapse:collapse;font-size:13px;">`;
+  html += `<tr style="background:#f5f5f5;"><th style="padding:6px 8px;text-align:left;">SKU</th>`;
+
+  if (isPreview) {
+    html += `<th style="padding:6px 8px;">状态</th><th style="padding:6px 8px;text-align:left;">详情</th></tr>`;
+    for (const r of results) {
+      const icon = r.valid ? '✅' : '❌';
+      const details = (r.errors || []).concat(r.warnings || []).join('; ') || '-';
+      html += `<tr style="border-bottom:1px solid #eee;">`;
+      html += `<td style="padding:6px 8px;font-family:monospace;">${r.sku}</td>`;
+      html += `<td style="padding:6px 8px;text-align:center;">${icon}</td>`;
+      html += `<td style="padding:6px 8px;color:${r.valid ? '#666' : '#c00'};">${details}</td></tr>`;
+    }
+  } else {
+    html += `<th style="padding:6px 8px;">状态</th><th style="padding:6px 8px;">ASIN</th><th style="padding:6px 8px;text-align:left;">信息</th></tr>`;
+    for (const r of results) {
+      const statusMap = {
+        'ACCEPTED': ['✅', '#28a745'], 'VALID': ['✅', '#28a745'],
+        'INVALID': ['❌', '#dc3545'], 'ERROR': ['❌', '#dc3545'],
+        'SKIPPED': ['⏭️', '#ffc107'], 'UNKNOWN': ['❓', '#999'],
+      };
+      const [icon, color] = statusMap[r.status] || ['❓', '#999'];
+      const asin = r.asin || '-';
+      let msg = r.message || (r.issues || []).map(i => i.message || i).join('; ') || '-';
+      if (r.status === 'ACCEPTED' && (!msg || msg === '-')) {
+        msg = 'Amazon 已接受请求，最终上架结果仍需等待平台后续处理。';
+      }
+      html += `<tr style="border-bottom:1px solid #eee;">`;
+      html += `<td style="padding:6px 8px;font-family:monospace;">${r.sku}</td>`;
+      html += `<td style="padding:6px 8px;text-align:center;color:${color};">${icon} ${r.status}</td>`;
+      html += `<td style="padding:6px 8px;font-family:monospace;">${asin}</td>`;
+      html += `<td style="padding:6px 8px;font-size:12px;color:#666;">${msg}</td></tr>`;
+    }
+  }
+
+  html += `</table></div>`;
+
+  // 使用现有的modal或创建简单弹窗
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:white;border-radius:12px;padding:24px;max-width:700px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.3);';
+  modal.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="margin:0;">${isPreview ? '预览验证结果' : '提交结果'}</h3>
+      <button onclick="this.closest('div[style*=fixed]').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;">✕</button>
+    </div>
+    ${html}
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+// ===== 23. Settings =====
+function loadConfig(applyDefaultLang = false) {
+  fetch('/api/config').then(r => r.json()).then(d => {
+    if (d.text_api_key) document.getElementById('cfgTextApiKey').value = d.text_api_key;
+    if (d.text_api_key_masked) document.getElementById('cfgTextApiKey').placeholder = d.text_api_key_masked;
+    if (d.text_api_base) document.getElementById('cfgTextBaseUrl').value = d.text_api_base;
+    if (d.text_endpoint_template) document.getElementById('cfgTextEndpoint').value = d.text_endpoint_template;
+    if (d.text_model) document.getElementById('cfgTextModel').value = d.text_model;
+    if (d.image_api_key) document.getElementById('cfgImageApiKey').value = d.image_api_key;
+    if (d.image_api_key_masked) document.getElementById('cfgImageApiKey').placeholder = d.image_api_key_masked;
+    if (d.image_api_base) document.getElementById('cfgImageBaseUrl').value = d.image_api_base;
+    if (d.image_endpoint_template) document.getElementById('cfgImageEndpoint').value = d.image_endpoint_template;
+    if (d.image_model) document.getElementById('cfgImageModel').value = d.image_model;
+    document.getElementById('cfgOutputDir').value = d.output_dir || '';
+    document.getElementById('cfgLang').value = d.default_lang || 'zh';
+    document.getElementById('cfgBatchLimit').value = d.batch_limit || 500;
+    document.getElementById('cfgConcurrency').value = d.ai_concurrency || d.concurrency || 3;
+    document.getElementById('cfgImgConcurrency').value = d.image_concurrency || 2;
+    document.getElementById('cfgMediaStoreEnabled').value = d.media_store_enabled ? 'true' : 'false';
+    document.getElementById('cfgMediaStoreProvider').value = d.media_store_provider || 's3';
+    document.getElementById('cfgMediaS3Bucket').value = d.media_s3_bucket || '';
+    document.getElementById('cfgMediaS3Region').value = d.media_s3_region || 'us-east-1';
+    document.getElementById('cfgMediaS3Prefix').value = d.media_s3_prefix || 'amazon28';
+    document.getElementById('cfgMediaSubmitScheme').value = d.media_s3_submit_scheme || 's3';
+    document.getElementById('cfgMediaPreviewBase').value = d.media_s3_preview_base || '';
+    if (applyDefaultLang && d.default_lang) setLanguage(d.default_lang);
+  }).catch(() => {});
+}
+
+function saveConfig() {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text_api_key: document.getElementById('cfgTextApiKey').value,
+      text_api_base: document.getElementById('cfgTextBaseUrl').value,
+      text_endpoint_template: document.getElementById('cfgTextEndpoint').value,
+      text_model: document.getElementById('cfgTextModel').value,
+      image_api_key: document.getElementById('cfgImageApiKey').value,
+      image_api_base: document.getElementById('cfgImageBaseUrl').value,
+      image_endpoint_template: document.getElementById('cfgImageEndpoint').value,
+      image_model: document.getElementById('cfgImageModel').value,
+    })
+  }).then(r => r.json()).then(d => {
+    showToast(d.error ? 'error' : 'success', d.error || '配置已保存');
+  }).catch(e => showToast('error', e.message));
+}
+
+function saveGeneralConfig() {
+  const nextLang = document.getElementById('cfgLang').value || 'zh';
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      output_dir: document.getElementById('cfgOutputDir').value,
+      default_lang: nextLang,
+      batch_limit: parseInt(document.getElementById('cfgBatchLimit').value) || 500,
+      ai_concurrency: parseInt(document.getElementById('cfgConcurrency').value) || 3,
+      image_concurrency: parseInt(document.getElementById('cfgImgConcurrency').value) || 2,
+      media_store_enabled: document.getElementById('cfgMediaStoreEnabled').value === 'true',
+      media_store_provider: document.getElementById('cfgMediaStoreProvider').value || 's3',
+      media_s3_bucket: document.getElementById('cfgMediaS3Bucket').value,
+      media_s3_region: document.getElementById('cfgMediaS3Region').value || 'us-east-1',
+      media_s3_prefix: document.getElementById('cfgMediaS3Prefix').value || 'amazon28',
+      media_s3_submit_scheme: document.getElementById('cfgMediaSubmitScheme').value || 's3',
+      media_s3_preview_base: document.getElementById('cfgMediaPreviewBase').value,
+    })
+  }).then(r => r.json()).then(d => {
+    if (!d.error) setLanguage(nextLang);
+    showToast(d.error ? 'error' : 'success', d.error || '设置已保存');
+  }).catch(e => showToast('error', e.message));
+}
+
+function testConnection() {
+  showToast('info', '正在测试...');
+  fetch('/api/config/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  }).then(r => r.json()).then(d => {
+    showToast(d.success ? 'success' : 'error', d.message || (d.success ? '连接成功' : '连接失败'));
+  }).catch(e => showToast('error', e.message));
+}
+
+// ===== 24. Account Management =====
+function loadAccounts() {
+  fetch('/api/accounts').then(r => r.json()).then(d => {
+    if (d.error) return showToast('error', d.error);
+    const accounts = d.accounts || [];
+    amazonAccounts = accounts.filter(account => account.enabled !== false);
+    if (amazonAccounts.length === 0) {
+      selectedAccountId = '';
+    } else if (!selectedAccountId || !amazonAccounts.some(account => account.seller_id === selectedAccountId)) {
+      const defaultAccount = amazonAccounts.find(account => account.is_default) || amazonAccounts[0];
+      selectedAccountId = defaultAccount ? defaultAccount.seller_id : '';
+    }
+    const tbody = document.getElementById('accountBody');
+    if (accounts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px">暂无账号</td></tr>';
+      return;
+    }
+    tbody.innerHTML = accounts.map(a => `<tr>
+      <td>${escHtml(a.name)}</td>
+      <td>${escHtml(a.seller_id)}</td>
+      <td>${escHtml(a.marketplace_name || a.marketplace_id || '-')}</td>
+      <td>${[
+        a.is_default ? '<span class="badge badge-success">默认</span>' : '',
+        a.enabled === false ? '<span class="badge badge-danger">停用</span>' : '<span class="badge badge-default">启用</span>',
+        a.has_credentials === false ? '<span class="badge badge-warning">缺少凭证</span>' : '<span class="badge badge-success">凭证完整</span>'
+      ].filter(Boolean).join(' ')}</td>
+      <td>
+        ${!a.is_default && a.enabled !== false ? `<button class="btn-link" onclick="setDefaultAccount('${escHtml(a.seller_id)}')">设为默认</button> | ` : ''}
+        <button class="btn-danger-link" onclick="deleteAccount('${escHtml(a.seller_id)}')">删除</button>
+      </td>
+    </tr>`).join('');
+  }).catch(() => {});
+}
+
+function showAddAccount() {
+  document.getElementById('modalTitle').textContent = '添加亚马逊账号';
+  document.getElementById('modalBody').innerHTML = `
+    <div class="settings-grid">
+      <div class="form-group"><label>账号名称</label><input type="text" id="newAccName" placeholder="如: 主账号-美国站"></div>
+      <div class="form-group"><label>Seller ID</label><input type="text" id="newAccSellerId" placeholder="A1B2C3D4E5F6G7"></div>
+      <div class="form-group"><label>站点</label><select id="newAccMarket">
+        <option value="US">🇺🇸 US</option><option value="CA">🇨🇦 CA</option><option value="MX">🇲🇽 MX</option>
+        <option value="UK">🇬🇧 UK</option><option value="DE">🇩🇪 DE</option><option value="FR">🇫🇷 FR</option>
+        <option value="JP">🇯🇵 JP</option><option value="AU">🇦🇺 AU</option>
+      </select></div>
+      <div class="form-group"><label>LWA Client ID</label><input type="text" id="newAccClientId" placeholder="amzn1.application-oa2-client.xxx"></div>
+      <div class="form-group"><label>LWA Client Secret</label><input type="password" id="newAccClientSecret" placeholder="Client Secret"></div>
+      <div class="form-group"><label>Refresh Token</label><input type="password" id="newAccRefreshToken" placeholder="Atzr|xxx"></div>
+    </div>
+    <p style="font-size:12px;color:var(--text-muted);margin-top:8px;">
+      以上凭证从 Amazon Developer Central 和 Seller Central 获取，
+      <a href="https://developer-docs.amazon.com/sp-api/docs/connecting-to-the-selling-partner-api" target="_blank" style="color:var(--primary);">查看文档</a>
+    </p>`;
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">取消</button>
+    <button class="btn btn-primary btn-sm" onclick="addAccount()">添加</button>`;
+  document.getElementById('modal').classList.add('show');
+}
+
+function addAccount() {
+  const name = document.getElementById('newAccName').value;
+  const seller_id = document.getElementById('newAccSellerId').value;
+  const marketSelect = document.getElementById('newAccMarket');
+  const marketplace = marketSelect.value;
+  const marketplaceName = (marketSelect.options[marketSelect.selectedIndex] || {}).textContent || marketplace;
+  const lwa_client_id = document.getElementById('newAccClientId').value;
+  const lwa_client_secret = document.getElementById('newAccClientSecret').value;
+  const refresh_token = document.getElementById('newAccRefreshToken').value;
+
+  if (!name || !seller_id) return showToast('warning', '请填写账号名称和Seller ID');
+  if (!lwa_client_id || !lwa_client_secret || !refresh_token) return showToast('warning', '请填写LWA凭证（Client ID、Client Secret、Refresh Token）');
+
+  const mpIds = {US:'ATVPDKIKX0DER',CA:'A2EUQ1WTGCTBG2',MX:'A1AM78C64UM0Y8',UK:'A1F83G8C2ARO7P',DE:'A1PA6795UKMFR9',FR:'A13V1IB3VIYZZH',JP:'A1VC38T7YXB528',AU:'A39IBJ37TRP1C6'};
+
+  fetch('/api/accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      seller_id,
+      marketplace_id: mpIds[marketplace] || 'ATVPDKIKX0DER',
+      marketplace_name: marketplaceName.trim(),
+      lwa_client_id,
+      lwa_client_secret,
+      refresh_token,
+      enabled: true,
+    })
+  }).then(r => r.json()).then(d => {
+    closeModal();
+    loadAccounts();
+    showToast(d.error ? 'error' : 'success', d.error || '账号已添加');
+  }).catch(e => showToast('error', e.message));
+}
+function setDefaultAccount(sellerId) {
+  fetch('/api/accounts/default', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seller_id: sellerId })
+  }).then(r => r.json()).then(() => loadAccounts())
+    .catch(e => showToast('error', e.message));
+}
+
+function deleteAccount(sellerId) {
+  document.getElementById('modalTitle').textContent = t('delete_confirm');
+  document.getElementById('modalBody').innerHTML = `<p>${t('delete_confirm')}</p>`;
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">${t('cancel')}</button>
+    <button class="btn btn-primary btn-sm" onclick="doDeleteAccount('${escHtml(sellerId)}')">${t('delete')}</button>`;
+  document.getElementById('modal').classList.add('show');
+}
+function doDeleteAccount(sellerId) {
+  closeModal();
+  fetch('/api/accounts', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seller_id: sellerId })
+  }).then(() => loadAccounts())
+    .catch(e => showToast('error', e.message));
+}
+
+// ===== 25. UI Helpers =====
+function showToast(type, msg) {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+function showModal(title, body) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalBody').innerHTML = body;
+  document.getElementById('modalFooter').innerHTML = '<button class="btn btn-ghost btn-sm" onclick="closeModal()">关闭</button>';
+  document.getElementById('modal').classList.add('show');
+}
+function closeModal() {
+  pendingSubmitPayload = null;
+  document.getElementById('modal').classList.remove('show');
+}
+
+function showProgress(title, done, total) {
+  document.getElementById('progressTitle').textContent = title;
+  updateProgress(done, total, '');
+  document.getElementById('progressOverlay').classList.add('show');
+}
+function updateProgress(done, total, item) {
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = done + ' / ' + total;
+  document.getElementById('progressItem').textContent = item ? '当前: ' + item : '';
+}
+function hideProgress() { document.getElementById('progressOverlay').classList.remove('show'); }
+
+function toggleDropdown(id) {
+  const menu = document.getElementById(id);
+  const wasOpen = menu.classList.contains('show');
+  closeAllDropdowns();
+  if (!wasOpen) menu.classList.add('show');
+}
+function closeAllDropdowns() {
+  document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show'));
+  document.getElementById('colSettingsPanel').classList.remove('show');
+}
+
+async function loadTaskCenter() {
+  try {
+    const response = await fetch('/api/tasks');
+    const data = await response.json();
+    taskCenterData = data || { current: null, history: [] };
+    renderTaskCenter();
+  } catch (e) {}
+}
+
+function formatTaskStatus(status) {
+  const map = {
+    running: ['运行中', 'processing'],
+    completed: ['已完成', 'success'],
+    failed: ['失败', 'danger'],
+    cancelled: ['已取消', 'warn'],
+    pass: ['通过', 'success'],
+    warn: ['提示', 'warn'],
+    fail: ['失败', 'danger'],
+  };
+  return map[status] || ['待处理', 'default'];
+}
+
+function renderTaskCenter() {
+  const currentEl = document.getElementById('taskCurrent');
+  const historyEl = document.getElementById('taskHistory');
+  if (!currentEl || !historyEl) return;
+
+  const current = taskCenterData.current;
+  if (current && current.status === 'running') {
+    const [label, tone] = formatTaskStatus(current.status);
+    const progress = current.total > 0 ? `${current.progress || 0}/${current.total}` : '进行中';
+    const stage = current.stage_name ? ` · ${current.stage_name}` : '';
+    currentEl.innerHTML = `<div class="task-card active">
+      <div class="task-card-head">
+        <strong>${escHtml(current.title || '当前任务')}</strong>
+        <span class="task-badge ${tone}">${label}</span>
+      </div>
+      <div class="task-card-meta">${escHtml(current.file_name || '')}</div>
+      <div class="task-card-progress">${progress}${stage}${current.current_item ? ` · ${escHtml(current.current_item)}` : ''}</div>
+    </div>`;
+  } else {
+    currentEl.innerHTML = '<div class="task-empty">当前没有正在运行的批量任务</div>';
+  }
+
+  const history = (taskCenterData.history || []).slice(0, 8);
+  if (history.length === 0) {
+    historyEl.innerHTML = '<div class="task-empty">最近暂无任务记录</div>';
+    return;
+  }
+
+  historyEl.innerHTML = history.map(task => {
+    const [label, tone] = formatTaskStatus(task.status);
+    const progress = task.total > 0 ? `${task.progress || task.success || 0}/${task.total}` : '';
+    const detail = [task.stage_name || '', task.message || task.current_item || ''].filter(Boolean).join(' · ');
+    return `<div class="task-card">
+      <div class="task-card-head">
+        <strong>${escHtml(task.title || task.kind || '任务')}</strong>
+        <span class="task-badge ${tone}">${label}</span>
+      </div>
+      <div class="task-card-meta">${escHtml(task.file_name || '')}${task.started_at ? ` · ${escHtml(task.started_at.replace('T', ' '))}` : ''}</div>
+      <div class="task-card-progress">${escHtml(progress)}${detail ? ` · ${escHtml(detail)}` : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+async function runSelfCheck() {
+  const container = document.getElementById('selfCheckResults');
+  if (container) container.innerHTML = '<div class="task-empty">正在执行环境自检，请稍候...</div>';
+  try {
+    const response = await fetch('/api/self-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: selectedAccountId || '' }),
+    });
+    const data = await response.json();
+    const checks = data.checks || [];
+    if (!container) return;
+    container.innerHTML = checks.map(check => {
+      const [label, tone] = formatTaskStatus(check.status);
+      return `<div class="task-card">
+        <div class="task-card-head">
+          <strong>${escHtml(check.name)}</strong>
+          <span class="task-badge ${tone}">${label}</span>
+        </div>
+        <div class="task-card-meta">${escHtml(check.message || '')}</div>
+        ${check.detail ? `<div class="task-card-progress">${escHtml(check.detail)}</div>` : ''}
+      </div>`;
+    }).join('');
+    showToast(data.status === 'fail' ? 'warning' : 'success', data.status === 'fail' ? '自检存在失败项，请按结果逐项修复' : '自检完成');
+  } catch (e) {
+    if (container) container.innerHTML = '<div class="task-empty">自检失败，请稍后重试</div>';
+    showToast('error', '自检失败: ' + e.message);
+  }
+}
+
+// ===== 26. Initialization =====
+document.addEventListener('DOMContentLoaded', () => {
+  applyLang();
+  loadConfig(true);
+  loadSelectedFields();
+  loadTaskCenter();
+  // Close dropdowns on outside click
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.dropdown') && !e.target.closest('.col-settings-panel') && !e.target.closest('[onclick*="toggleColumnSettings"]')) {
+      closeAllDropdowns();
+    }
+  });
+  // Escape to close drawer
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      closeDrawer();
+      closeModal();
+      closeAllDropdowns();
+      closeMobileSidebar();
+    }
+  });
+  window.addEventListener('resize', () => {
+    if (!isMobileViewport()) closeMobileSidebar();
+  });
+  window.setInterval(loadTaskCenter, 5000);
+  // Load existing files
+  fetch('/api/files').then(r => r.json()).then(d => {
+    const files = d.input || [];
+    if (files.length > 0) {
+      currentFile = files[0].path || files[0].name;
+      currentFileMeta = { type: (files[0].name || '').toLowerCase().endsWith('.xls') ? 'xls' : 'xlsx', warning: '', xlsPreserveSupported: false };
+      document.getElementById('fileInfo').dataset.baseName = files[0].name;
+      document.getElementById('fileInfo').textContent = files[0].name;
+      loadProducts();
+    }
+  }).catch(() => {});
+});

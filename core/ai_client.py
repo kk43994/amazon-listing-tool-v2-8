@@ -1,0 +1,378 @@
+"""
+统一 AI 客户端。
+
+支持两类协议：
+1. OpenAI 兼容接口
+2. Gemini generateContent 接口
+
+文本与图片配置完全独立，可分别设置 base_url / endpoint / api_key / model。
+"""
+import base64
+import logging
+import math
+import re
+from typing import Optional
+
+import httpx
+from openai import OpenAI
+
+from config import get_config
+
+logger = logging.getLogger(__name__)
+
+GEMINI_PROTOCOL = "gemini_generate_content"
+OPENAI_TEXT_PROTOCOL = "openai_chat_completions"
+OPENAI_IMAGE_PROTOCOL = "openai_images"
+
+
+def _build_endpoint_url(base_url: str, endpoint_template: str, model: str) -> str:
+    base = str(base_url or "").rstrip("/")
+    path = str(endpoint_template or "").strip()
+    if not path:
+        raise ValueError("未配置接口路径")
+    # 容错: 用户把具体模型名写成了 {gemini-...} 时，按 {model} 处理
+    path = re.sub(r"\{([^{}]+)\}", lambda m: "{model}" if m.group(1) != "model" else m.group(0), path)
+    if "{model}" in path:
+        path = path.format(model=model)
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{base}{path}"
+
+
+def _build_openai_client(api_key: str, base_url: str) -> OpenAI:
+    cfg = get_config()
+    return OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=cfg.OPENAI_TIMEOUT,
+        max_retries=cfg.OPENAI_MAX_RETRIES,
+    )
+
+
+def _build_gemini_headers(api_key: str) -> dict:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _extract_text_content(response_data: dict) -> str:
+    """兼容 Gemini 与 OpenAI 风格响应，提取文本内容。"""
+    candidates = response_data.get("candidates", [])
+    if candidates:
+        texts = []
+        for candidate in candidates:
+            content = candidate.get("content", {})
+            for part in content.get("parts", []) or []:
+                text = part.get("text")
+                if text:
+                    texts.append(str(text).strip())
+        if texts:
+            return "\n".join(t for t in texts if t).strip()
+
+    choices = response_data.get("choices", [])
+    if choices:
+        content = choices[0].get("message", {}).get("content", "")
+        if isinstance(content, str):
+            return content.strip()
+
+    return ""
+
+
+def _gemini_generate_content(
+    *,
+    api_key: str,
+    base_url: str,
+    endpoint_template: str,
+    model: str,
+    contents: list,
+    generation_config: Optional[dict] = None,
+) -> dict:
+    cfg = get_config()
+    url = _build_endpoint_url(base_url, endpoint_template, model)
+    payload = {"contents": contents}
+    if generation_config:
+        payload["generationConfig"] = generation_config
+
+    with httpx.Client(timeout=cfg.OPENAI_TIMEOUT) as client:
+        response = client.post(url, headers=_build_gemini_headers(api_key), json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
+def ai_text(prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+    """
+    AI 文本生成。
+
+    根据配置自动走 OpenAI 兼容 chat.completions 或 Gemini generateContent。
+    """
+    cfg = get_config()
+    try:
+        if cfg.AI_TEXT_PROTOCOL == GEMINI_PROTOCOL:
+            result = _gemini_generate_content(
+                api_key=cfg.AI_TEXT_API_KEY,
+                base_url=cfg.AI_TEXT_API_BASE,
+                endpoint_template=cfg.AI_TEXT_ENDPOINT_TEMPLATE,
+                model=cfg.AI_TEXT_MODEL,
+                contents=[{"parts": [{"text": prompt}]}],
+                generation_config={
+                    "temperature": temperature,
+                    "maxOutputTokens": max_tokens,
+                },
+            )
+            return _extract_text_content(result)
+
+        client = _build_openai_client(cfg.AI_TEXT_API_KEY, cfg.AI_TEXT_API_BASE)
+        response = client.chat.completions.create(
+            model=cfg.AI_TEXT_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"AI文本生成失败: {e}")
+        return ""
+
+
+def ai_image_edit(image_data: bytes, prompt: str, size: str = "auto") -> Optional[str]:
+    """
+    AI 图片编辑。
+
+    对 Gemini generateContent 而言，这里会发送「文字提示 + 原图 inline_data」。
+    """
+    cfg = get_config()
+
+    if cfg.AI_IMAGE_PROTOCOL == GEMINI_PROTOCOL:
+        encoded = base64.b64encode(image_data).decode("utf-8")
+        generation_config = {"responseModalities": ["IMAGE"]}
+        if size and size != "auto":
+            aspect_ratio = _size_to_aspect_ratio(size)
+            if aspect_ratio:
+                generation_config["imageConfig"] = {"aspectRatio": aspect_ratio}
+
+        try:
+            result = _gemini_generate_content(
+                api_key=cfg.AI_IMAGE_API_KEY,
+                base_url=cfg.AI_IMAGE_API_BASE,
+                endpoint_template=cfg.AI_IMAGE_ENDPOINT_TEMPLATE,
+                model=cfg.AI_IMAGE_MODEL,
+                contents=[{
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/png", "data": encoded}},
+                    ]
+                }],
+                generation_config=generation_config,
+            )
+            return _extract_image_base64(result)
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:500] if e.response else ""
+            logger.error(f"AI图片编辑HTTP错误 {e.response.status_code}: {body}")
+            return None
+        except Exception as e:
+            logger.error(f"AI图片编辑失败: {e}")
+            return None
+
+    base_url = cfg.AI_IMAGE_API_BASE.rstrip("/")
+    url = f"{base_url}/images/edits"
+    headers = {
+        "Authorization": f"Bearer {cfg.AI_IMAGE_API_KEY}",
+        "Accept": "application/json",
+    }
+    files = {
+        "image": ("image.png", image_data, "image/png"),
+    }
+    form_data = {
+        "prompt": prompt,
+        "model": cfg.AI_IMAGE_MODEL,
+        "n": "1",
+        "size": size,
+    }
+
+    try:
+        with httpx.Client(timeout=cfg.OPENAI_TIMEOUT) as client:
+            response = client.post(url, headers=headers, files=files, data=form_data)
+            response.raise_for_status()
+            result = response.json()
+            return _extract_image_base64(result)
+    except httpx.HTTPStatusError as e:
+        body = e.response.text[:500] if e.response else ""
+        logger.error(f"AI图片编辑HTTP错误 {e.response.status_code}: {body}")
+        return None
+    except Exception as e:
+        logger.error(f"AI图片编辑失败: {e}")
+        return None
+
+
+def ai_image_edit_url(image_url: str, prompt: str, size: str = "auto") -> Optional[str]:
+    """先下载图片，再走图片编辑。"""
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+            ),
+        }
+        with httpx.Client(timeout=30, follow_redirects=True) as client:
+            resp = client.get(image_url, headers=headers)
+            resp.raise_for_status()
+            if len(resp.content) < 1000:
+                logger.warning(f"下载的图片数据过小 ({len(resp.content)} bytes)")
+                return None
+            return ai_image_edit(resp.content, prompt, size)
+    except Exception as e:
+        logger.error(f"AI图片编辑(URL模式)失败: {e}")
+        return None
+
+
+def ai_image_generate(prompt: str, size: str = "1024x1024") -> Optional[str]:
+    """纯文本生成图片。"""
+    cfg = get_config()
+
+    if cfg.AI_IMAGE_PROTOCOL == GEMINI_PROTOCOL:
+        generation_config = {"responseModalities": ["IMAGE"]}
+        aspect_ratio = _size_to_aspect_ratio(size)
+        if aspect_ratio:
+            generation_config["imageConfig"] = {"aspectRatio": aspect_ratio}
+
+        try:
+            result = _gemini_generate_content(
+                api_key=cfg.AI_IMAGE_API_KEY,
+                base_url=cfg.AI_IMAGE_API_BASE,
+                endpoint_template=cfg.AI_IMAGE_ENDPOINT_TEMPLATE,
+                model=cfg.AI_IMAGE_MODEL,
+                contents=[{"parts": [{"text": prompt}]}],
+                generation_config=generation_config,
+            )
+            return _extract_image_base64(result)
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:500] if e.response else ""
+            logger.error(f"AI图片生成HTTP错误 {e.response.status_code}: {body}")
+            return None
+        except Exception as e:
+            logger.error(f"AI图片生成失败: {e}")
+            return None
+
+    base_url = cfg.AI_IMAGE_API_BASE.rstrip("/")
+    url = f"{base_url}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {cfg.AI_IMAGE_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    body = {
+        "prompt": prompt,
+        "model": cfg.AI_IMAGE_MODEL,
+        "n": 1,
+        "size": size,
+    }
+
+    try:
+        with httpx.Client(timeout=cfg.OPENAI_TIMEOUT) as client:
+            response = client.post(url, headers=headers, json=body)
+            response.raise_for_status()
+            result = response.json()
+            return _extract_image_base64(result)
+    except httpx.HTTPStatusError as e:
+        body_text = e.response.text[:500] if e.response else ""
+        logger.error(f"AI图片生成HTTP错误 {e.response.status_code}: {body_text}")
+        return None
+    except Exception as e:
+        logger.error(f"AI图片生成失败: {e}")
+        return None
+
+
+def _size_to_aspect_ratio(size: str) -> Optional[str]:
+    if not size or size == "auto":
+        return None
+
+    match = re.match(r"^\s*(\d+)\s*x\s*(\d+)\s*$", str(size), re.IGNORECASE)
+    if not match:
+        return None
+
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width <= 0 or height <= 0:
+        return None
+
+    divisor = math.gcd(width, height) or 1
+    return f"{width // divisor}:{height // divisor}"
+
+
+# ===== 响应解析 =====
+
+def _extract_image_base64(response_data: dict) -> Optional[str]:
+    """
+    从响应中提取 base64 图片。
+
+    兼容：
+    1. Gemini generateContent candidates.parts.inlineData / inline_data
+    2. 代理 choices.message.content 中的 data URI / base64
+    3. 标准 OpenAI Images API data[0].b64_json / url
+    """
+    candidates = response_data.get("candidates", [])
+    for candidate in candidates:
+        content = candidate.get("content", {})
+        for part in content.get("parts", []) or []:
+            inline = part.get("inlineData") or part.get("inline_data")
+            if isinstance(inline, dict):
+                data = inline.get("data")
+                if data:
+                    return data
+
+            text = part.get("text")
+            if text:
+                b64 = _parse_base64_content(text)
+                if b64:
+                    return b64
+
+    choices = response_data.get("choices", [])
+    if choices:
+        content = choices[0].get("message", {}).get("content", "")
+        if content:
+            b64 = _parse_base64_content(content)
+            if b64:
+                return b64
+
+    data = response_data.get("data", [])
+    if data:
+        item = data[0]
+        if item.get("b64_json"):
+            return item["b64_json"]
+        if item.get("url"):
+            try:
+                with httpx.Client(timeout=30) as client:
+                    resp = client.get(item["url"])
+                    resp.raise_for_status()
+                    return base64.b64encode(resp.content).decode("utf-8")
+            except Exception as e:
+                logger.error(f"下载生成图片失败: {e}")
+                return None
+
+    logger.warning(f"无法从响应中提取图片数据, keys={list(response_data.keys())}")
+    return None
+
+
+def _parse_base64_content(content: str) -> Optional[str]:
+    """从字符串中解析 base64 图片数据。"""
+    if not content:
+        return None
+
+    match = re.search(r"data:image/\w+;base64,([A-Za-z0-9+/=\s]+)", content)
+    if match:
+        return match.group(1).replace("\n", "").replace("\r", "").replace(" ", "")
+
+    match = re.search(r"!\[.*?\]\(data:image/\w+;base64,([A-Za-z0-9+/=\s]+)\)", content)
+    if match:
+        return match.group(1).replace("\n", "").replace("\r", "").replace(" ", "")
+
+    stripped = content.strip()
+    if len(stripped) > 1000:
+        clean = stripped.replace("\n", "").replace("\r", "")
+        if re.match(r"^[A-Za-z0-9+/=]+$", clean):
+            return clean
+
+    return None

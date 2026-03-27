@@ -1,0 +1,235 @@
+{
+  "version": "1.0",
+  "categories": {
+    "clothing": {
+      "name_en": "Clothing & Shoes",
+      "name_zh": "服装鞋靴",
+      "icon": "👕",
+      "fields": [
+        {"key": "fabric_type", "label_en": "Fabric Type", "label_zh": "面料类型", "type": "text", "example": "Cotton, Polyester, Nylon"},
+        {"key": "closure_type", "label_en": "Closure Type", "label_zh": "闭合方式", "type": "select", "options": ["Zipper", "Button", "Pull On", "Buckle", "Lace-Up", "Hook and Loop", "Snap", "Tie", "Elastic"]},
+        {"key": "neck_style", "label_en": "Neck Style", "label_zh": "领型", "type": "select", "options": ["Round Neck", "V-Neck", "Crew Neck", "Scoop Neck", "Turtle Neck", "Collar", "Hooded", "Square Neck"]},
+        {"key": "sleeve_type", "label_en": "Sleeve Type", "label_zh": "袖型", "type": "select", "options": ["Long Sleeve", "Short Sleeve", "Sleeveless", "3/4 Sleeve", "Cap Sleeve", "Half Sleeve"]},
+        {"key": "fit_type", "label_en": "Fit Type", "label_zh": "版型", "type": "select", "options": ["Slim Fit", "Regular Fit", "Loose Fit", "Relaxed Fit", "Skinny", "Oversize"]},
+        {"key": "waist_type", "label_en": "Waist Type", "label_zh": "腰型", "type": "select", "options": ["High Waist", "Mid Waist", "Low Waist", "Elastic Waist"]},
+        {"key": "length_type", "label_en": "Length", "label_zh": "长度", "type": "select", "options": ["Short", "Regular", "Long", "Knee Length", "Ankle Length", "Floor Length", "Cropped"]},
+        {"key": "rise_type", "label_en": "Rise", "label_zh": "裤腰高度", "type": "select", "options": ["Low Rise", "Mid Rise", "High Rise"]},
+        {"key": "collar_type", "label_en": "Collar Type", "label_zh": "领型(衬衫)", "type": "select", "options": ["Spread Collar", "Button Down", "Point Collar", "Mandarin", "Wing Collar"]},
+        {"key": "shoe_type", "label_en": "Shoe Type", "label_zh": "鞋型", "type": "text", "example": "Sneakers, Boots, Sandals"},
+        {"key": "sole_material", "label_en": "Sole Material", "label_zh": "鞋底材质", "type": "text", "example": "Rubber, Leather, EVA"},
+        {"key": "heel_type", "label_en": "Heel Type", "label_zh": "鞋跟类型", "type": "select", "options": ["Flat", "Block", "Stiletto", "Wedge", "Platform", "Kitten"]},
+        {"key": "heel_height", "label_en": "Heel Height", "label_zh": "鞋跟高度", "type": "text", "example": "2.5 inches"},
+        {"key": "toe_style", "label_en": "Toe Style", "label_zh": "鞋头类型", "type": "select", "options": ["Round Toe", "Pointed Toe", "Square Toe", "Open Toe", "Peep Toe"]},
+        {"key": "strap_type", "label_en": "Strap Type", "label_zh": "肩带类型", "type": "select", "options": ["Adjustable", "Removable", "Spaghetti", "Strapless", "Wide Strap"]},
+        {"key": "occasion_type", "label_en": "Occasion", "label_zh": "适用场合", "type": "text", "example": "Casual, Formal, Sports, Party"},
+        {"key": "season", "label_en": "Season", "label_zh": "适用季节", "type": "select", "options": ["Spring", "Summer", "Fall", "Winter", "All Season"]},
+        {"key": "care_instructions", "label_en": "Care Instructions", "label_zh": "洗涤说明", "type": "text", "example": "Machine Wash Cold, Hand Wash Only"}
+      ]
+    },
+    "electronics": {
+      "name_en": "Electronics",
+      "name_zh": "电子产品",
+      "icon": "📱",
+      "fields": [
+        {"key": "voltage", "label_en": "Voltage (V)", "label_zh": "电压(V)", "type": "number", "example": "110, 220"},
+        {"key": "wattage", "label_en": "Wattage (W)", "label_zh": "功率(W)", "type": "number", "example": "60, 100"},
+        {"key": "power_source_type", "label_en": "Power Source", "label_zh": "电源类型", "type": "select", "options": ["Battery Powered", "AC", "DC", "USB", "Solar", "Corded Electric", "Manual"]},
+        {"key": "connectivity_technology", "label_en": "Connectivity", "label_zh": "连接方式", "type": "select", "options": ["Bluetooth", "Wi-Fi", "USB", "NFC", "Wired", "Wireless", "Bluetooth & Wi-Fi"]},
+        {"key": "compatible_devices", "label_en": "Compatible Devices", "label_zh": "兼容设备", "type": "text", "example": "iPhone, Android, Laptop, Tablet"},
+        {"key": "connector_type", "label_en": "Connector Type", "label_zh": "接口类型", "type": "select", "options": ["USB-C", "USB-A", "Micro USB", "Lightning", "HDMI", "3.5mm Audio Jack", "Thunderbolt"]},
+        {"key": "display_size", "label_en": "Display Size", "label_zh": "屏幕尺寸", "type": "text", "example": "6.5 inches"},
+        {"key": "resolution", "label_en": "Resolution", "label_zh": "分辨率", "type": "text", "example": "1920x1080, 4K"},
+        {"key": "storage_capacity", "label_en": "Storage Capacity", "label_zh": "存储容量", "type": "text", "example": "128GB, 256GB, 1TB"},
+        {"key": "ram_memory", "label_en": "RAM", "label_zh": "运行内存", "type": "text", "example": "8GB, 16GB"},
+        {"key": "operating_system", "label_en": "Operating System", "label_zh": "操作系统", "type": "text", "example": "Windows 11, Android 14, iOS 17"},
+        {"key": "wireless_standard", "label_en": "Wireless Standard", "label_zh": "无线标准", "type": "text", "example": "802.11ax (Wi-Fi 6), Bluetooth 5.3"},
+        {"key": "frequency_response", "label_en": "Frequency Response", "label_zh": "频率响应", "type": "text", "example": "20Hz-20kHz"},
+        {"key": "impedance", "label_en": "Impedance", "label_zh": "阻抗", "type": "text", "example": "32 Ohm"},
+        {"key": "noise_cancellation", "label_en": "Noise Cancellation", "label_zh": "降噪", "type": "select", "options": ["Active Noise Cancelling", "Passive Noise Isolation", "None"]},
+        {"key": "waterproof_rating", "label_en": "Waterproof Rating", "label_zh": "防水等级", "type": "select", "options": ["IPX4", "IPX5", "IPX6", "IPX7", "IPX8", "IP67", "IP68", "None"]},
+        {"key": "battery_capacity", "label_en": "Battery Capacity", "label_zh": "电池容量", "type": "text", "example": "5000mAh, 10000mAh"},
+        {"key": "charging_time", "label_en": "Charging Time", "label_zh": "充电时间", "type": "text", "example": "2 hours"},
+        {"key": "warranty_description", "label_en": "Warranty", "label_zh": "质保", "type": "text", "example": "1 Year Manufacturer Warranty"}
+      ]
+    },
+    "home_kitchen": {
+      "name_en": "Home & Kitchen",
+      "name_zh": "家居厨房",
+      "icon": "🏠",
+      "fields": [
+        {"key": "item_shape", "label_en": "Shape", "label_zh": "形状", "type": "text", "example": "Round, Square, Rectangular"},
+        {"key": "finish_type", "label_en": "Finish Type", "label_zh": "表面处理", "type": "text", "example": "Matte, Glossy, Brushed, Polished"},
+        {"key": "mounting_type", "label_en": "Mounting Type", "label_zh": "安装方式", "type": "select", "options": ["Wall Mount", "Ceiling Mount", "Floor Standing", "Tabletop", "Clip On", "Freestanding"]},
+        {"key": "room_type", "label_en": "Room Type", "label_zh": "适用房间", "type": "text", "example": "Bedroom, Living Room, Kitchen, Bathroom"},
+        {"key": "included_components", "label_en": "Included Components", "label_zh": "包含组件", "type": "text", "example": "Screws, Mounting bracket, User manual"},
+        {"key": "special_feature", "label_en": "Special Features", "label_zh": "特殊功能", "type": "text", "example": "Dishwasher Safe, BPA Free, Non-stick"},
+        {"key": "capacity", "label_en": "Capacity", "label_zh": "容量", "type": "text", "example": "1.5L, 500ml, 2 Quart"},
+        {"key": "wattage", "label_en": "Wattage (W)", "label_zh": "功率(W)", "type": "number", "example": "1000, 1500"},
+        {"key": "voltage", "label_en": "Voltage (V)", "label_zh": "电压(V)", "type": "number", "example": "110, 220"},
+        {"key": "is_dishwasher_safe", "label_en": "Dishwasher Safe", "label_zh": "可用洗碗机", "type": "select", "options": ["Yes", "No"]},
+        {"key": "is_microwave_safe", "label_en": "Microwave Safe", "label_zh": "可用微波炉", "type": "select", "options": ["Yes", "No"]},
+        {"key": "is_oven_safe", "label_en": "Oven Safe", "label_zh": "可用烤箱", "type": "select", "options": ["Yes", "No"]},
+        {"key": "surface_recommendation", "label_en": "Surface Recommendation", "label_zh": "适用表面", "type": "text", "example": "Hardwood, Tile, Carpet"},
+        {"key": "power_source_type", "label_en": "Power Source", "label_zh": "电源类型", "type": "select", "options": ["Battery Powered", "AC", "DC", "USB", "Solar", "Manual"]},
+        {"key": "theme", "label_en": "Theme", "label_zh": "主题风格", "type": "text", "example": "Modern, Vintage, Minimalist, Rustic"}
+      ]
+    },
+    "beauty": {
+      "name_en": "Beauty & Personal Care",
+      "name_zh": "美妆个护",
+      "icon": "💄",
+      "fields": [
+        {"key": "item_form", "label_en": "Product Form", "label_zh": "产品形态", "type": "select", "options": ["Cream", "Gel", "Liquid", "Powder", "Spray", "Oil", "Serum", "Lotion", "Balm", "Stick", "Foam", "Wipe"]},
+        {"key": "skin_type", "label_en": "Skin Type", "label_zh": "肤质类型", "type": "select", "options": ["All Skin Types", "Dry", "Oily", "Combination", "Sensitive", "Normal"]},
+        {"key": "scent", "label_en": "Scent", "label_zh": "香味", "type": "text", "example": "Lavender, Rose, Unscented"},
+        {"key": "active_ingredients", "label_en": "Active Ingredients", "label_zh": "活性成分", "type": "text", "example": "Hyaluronic Acid, Vitamin C, Retinol"},
+        {"key": "sun_protection_factor", "label_en": "SPF", "label_zh": "防晒指数", "type": "text", "example": "SPF 30, SPF 50"},
+        {"key": "hair_type", "label_en": "Hair Type", "label_zh": "发质类型", "type": "select", "options": ["All Hair Types", "Straight", "Curly", "Wavy", "Coily", "Fine", "Thick", "Color-Treated"]},
+        {"key": "age_range_description", "label_en": "Suitable Age", "label_zh": "适用年龄", "type": "text", "example": "Adult, Teen, All Ages"},
+        {"key": "coverage", "label_en": "Coverage", "label_zh": "遮盖力", "type": "select", "options": ["Full", "Medium", "Light", "Sheer"]},
+        {"key": "finish_type", "label_en": "Finish", "label_zh": "妆效", "type": "select", "options": ["Matte", "Dewy", "Satin", "Natural", "Shimmer", "Glitter"]},
+        {"key": "is_hypoallergenic", "label_en": "Hypoallergenic", "label_zh": "低过敏性", "type": "select", "options": ["Yes", "No"]},
+        {"key": "organic_certifications", "label_en": "Organic Cert.", "label_zh": "有机认证", "type": "text", "example": "USDA Organic, Ecocert"},
+        {"key": "specific_uses_for_product", "label_en": "Specific Uses", "label_zh": "产品用途", "type": "text", "example": "Anti-Aging, Moisturizing, Acne Treatment"},
+        {"key": "product_benefits", "label_en": "Product Benefits", "label_zh": "产品功效", "type": "text", "example": "Hydrating, Brightening, Smoothing"}
+      ]
+    },
+    "toys_games": {
+      "name_en": "Toys & Games",
+      "name_zh": "玩具游戏",
+      "icon": "🧸",
+      "fields": [
+        {"key": "educational_objective", "label_en": "Educational Objective", "label_zh": "教育目标", "type": "text", "example": "STEM Learning, Creative Thinking"},
+        {"key": "minimum_age_recommendation", "label_en": "Min Age", "label_zh": "最低年龄", "type": "text", "example": "3 years"},
+        {"key": "maximum_age_recommendation", "label_en": "Max Age", "label_zh": "最高年龄", "type": "text", "example": "12 years"},
+        {"key": "number_of_players", "label_en": "Number of Players", "label_zh": "玩家人数", "type": "text", "example": "1-4 Players"},
+        {"key": "assembly_required", "label_en": "Assembly Required", "label_zh": "需要组装", "type": "select", "options": ["Yes", "No"]},
+        {"key": "included_components", "label_en": "Included Components", "label_zh": "包含组件", "type": "text", "example": "Game Board, Dice, Cards, Instructions"},
+        {"key": "skill_level", "label_en": "Skill Level", "label_zh": "技能等级", "type": "select", "options": ["Beginner", "Intermediate", "Advanced", "All Levels"]},
+        {"key": "theme", "label_en": "Theme", "label_zh": "主题", "type": "text", "example": "Dinosaurs, Space, Animals, Fantasy"},
+        {"key": "toy_figure_type", "label_en": "Figure Type", "label_zh": "玩偶类型", "type": "text", "example": "Action Figure, Doll, Stuffed Animal"},
+        {"key": "scale", "label_en": "Scale", "label_zh": "比例", "type": "text", "example": "1:18, 1:64"},
+        {"key": "remote_control_technology", "label_en": "RC Technology", "label_zh": "遥控技术", "type": "select", "options": ["Infrared", "Radio", "Bluetooth", "Wi-Fi", "None"]},
+        {"key": "is_electric", "label_en": "Electric Powered", "label_zh": "电动", "type": "select", "options": ["Yes", "No"]}
+      ]
+    },
+    "sports_outdoors": {
+      "name_en": "Sports & Outdoors",
+      "name_zh": "运动户外",
+      "icon": "⚽",
+      "fields": [
+        {"key": "sport_type", "label_en": "Sport Type", "label_zh": "运动类型", "type": "text", "example": "Running, Yoga, Cycling, Hiking"},
+        {"key": "skill_level", "label_en": "Skill Level", "label_zh": "适合水平", "type": "select", "options": ["Beginner", "Intermediate", "Advanced", "All Levels"]},
+        {"key": "specific_uses_for_product", "label_en": "Specific Uses", "label_zh": "产品用途", "type": "text", "example": "Training, Competition, Casual"},
+        {"key": "weight_limit", "label_en": "Weight Limit", "label_zh": "承重限制", "type": "text", "example": "250 lbs, 300 lbs"},
+        {"key": "resistance_level", "label_en": "Resistance Level", "label_zh": "阻力级别", "type": "select", "options": ["Light", "Medium", "Heavy", "Extra Heavy"]},
+        {"key": "waterproof_rating", "label_en": "Waterproof Rating", "label_zh": "防水等级", "type": "select", "options": ["Waterproof", "Water Resistant", "Not Waterproof"]},
+        {"key": "uv_protection", "label_en": "UV Protection", "label_zh": "紫外线防护", "type": "select", "options": ["UV400", "UPF 50+", "UPF 30+", "None"]},
+        {"key": "inflatable", "label_en": "Inflatable", "label_zh": "可充气", "type": "select", "options": ["Yes", "No"]},
+        {"key": "is_foldable", "label_en": "Foldable", "label_zh": "可折叠", "type": "select", "options": ["Yes", "No"]},
+        {"key": "grip_type", "label_en": "Grip Type", "label_zh": "握把类型", "type": "text", "example": "Rubber, Foam, Cork"}
+      ]
+    },
+    "health_household": {
+      "name_en": "Health & Household",
+      "name_zh": "健康家居",
+      "icon": "🏥",
+      "fields": [
+        {"key": "item_form", "label_en": "Product Form", "label_zh": "产品形态", "type": "select", "options": ["Tablet", "Capsule", "Liquid", "Powder", "Gummy", "Softgel", "Spray", "Drop"]},
+        {"key": "dosage_form", "label_en": "Dosage Form", "label_zh": "剂量形式", "type": "text", "example": "1 tablet daily, 2 capsules"},
+        {"key": "active_ingredients", "label_en": "Active Ingredients", "label_zh": "活性成分", "type": "text", "example": "Vitamin D3, Zinc, Probiotics"},
+        {"key": "diet_type", "label_en": "Diet Type", "label_zh": "饮食类型", "type": "text", "example": "Vegan, Gluten-Free, Keto, Organic"},
+        {"key": "allergen_information", "label_en": "Allergen Info", "label_zh": "过敏原信息", "type": "text", "example": "Contains: Soy, Milk. Free from: Nuts, Gluten"},
+        {"key": "servings_per_container", "label_en": "Servings Per Container", "label_zh": "份数", "type": "number", "example": "30, 60, 90"},
+        {"key": "is_organic", "label_en": "Organic", "label_zh": "有机", "type": "select", "options": ["Yes", "No"]},
+        {"key": "specific_uses_for_product", "label_en": "Specific Uses", "label_zh": "产品用途", "type": "text", "example": "Immune Support, Joint Health, Sleep Aid"},
+        {"key": "product_benefits", "label_en": "Product Benefits", "label_zh": "产品功效", "type": "text", "example": "Supports immunity, Promotes digestion"}
+      ]
+    },
+    "automotive": {
+      "name_en": "Automotive",
+      "name_zh": "汽车用品",
+      "icon": "🚗",
+      "fields": [
+        {"key": "vehicle_type", "label_en": "Vehicle Type", "label_zh": "车辆类型", "type": "text", "example": "Car, Truck, SUV, Motorcycle"},
+        {"key": "compatible_vehicles", "label_en": "Compatible Vehicles", "label_zh": "兼容车型", "type": "text", "example": "Toyota Camry 2018-2023, Honda Civic"},
+        {"key": "placement_on_vehicle", "label_en": "Placement", "label_zh": "安装位置", "type": "text", "example": "Front, Rear, Interior, Exterior"},
+        {"key": "oem_part_number", "label_en": "OEM Part Number", "label_zh": "OEM零件号", "type": "text", "example": "12345-ABC"},
+        {"key": "warranty_description", "label_en": "Warranty", "label_zh": "质保", "type": "text", "example": "1 Year, Lifetime"},
+        {"key": "voltage", "label_en": "Voltage (V)", "label_zh": "电压(V)", "type": "number", "example": "12, 24"},
+        {"key": "item_diameter", "label_en": "Diameter", "label_zh": "直径", "type": "text", "example": "15 inches"},
+        {"key": "bulb_type", "label_en": "Bulb Type", "label_zh": "灯泡类型", "type": "text", "example": "LED, Halogen, HID, Xenon"}
+      ]
+    },
+    "pet_supplies": {
+      "name_en": "Pet Supplies",
+      "name_zh": "宠物用品",
+      "icon": "🐾",
+      "fields": [
+        {"key": "target_species", "label_en": "Target Species", "label_zh": "适用动物", "type": "select", "options": ["Dog", "Cat", "Bird", "Fish", "Small Animal", "Reptile", "All Pets"]},
+        {"key": "breed_recommendation", "label_en": "Breed Recommendation", "label_zh": "推荐品种", "type": "text", "example": "All Breeds, Small Breeds, Large Breeds"},
+        {"key": "pet_life_stage", "label_en": "Life Stage", "label_zh": "生命阶段", "type": "select", "options": ["Puppy/Kitten", "Adult", "Senior", "All Life Stages"]},
+        {"key": "pet_size", "label_en": "Pet Size", "label_zh": "宠物尺寸", "type": "select", "options": ["Small", "Medium", "Large", "Extra Large", "All Sizes"]},
+        {"key": "flavor", "label_en": "Flavor", "label_zh": "口味", "type": "text", "example": "Chicken, Salmon, Beef"},
+        {"key": "item_form", "label_en": "Product Form", "label_zh": "产品形态", "type": "select", "options": ["Dry", "Wet", "Freeze-Dried", "Raw", "Treat", "Chew"]},
+        {"key": "specific_uses_for_product", "label_en": "Specific Uses", "label_zh": "产品用途", "type": "text", "example": "Training, Grooming, Health, Feeding"}
+      ]
+    },
+    "office_products": {
+      "name_en": "Office Products",
+      "name_zh": "办公用品",
+      "icon": "📎",
+      "fields": [
+        {"key": "paper_size", "label_en": "Paper Size", "label_zh": "纸张尺寸", "type": "select", "options": ["A4", "A3", "Letter", "Legal", "A5"]},
+        {"key": "paper_weight", "label_en": "Paper Weight", "label_zh": "纸张克重", "type": "text", "example": "80gsm, 100gsm"},
+        {"key": "ink_color", "label_en": "Ink Color", "label_zh": "墨水颜色", "type": "text", "example": "Black, Blue, Red, Multi-color"},
+        {"key": "point_type", "label_en": "Point Type", "label_zh": "笔尖类型", "type": "select", "options": ["Fine", "Medium", "Bold", "Extra Fine", "Chisel"]},
+        {"key": "compatible_devices", "label_en": "Compatible Printers", "label_zh": "兼容打印机", "type": "text", "example": "HP OfficeJet Pro, Canon PIXMA"},
+        {"key": "page_yield", "label_en": "Page Yield", "label_zh": "打印量", "type": "text", "example": "500 pages, 1000 pages"},
+        {"key": "binding_type", "label_en": "Binding Type", "label_zh": "装订方式", "type": "select", "options": ["Spiral", "Comb", "Stapled", "Glued", "Ring"]}
+      ]
+    },
+    "tools_home_improvement": {
+      "name_en": "Tools & Home Improvement",
+      "name_zh": "工具家装",
+      "icon": "🔧",
+      "fields": [
+        {"key": "power_source_type", "label_en": "Power Source", "label_zh": "电源类型", "type": "select", "options": ["Battery Powered", "Corded Electric", "Manual", "Pneumatic", "Gas Powered"]},
+        {"key": "voltage", "label_en": "Voltage (V)", "label_zh": "电压(V)", "type": "number", "example": "12, 18, 20"},
+        {"key": "amperage", "label_en": "Amperage (A)", "label_zh": "电流(A)", "type": "number", "example": "2, 4, 6"},
+        {"key": "torque", "label_en": "Torque", "label_zh": "扭矩", "type": "text", "example": "400 in-lbs, 1200 in-lbs"},
+        {"key": "speed", "label_en": "Speed (RPM)", "label_zh": "转速(RPM)", "type": "text", "example": "1500, 3000"},
+        {"key": "blade_length", "label_en": "Blade Length", "label_zh": "刀片长度", "type": "text", "example": "7-1/4 inches"},
+        {"key": "grip_type", "label_en": "Grip Type", "label_zh": "握把类型", "type": "select", "options": ["Rubber", "Plastic", "Wood", "Foam", "Ergonomic"]},
+        {"key": "included_components", "label_en": "Included Components", "label_zh": "包含配件", "type": "text", "example": "Drill bit set, Carrying case, Charger"},
+        {"key": "measurement_system", "label_en": "Measurement System", "label_zh": "计量系统", "type": "select", "options": ["Metric", "Imperial", "Both"]}
+      ]
+    },
+    "grocery": {
+      "name_en": "Grocery & Gourmet Food",
+      "name_zh": "食品杂货",
+      "icon": "🍎",
+      "fields": [
+        {"key": "flavor", "label_en": "Flavor", "label_zh": "口味", "type": "text", "example": "Chocolate, Vanilla, Strawberry"},
+        {"key": "allergen_information", "label_en": "Allergen Info", "label_zh": "过敏原信息", "type": "text", "example": "Contains: Wheat, Milk, Soy"},
+        {"key": "diet_type", "label_en": "Diet Type", "label_zh": "饮食类型", "type": "text", "example": "Vegan, Gluten-Free, Keto, Kosher, Halal"},
+        {"key": "organic_certifications", "label_en": "Organic Cert.", "label_zh": "有机认证", "type": "text", "example": "USDA Organic"},
+        {"key": "is_organic", "label_en": "Organic", "label_zh": "有机", "type": "select", "options": ["Yes", "No"]},
+        {"key": "caffeine_content", "label_en": "Caffeine Content", "label_zh": "咖啡因含量", "type": "text", "example": "Caffeinated, Decaffeinated"},
+        {"key": "roast_level", "label_en": "Roast Level", "label_zh": "烘焙程度", "type": "select", "options": ["Light", "Medium", "Medium-Dark", "Dark"]},
+        {"key": "serving_size", "label_en": "Serving Size", "label_zh": "份量", "type": "text", "example": "30g, 1 cup, 2 pieces"},
+        {"key": "storage_instructions", "label_en": "Storage Instructions", "label_zh": "存储方式", "type": "text", "example": "Store in cool dry place, Refrigerate after opening"},
+        {"key": "shelf_life", "label_en": "Shelf Life", "label_zh": "保质期", "type": "text", "example": "12 months, 24 months"}
+      ]
+    }
+  },
+  "cross_category_fields": [
+    {"key": "recommended_browse_nodes", "label_en": "Browse Node ID", "label_zh": "浏览节点ID", "type": "text", "example": "1234567890"},
+    {"key": "is_gift_wrap_available", "label_en": "Gift Wrap Available", "label_zh": "可礼品包装", "type": "select", "options": ["Yes", "No"]},
+    {"key": "is_gift_message_available", "label_en": "Gift Message Available", "label_zh": "可礼品贺卡", "type": "select", "options": ["Yes", "No"]},
+    {"key": "map_price", "label_en": "MAP Price", "label_zh": "最低广告价", "type": "number", "example": "29.99"},
+    {"key": "condition_note", "label_en": "Condition Note", "label_zh": "商品状况备注", "type": "text", "example": "Like New, minor packaging damage"},
+    {"key": "merchant_catalog_number", "label_en": "Catalog Number", "label_zh": "目录编号", "type": "text", "example": "CAT-12345"},
+    {"key": "platinum_keywords", "label_en": "Platinum Keywords", "label_zh": "白金关键词", "type": "text", "example": "keyword1, keyword2"}
+  ]
+}

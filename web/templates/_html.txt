@@ -1,0 +1,642 @@
+<!-- ==================== Sidebar ==================== -->
+<aside class="sidebar" id="sidebar">
+  <div class="s-top">
+    <div class="s-logo">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle>
+        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+      </svg>
+      <span class="s-title">Amazon Tool</span>
+      <span class="s-badge">v2.8</span>
+    </div>
+  </div>
+  <nav class="s-nav" aria-label="主导航">
+    <a class="s-item active" onclick="showPage('workspace')" data-page="workspace">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect>
+        <rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect>
+      </svg>
+      <span class="s-text" data-t="workspace">工作台</span>
+    </a>
+    <a class="s-item" onclick="showPage('settings')" data-page="settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 8.82a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"></path>
+      </svg>
+      <span class="s-text" data-t="settings">设置</span>
+    </a>
+  </nav>
+  <div class="s-bottom">
+    <button class="s-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    </button>
+  </div>
+</aside>
+<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeMobileSidebar()"></div>
+
+<!-- ==================== Main Container ==================== -->
+<div class="main" id="main">
+  <!-- Header -->
+  <header class="header">
+    <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="打开导航">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+      </svg>
+    </button>
+    <h1 class="title" id="pageTitle" data-t="workspace">工作台</h1>
+    <div class="spacer"></div>
+    <button class="lang-btn" onclick="toggleLang()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+      <span id="langText">中文</span>
+    </button>
+  </header>
+
+  <div class="content">
+
+    <!-- ==================== Page 1: 工作台 ==================== -->
+    <section class="page active" id="page-workspace">
+
+      <!-- Mini Stats Bar -->
+      <div class="stats-bar" id="statsBar">
+        <div class="stat-item">
+          <span class="stat-label" data-t="total_products">总商品</span>
+          <span class="stat-value" id="statTotal">0</span>
+        </div>
+        <div class="stat-sep"></div>
+        <div class="stat-item">
+          <span class="stat-label" data-t="ai_processed">AI已处理</span>
+          <span class="stat-value stat-success" id="statProcessed">0</span>
+        </div>
+        <div class="stat-sep"></div>
+        <div class="stat-item">
+          <span class="stat-label" data-t="pending">待处理</span>
+          <span class="stat-value stat-warning" id="statPending">0</span>
+        </div>
+        <div class="stat-sep"></div>
+        <div class="stat-item">
+          <span class="stat-label" data-t="errors">校验错误</span>
+          <span class="stat-value stat-danger" id="statErrors">0</span>
+        </div>
+      </div>
+
+      <div class="file-health-banner" id="fileHealthBanner">
+        <span class="file-health-badge">兼容提示</span>
+        <span id="fileHealthText"></span>
+      </div>
+
+      <div class="template-flow-card">
+        <div class="template-flow-head">
+          <div>
+            <div class="task-center-title">官方字段模板</div>
+            <div class="task-center-subtitle">先生成美国站商品专属模板，再用采集插件填数并自动诊断缺项</div>
+          </div>
+          <div class="template-flow-actions">
+            <button class="btn btn-outline btn-sm" onclick="recommendTemplate()">识别类目</button>
+            <button class="btn btn-primary btn-sm" onclick="generateTemplateTask()">生成模板</button>
+          </div>
+        </div>
+        <div class="template-stepper">
+          <div class="template-step active">选择模板</div>
+          <div class="template-step">下载模板</div>
+          <div class="template-step">上传采集结果</div>
+          <div class="template-step">自动诊断</div>
+          <div class="template-step">预览通过</div>
+          <div class="template-step">正式提交</div>
+        </div>
+        <div class="template-builder-grid">
+          <div class="form-group">
+            <label>商品链接 / 标题</label>
+            <input type="text" id="templateSourceInput" placeholder="贴 1688 / 其他商品链接，或直接输入商品标题">
+          </div>
+          <div class="form-group">
+            <label>搜索关键词</label>
+            <input type="text" id="templateKeywordInput" placeholder="如 wireless mouse / tumbler / phone case">
+          </div>
+          <div class="form-group">
+            <label>模板产品类型</label>
+            <input type="text" id="templateProductTypeInput" placeholder="自动推荐后可修改，例：DRINKING_CUP">
+          </div>
+          <div class="form-group">
+            <label>模板结构</label>
+            <select id="templateVariationMode">
+              <option value="single">单品模板</option>
+              <option value="variation">父子变体模板</option>
+            </select>
+          </div>
+        </div>
+        <div id="templateCandidates" class="template-candidate-list"></div>
+        <div id="templateTaskStatus" class="template-task-status"></div>
+        <div id="templateResultBox" class="template-result-box"></div>
+        <div class="template-upload-row">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('templateUploadInput').click()">
+            上传模板采集结果
+          </button>
+          <input type="file" id="templateUploadInput" accept=".xlsx,.xls" style="display:none" onchange="uploadTemplateFile(this.files[0])">
+          <span class="file-info" id="templateUploadInfo">上传后会自动跑模板诊断与 Amazon 预览。</span>
+        </div>
+      </div>
+
+      <div class="task-center">
+        <div class="task-center-main">
+          <div class="task-center-title">任务中心</div>
+          <div class="task-center-subtitle">查看当前批量任务与最近执行记录</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="loadTaskCenter()">刷新</button>
+      </div>
+      <div class="task-center-grid">
+        <div class="task-center-column">
+          <div class="task-center-section-title">当前任务</div>
+          <div id="taskCurrent" class="task-list"></div>
+        </div>
+        <div class="task-center-column">
+          <div class="task-center-section-title">最近记录</div>
+          <div id="taskHistory" class="task-list"></div>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <button class="btn btn-primary btn-sm" onclick="document.getElementById('fileInput').click()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <span data-t="upload_excel">导入Excel</span>
+          </button>
+          <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="uploadExcel(this.files[0])">
+
+          <button class="btn btn-ghost btn-sm" onclick="downloadTemplate()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+            <span data-t="download_template">下载模板</span>
+          </button>
+
+          <button class="btn btn-ghost btn-sm" onclick="exportData()" id="btnExport" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span data-t="export">导出</span>
+          </button>
+
+          <div class="toolbar-divider"></div>
+
+          <div class="dropdown">
+            <button class="btn btn-primary btn-sm" onclick="toggleDropdown('batchCopyMenu')" id="btnBatchCopy" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+              <span data-t="batch_ai_copy">批量AI文案</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <div class="dropdown-menu" id="batchCopyMenu">
+              <div class="dropdown-item" onclick="batchProcess('rewrite','title')" data-t="rewrite_title">仿写标题</div>
+              <div class="dropdown-item" onclick="batchProcess('rewrite','bullets')" data-t="rewrite_bullets">仿写卖点</div>
+              <div class="dropdown-item" onclick="batchProcess('rewrite','all')" data-t="rewrite_all">全部仿写</div>
+            </div>
+          </div>
+
+          <div class="dropdown">
+            <button class="btn btn-primary btn-sm" onclick="toggleDropdown('batchImgMenu')" id="btnBatchImg" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+              <span data-t="batch_ai_image">批量AI生图</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <div class="dropdown-menu" id="batchImgMenu">
+              <div class="dropdown-item" onclick="batchProcess('image','main')" data-t="regen_main">重生主图</div>
+              <div class="dropdown-item" onclick="batchProcess('image','all')" data-t="regen_all">重生全部图片</div>
+            </div>
+          </div>
+
+          <button class="btn btn-ghost btn-sm" onclick="batchValidate()" id="btnValidate" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span data-t="validate_all">校验</span>
+          </button>
+
+          <button class="btn btn-ghost btn-sm" onclick="batchListingCheck()" id="btnListingCheck" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="11" y1="8" x2="11" y2="12"></line><line x1="11" y1="16" x2="11.01" y2="16"></line><path d="M21 21l-4.35-4.35"></path></svg>
+            <span data-t="diagnose_missing">缺项诊断</span>
+          </button>
+
+          <div class="dropdown">
+            <button class="btn btn-success btn-sm" onclick="toggleDropdown('submitMenu')" id="btnSubmit" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              <span data-t="submit_amazon">提交上架</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <div class="dropdown-menu" id="submitMenu">
+              <div class="dropdown-item" onclick="submitToAmazon('preview')" data-t="preview_validate">预览验证</div>
+              <div class="dropdown-item" onclick="submitToAmazon('submit')" data-t="submit_now">正式提交</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="toolbar-right">
+          <span class="file-info" id="fileInfo"></span>
+          <button class="btn btn-ghost btn-icon" onclick="toggleColumnSettings()" title="列设置" aria-label="列设置">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>
+          </button>
+          <!-- Column Settings Dropdown -->
+          <div class="col-settings-panel" id="colSettingsPanel">
+            <div class="col-settings-title" data-t="column_settings">列设置</div>
+            <label class="col-opt"><input type="checkbox" data-col="brand" onchange="toggleColumn('brand',this.checked)"> <span data-t="brand">品牌</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="productType" onchange="toggleColumn('productType',this.checked)"> <span data-t="product_type">类型</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="variantType" onchange="toggleColumn('variantType',this.checked)"> <span data-t="variant_type">变体类型</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="upc" onchange="toggleColumn('upc',this.checked)"> <span>UPC/EAN</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="color" onchange="toggleColumn('color',this.checked)"> <span data-t="color">颜色</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="size" onchange="toggleColumn('size',this.checked)"> <span data-t="size">尺寸</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="fulfillment" onchange="toggleColumn('fulfillment',this.checked)"> <span data-t="fulfillment">配送</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="previewStatus" onchange="toggleColumn('previewStatus',this.checked)"> <span>预览状态</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="submitStatus" onchange="toggleColumn('submitStatus',this.checked)"> <span data-t="submit_status">上架状态</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="asin" onchange="toggleColumn('asin',this.checked)"> <span>ASIN</span></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter Tabs -->
+      <div class="filter-bar">
+        <div class="filter-tabs" id="filterTabs">
+          <button class="filter-tab active" onclick="filterByStatus('all')" data-filter="all">
+            <span data-t="all">全部</span>
+            <span class="filter-count" id="filterCountAll">0</span>
+          </button>
+          <button class="filter-tab" onclick="filterByStatus('pending')" data-filter="pending">
+            <span data-t="pending">待处理</span>
+            <span class="filter-count" id="filterCountPending">0</span>
+          </button>
+          <button class="filter-tab" onclick="filterByStatus('processed')" data-filter="processed">
+            <span data-t="ai_processed">AI已处理</span>
+            <span class="filter-count" id="filterCountProcessed">0</span>
+          </button>
+          <button class="filter-tab" onclick="filterByStatus('valid')" data-filter="valid">
+            <span data-t="validation_passed">校验通过</span>
+            <span class="filter-count" id="filterCountValid">0</span>
+          </button>
+          <button class="filter-tab" onclick="filterByStatus('error')" data-filter="error">
+            <span data-t="has_errors">有错误</span>
+            <span class="filter-count" id="filterCountError">0</span>
+          </button>
+          <button class="filter-tab" onclick="filterByStatus('previewPass')" data-filter="previewPass">
+            <span>预览通过</span>
+            <span class="filter-count" id="filterCountPreviewPass">0</span>
+          </button>
+          <button class="filter-tab" onclick="filterByStatus('previewFail')" data-filter="previewFail">
+            <span>预览失败</span>
+            <span class="filter-count" id="filterCountPreviewFail">0</span>
+          </button>
+        </div>
+        <div class="search-box">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="searchInput" placeholder="搜索SKU/商品名..." data-t-placeholder="search" oninput="filterTable(this.value)">
+        </div>
+      </div>
+
+      <!-- Data Table Container -->
+      <div class="table-container" id="tableContainer">
+        <!-- Loading Spinner -->
+        <div class="table-loading" id="tableLoading" style="display:none">
+          <div class="loading-spinner"></div>
+          <p data-t="loading_data">加载数据中...</p>
+        </div>
+        <div class="data-table-wrap" id="tableWrap">
+          <table class="data-table" id="dataTable" role="grid" aria-label="商品数据表">
+            <thead>
+              <tr>
+                <th class="col-cb col-fixed-left"><label><input type="checkbox" id="selectAllCb" onchange="toggleSelectAll(this.checked)" aria-label="Select all"><span class="sr-only">全选</span></label></th>
+                <th class="col-num col-fixed-left">#</th>
+                <th class="col-sku col-fixed-left" data-t="sku">SKU</th>
+                <th class="col-title" data-t="product_name">商品名称</th>
+                <th class="col-img" data-t="main_image">主图</th>
+                <th class="col-price" data-t="price">价格</th>
+                <th class="col-stock" data-t="stock">库存</th>
+                <th class="col-brand col-optional" data-col="brand" data-t="brand" style="display:none">品牌</th>
+                <th class="col-ptype col-optional" data-col="productType" data-t="product_type" style="display:none">类型</th>
+                <th class="col-vtype col-optional" data-col="variantType" data-t="variant_type" style="display:none">变体</th>
+                <th class="col-upc col-optional" data-col="upc" style="display:none">UPC</th>
+                <th class="col-color col-optional" data-col="color" data-t="color" style="display:none">颜色</th>
+                <th class="col-size col-optional" data-col="size" data-t="size" style="display:none">尺寸</th>
+                <th class="col-fulfill col-optional" data-col="fulfillment" data-t="fulfillment" style="display:none">配送</th>
+                <th class="col-preview col-optional" data-col="previewStatus" style="display:none">预览状态</th>
+                <th class="col-substatus col-optional" data-col="submitStatus" data-t="submit_status" style="display:none">上架</th>
+                <th class="col-asin col-optional" data-col="asin" style="display:none">ASIN</th>
+                <th class="col-ai" data-t="ai_status">AI状态</th>
+                <th class="col-valid" data-t="validation">校验</th>
+                <th class="col-actions col-fixed-right" data-t="actions">操作</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody">
+            </tbody>
+          </table>
+
+          <!-- Empty State -->
+          <div class="empty-state" id="emptyState">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <p class="empty-title" data-t="no_data_title">暂无商品数据</p>
+            <p class="empty-desc" data-t="no_data_desc">导入Excel文件或下载模板开始铺货</p>
+          </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination" style="display:none">
+          <span class="page-info" id="pageInfo"></span>
+          <div class="page-controls">
+            <select class="page-size-select" id="pageSizeSelect" onchange="changePageSize(this.value)">
+              <option value="20">20条/页</option>
+              <option value="50" selected>50条/页</option>
+              <option value="100">100条/页</option>
+              <option value="200">200条/页</option>
+            </select>
+            <button class="btn btn-ghost btn-icon" onclick="goPage('prev')" id="btnPrev" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            </button>
+            <span class="page-num" id="pageNum">1</span>
+            <button class="btn btn-ghost btn-icon" onclick="goPage('next')" id="btnNext">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Batch Action Bar (appears on selection) -->
+      <div class="batch-bar hidden" id="batchBar">
+        <div class="batch-info">
+          <span data-t="selected">已选择</span>
+          <strong id="selectedCount">0</strong>
+          <span data-t="items">项</span>
+          <span class="batch-note" id="selectedNote"></span>
+          <span class="batch-raw">原始选择 <strong id="selectedRawCount">0</strong></span>
+        </div>
+        <div class="batch-actions">
+          <button class="btn btn-primary btn-sm" onclick="batchProcess('rewrite','all')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span data-t="ai_copy">AI文案</span>
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="batchProcess('image','all')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+            <span data-t="ai_image">AI生图</span>
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="batchValidate()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span data-t="validate">校验</span>
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="batchListingCheck()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="11" y1="8" x2="11" y2="12"></line><line x1="11" y1="16" x2="11.01" y2="16"></line><path d="M21 21l-4.35-4.35"></path></svg>
+            <span data-t="diagnose_missing">缺项诊断</span>
+          </button>
+          <button class="btn btn-success btn-sm" onclick="submitToAmazon('submit')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            <span data-t="submit">上架</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="clearSelection()">
+            <span data-t="clear_selection">取消选择</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== Page 2: 设置 ==================== -->
+    <section class="page" id="page-settings">
+      <!-- API Configuration -->
+      <div class="settings-card">
+        <h3 class="settings-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+          <span data-t="api_config">API配置</span>
+        </h3>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>文字 API Key</label>
+            <input type="password" id="cfgTextApiKey" placeholder="sk-...">
+          </div>
+          <div class="form-group">
+            <label>文字 Base URL</label>
+            <input type="text" id="cfgTextBaseUrl" placeholder="https://api.kk666.online">
+          </div>
+          <div class="form-group">
+            <label>文字接口格式</label>
+            <input type="text" id="cfgTextEndpoint" placeholder="/v1beta/models/{model}:generateContent">
+          </div>
+          <div class="form-group">
+            <label data-t="ai_model">文字模型</label>
+            <input type="text" id="cfgTextModel" placeholder="gemini-3.1-flash-lite-preview">
+          </div>
+          <div class="form-group">
+            <label>图片 API Key</label>
+            <input type="password" id="cfgImageApiKey" placeholder="sk-...">
+          </div>
+          <div class="form-group">
+            <label>图片 Base URL</label>
+            <input type="text" id="cfgImageBaseUrl" placeholder="https://api.kk666.online">
+          </div>
+          <div class="form-group">
+            <label>图片接口格式</label>
+            <input type="text" id="cfgImageEndpoint" placeholder="/v1beta/models/{model}:generateContent">
+          </div>
+          <div class="form-group">
+            <label data-t="img_model">图片模型</label>
+            <input type="text" id="cfgImageModel" placeholder="gemini-3.1-flash-image-preview">
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button class="btn btn-primary btn-sm" onclick="saveConfig()">
+            <span data-t="save">保存</span>
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="testConnection()">
+            <span data-t="test_connection">测试连接</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="runSelfCheck()">
+            <span>一键自检</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h3 class="settings-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"></path><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"></path></svg>
+          <span>环境自检</span>
+        </h3>
+        <p class="settings-desc">检查文本 AI、图片 AI、默认亚马逊账号、输出目录与 `.xls` 兼容写回能力。</p>
+        <div class="settings-actions">
+          <button class="btn btn-primary btn-sm" onclick="runSelfCheck()">运行自检</button>
+        </div>
+        <div id="selfCheckResults" class="task-list"></div>
+      </div>
+
+      <!-- Amazon Accounts -->
+      <div class="settings-card">
+        <div class="settings-title-row">
+          <h3 class="settings-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            <span data-t="amazon_accounts">亚马逊账号</span>
+          </h3>
+          <button class="btn btn-primary btn-sm" onclick="showAddAccount()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span data-t="add">添加</span>
+          </button>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table data-table-compact" id="accountTable">
+            <thead>
+              <tr>
+                <th data-t="account_name">账号名称</th>
+                <th>Seller ID</th>
+                <th data-t="marketplace">站点</th>
+                <th data-t="status">状态</th>
+                <th data-t="actions">操作</th>
+              </tr>
+            </thead>
+            <tbody id="accountBody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- General Settings -->
+      <div class="settings-card">
+        <h3 class="settings-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 8.82a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"></path></svg>
+          <span data-t="general_settings">通用设置</span>
+        </h3>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label data-t="output_dir">输出目录</label>
+            <input type="text" id="cfgOutputDir" placeholder="./output">
+          </div>
+          <div class="form-group">
+            <label data-t="default_lang">默认语言</label>
+            <select id="cfgLang">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label data-t="batch_limit">单次导入上限</label>
+            <input type="number" id="cfgBatchLimit" placeholder="500" value="500">
+          </div>
+          <div class="form-group">
+            <label data-t="ai_concurrency">AI并发数</label>
+            <input type="number" id="cfgConcurrency" placeholder="3" value="3">
+          </div>
+          <div class="form-group">
+            <label data-t="image_concurrency">AI生图并发</label>
+            <input type="number" id="cfgImgConcurrency" placeholder="2" value="2">
+          </div>
+          <div class="form-group">
+            <label data-t="media_store_enabled">启用媒体存储</label>
+            <select id="cfgMediaStoreEnabled">
+              <option value="false">关闭</option>
+              <option value="true">开启</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label data-t="media_store_provider">媒体存储类型</label>
+            <select id="cfgMediaStoreProvider">
+              <option value="s3">Amazon S3</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label data-t="media_s3_bucket">S3 Bucket</label>
+            <input type="text" id="cfgMediaS3Bucket" placeholder="amazon-listing-media-prod">
+          </div>
+          <div class="form-group">
+            <label data-t="media_s3_region">S3 区域</label>
+            <input type="text" id="cfgMediaS3Region" placeholder="us-east-1">
+          </div>
+          <div class="form-group">
+            <label data-t="media_s3_prefix">对象前缀</label>
+            <input type="text" id="cfgMediaS3Prefix" placeholder="amazon28">
+          </div>
+          <div class="form-group">
+            <label data-t="media_submit_scheme">提交地址格式</label>
+            <select id="cfgMediaSubmitScheme">
+              <option value="s3">s3://bucket/key</option>
+              <option value="https">https://...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label data-t="media_preview_base">预览基地址</label>
+            <input type="text" id="cfgMediaPreviewBase" placeholder="https://cdn.example.com">
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button class="btn btn-primary btn-sm" onclick="saveGeneralConfig()">
+            <span data-t="save">保存</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ==================== Right Drawer (Product Detail Editor) ==================== -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="商品编辑">
+  <div class="drawer-header">
+    <div class="drawer-title">
+      <span class="drawer-sku" id="drawerSku"></span>
+      <span class="drawer-name" id="drawerName"></span>
+    </div>
+    <button class="drawer-close" onclick="closeDrawer()" aria-label="Close">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+    </button>
+  </div>
+  <div class="drawer-tabs">
+    <button class="drawer-tab active" onclick="switchDrawerTab('copy')" data-tab="copy" data-t="copywriting">文案</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('images')" data-tab="images" data-t="images">图片</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('attrs')" data-tab="attrs" data-t="attributes">属性</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('offer')" data-tab="offer" data-t="offer">报价</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('shipping')" data-tab="shipping" data-t="shipping">物流</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('compliance')" data-tab="compliance" data-t="compliance">合规</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('variation')" data-tab="variation" data-t="variation">变体</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('category')" data-tab="category" data-t="category_fields">品类字段</button>
+    <button class="drawer-tab" onclick="switchDrawerTab('diagnostics')" data-tab="diagnostics" data-t="diagnostics">诊断</button>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <!-- Tab content rendered by JS -->
+  </div>
+  <div class="drawer-footer">
+    <button class="btn btn-primary btn-sm" onclick="saveDrawerChanges()">
+      <span data-t="save_changes">保存修改</span>
+    </button>
+    <button class="btn btn-outline btn-sm" onclick="validateDrawerProduct()">
+      <span data-t="validate_this">校验此商品</span>
+    </button>
+    <button class="btn btn-outline btn-sm" onclick="runListingCheck(drawerProduct ? drawerProduct.sku : '')">
+      <span data-t="diagnose_this">诊断此商品</span>
+    </button>
+  </div>
+</aside>
+
+<!-- ==================== Modal ==================== -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle"></h3>
+      <button class="modal-close" onclick="closeModal()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
+<!-- ==================== Toast Container ==================== -->
+<div class="toast-container" id="toastContainer" role="alert" aria-live="polite"></div>
+
+<!-- ==================== Progress Overlay ==================== -->
+<div class="modal-overlay" id="progressOverlay" style="display:none">
+  <div class="modal modal-progress">
+    <div class="modal-header">
+      <h3 id="progressTitle" data-t="processing">处理中...</h3>
+    </div>
+    <div class="modal-body" style="text-align:center">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+      </div>
+      <p id="progressText" class="progress-text">0 / 0</p>
+      <p id="progressItem" class="progress-item"></p>
+      <button class="btn btn-ghost btn-sm" onclick="cancelProcess()" data-t="cancel_process">取消处理</button>
+    </div>
+  </div>
+</div>

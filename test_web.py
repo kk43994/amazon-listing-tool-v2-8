@@ -329,6 +329,77 @@ def test_template_diagnose_route_persists_template_diagnostics(monkeypatch):
     temp_dir.rmdir()
 
 
+def test_merge_template_diagnostic_promotes_preview_missing_fields_to_blocking():
+    result_entry = {
+        'summary_text': '预览 INVALID',
+        'missing_fields': [
+            {'name': 'compatible_devices', 'title': 'Compatible Devices', 'source': 'amazon_preview'},
+            {'name': 'hand_orientation', 'title': 'Hand Orientation', 'source': 'amazon_preview'},
+        ],
+    }
+    template_eval = {
+        'template_id': 'tpl_input_mouse',
+        'required_total': 13,
+        'required_filled': 13,
+        'required_missing': [],
+        'recommended_missing': [],
+        'optional_missing': [],
+        'blocking_issues': [],
+        'variation_issues': [],
+    }
+
+    merged = web_app._merge_template_diagnostic(result_entry, template_eval, [])
+
+    assert merged['template']['blocking_issues']
+    assert any('compatible_devices' in msg for msg in merged['template']['blocking_issues'])
+    assert any('hand_orientation' in msg for msg in merged['template']['blocking_issues'])
+    assert '建议补充 0 项' not in merged['summary_text']
+
+
+def test_template_overlay_promotes_preview_missing_fields_for_future_templates(monkeypatch):
+    import amazon.schema_manager as schema_manager
+    import core.template_service as template_service
+    from openpyxl import load_workbook
+
+    temp_root = Path(web_config.OUTPUT_DIR).resolve() / f'tmp_template_overlay_{uuid4().hex[:8]}'
+    def_dir = temp_root / 'defs'
+    gen_dir = temp_root / 'gen'
+    overlay_dir = temp_root / 'overlay'
+    for directory in (def_dir, gen_dir, overlay_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    schema_fields = {
+        'required_fields': [{'name': 'item_name', 'title': 'Item Name', 'description': 'Title', 'group': 'product_identity'}],
+        'optional_fields': [],
+        'enum_fields': {},
+        'field_groups': {},
+    }
+
+    monkeypatch.setattr(template_service, '_template_definition_dir', lambda: str(def_dir))
+    monkeypatch.setattr(template_service, '_generated_template_dir', lambda: str(gen_dir))
+    monkeypatch.setattr(template_service, '_template_overlay_dir', lambda: str(overlay_dir))
+    monkeypatch.setattr(schema_manager, 'fetch_schema', lambda product_type, marketplace='US', sp_client=None: {'schema': {}, 'property_groups': {}})
+    monkeypatch.setattr(schema_manager, 'parse_schema', lambda raw: schema_fields)
+
+    definition = template_service.ensure_template_definition('INPUT_MOUSE', 'US', 'single', refresh=True)
+    keys = {item['key'] for item in definition['columns']}
+    assert 'compatible_devices' not in keys
+
+    template_service.update_template_overlay('INPUT_MOUSE', 'US', [{'name': 'compatible_devices', 'title': 'Compatible Devices'}])
+    updated = template_service.ensure_template_definition('INPUT_MOUSE', 'US', 'single')
+    columns = {item['key']: item for item in updated['columns']}
+    assert 'compatible_devices' in columns
+    assert columns['compatible_devices']['level'] == 'required'
+
+    workbook_path, _ = template_service.ensure_template_workbook(updated['template_id'])
+    wb = load_workbook(workbook_path)
+    ws = wb.active
+    headers = [str(ws.cell(row=2, column=idx).value or '') for idx in range(1, ws.max_column + 1)]
+    idx = headers.index('compatible_devices') + 1
+    assert str(ws.cell(row=1, column=idx).value or '').startswith('[必填]')
+    wb.close()
+
+
 def test_template_upload_route_starts_auto_diagnosis(monkeypatch):
     def fake_execute(task_id, input_file, account_id='', selected_skus=None):
         web_app._complete_task_record(task_id, message='模板诊断完成', result={
@@ -372,6 +443,205 @@ def test_template_upload_route_starts_auto_diagnosis(monkeypatch):
     if uploaded_path.exists():
         uploaded_path.unlink()
 
+
+def test_template_diagnose_persists_preview_status_fields(monkeypatch):
+    from amazon.mapper import FieldMapper
+    from core.template_generator import build_template_definition, generate_template
+
+    temp_dir = Path(web_config.OUTPUT_DIR).resolve() / f'tmp_template_preview_status_{uuid4().hex[:8]}'
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    input_path = temp_dir / f'template_preview_status_{uuid4().hex[:8]}.xlsx'
+    schema_fields = {
+        'required_fields': [{'name': 'item_name', 'title': 'Item Name', 'description': 'Title', 'group': 'product_identity'}],
+        'optional_fields': [],
+        'enum_fields': {},
+        'field_groups': {},
+    }
+    definition = build_template_definition(schema_fields, 'INPUT_MOUSE', 'US', 'single')
+    generate_template(definition, str(input_path))
+
+    wb = load_workbook(input_path)
+    ws = wb.active
+    header_map = {str(ws.cell(row=2, column=idx).value): idx for idx in range(1, ws.max_column + 1)}
+    ws.cell(row=3, column=header_map['sku'], value='SKU-1')
+    ws.cell(row=3, column=header_map['product_type'], value='INPUT_MOUSE')
+    ws.cell(row=3, column=header_map['item_name'], value='Demo Mouse')
+    ws.cell(row=3, column=header_map['product_identity_mode'], value='gtin_exemption')
+    wb.save(input_path)
+    wb.close()
+
+    class FakeListingsAPI:
+        def put_listings_item(self, sku, product, preview=False):
+            return {
+                'status': 'INVALID',
+                'issues': [{'severity': 'ERROR', 'message': 'Preview failed', 'attributeNames': ['compatible_devices'], 'categories': ['MISSING_ATTRIBUTE'], 'code': '90220'}],
+            }
+
+        def get_listings_item(self, sku):
+            return None
+
+    monkeypatch.setattr(web_app, '_load_template_definition_for_file', lambda filepath: ({
+        'template_id': definition['template_id'],
+        'product_type': 'INPUT_MOUSE',
+        'variation_mode': 'single',
+    }, definition))
+    monkeypatch.setattr(web_app, '_build_listing_api_context', lambda account_id='': ({'name': 'US Test'}, FieldMapper('ATVPDKIKX0DER'), FakeListingsAPI(), ''))
+    monkeypatch.setattr(FieldMapper, '_load_schema_fields', lambda self, product_type: schema_fields)
+    monkeypatch.setattr(web_app, '_probe_product_media', lambda product: {'status': 'none', 'total': 0, 'passed': 0, 'failed': 0, 'checks': []})
+
+    client = app.test_client()
+    response = client.post('/api/template-diagnose', json={'file': str(input_path)})
+    assert response.status_code == 200
+    _wait_for_task(client, response.get_json()['task_id'])
+
+    wb2 = load_workbook(input_path)
+    ws2 = wb2.active
+    headers = [str(cell.value) if cell.value is not None else '' for cell in ws2[2]]
+    header_map = {header: idx + 1 for idx, header in enumerate(headers)}
+    assert ws2.cell(row=3, column=header_map['preview_status']).value == 'INVALID'
+    assert 'Preview failed' in str(ws2.cell(row=3, column=header_map['preview_message']).value or '')
+    wb2.close()
+
+    products_response = client.get('/api/products', query_string={'file': str(input_path)})
+    sku_entry = products_response.get_json()['products'][0]['skus'][0]
+    assert sku_entry['preview_status'] == 'INVALID'
+
+
+def test_template_diagnose_uses_template_labels_for_preview_missing_fields(monkeypatch):
+    from amazon.mapper import FieldMapper
+    from core.template_generator import build_template_definition, generate_template
+
+    temp_dir = Path(web_config.OUTPUT_DIR).resolve() / f'tmp_template_labels_{uuid4().hex[:8]}'
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    input_path = temp_dir / f'template_labels_{uuid4().hex[:8]}.xlsx'
+    schema_fields = {
+        'required_fields': [{'name': 'item_name', 'title': 'Item Name', 'description': 'Title', 'group': 'product_identity'}],
+        'optional_fields': [{'name': 'compatible_devices', 'title': 'Compatible Devices', 'description': 'Provide the devices that are compatible with this item.', 'group': 'other'}],
+        'enum_fields': {},
+        'field_groups': {},
+    }
+    definition = build_template_definition(schema_fields, 'INPUT_MOUSE', 'US', 'single')
+    generate_template(definition, str(input_path))
+
+    wb = load_workbook(input_path)
+    ws = wb.active
+    header_map = {str(ws.cell(row=2, column=idx).value): idx for idx in range(1, ws.max_column + 1)}
+    ws.cell(row=3, column=header_map['sku'], value='SKU-1')
+    ws.cell(row=3, column=header_map['product_type'], value='INPUT_MOUSE')
+    ws.cell(row=3, column=header_map['item_name'], value='Demo Mouse')
+    ws.cell(row=3, column=header_map['product_identity_mode'], value='gtin_exemption')
+    wb.save(input_path)
+    wb.close()
+
+    class FakeListingsAPI:
+        def put_listings_item(self, sku, product, preview=False):
+            return {
+                'status': 'INVALID',
+                'issues': [{'severity': 'ERROR', 'message': 'Compatible Devices missing', 'attributeNames': ['compatible_devices'], 'categories': ['MISSING_ATTRIBUTE'], 'code': '90220'}],
+            }
+
+        def get_listings_item(self, sku):
+            return None
+
+    monkeypatch.setattr(web_app, '_load_template_definition_for_file', lambda filepath: ({
+        'template_id': definition['template_id'],
+        'product_type': 'INPUT_MOUSE',
+        'variation_mode': 'single',
+    }, definition))
+    monkeypatch.setattr(web_app, '_build_listing_api_context', lambda account_id='': ({'name': 'US Test'}, FieldMapper('ATVPDKIKX0DER'), FakeListingsAPI(), ''))
+    monkeypatch.setattr(FieldMapper, '_load_schema_fields', lambda self, product_type: schema_fields)
+    monkeypatch.setattr(web_app, '_probe_product_media', lambda product: {'status': 'none', 'total': 0, 'passed': 0, 'failed': 0, 'checks': []})
+
+    client = app.test_client()
+    response = client.post('/api/template-diagnose', json={'file': str(input_path)})
+    assert response.status_code == 200
+    task_payload = _wait_for_task(client, response.get_json()['task_id'])
+    result_entry = task_payload['result']['results'][0]
+    assert result_entry['missing_fields'][0]['title'] == 'Compatible Devices'
+    assert 'Compatible Devices' in result_entry['template']['blocking_issues'][0]
+
+
+def test_template_definition_uses_official_dg_required_field():
+    from core.template_generator import build_template_definition
+
+    schema_fields = {
+        'required_fields': [
+            {'name': 'item_name', 'title': 'Item Name', 'description': 'Title', 'group': 'product_identity'},
+            {
+                'name': 'supplier_declared_dg_hz_regulation',
+                'title': 'Dangerous Goods Regulations',
+                'description': 'Hazmat regulation declaration',
+                'group': 'compliance',
+            },
+        ],
+        'optional_fields': [],
+        'enum_fields': {'supplier_declared_dg_hz_regulation': ['not_applicable', 'ghs']},
+        'field_groups': {},
+    }
+
+    definition = build_template_definition(schema_fields, 'INPUT_MOUSE', 'US', 'single')
+    columns_by_key = {column['key']: column for column in definition['columns']}
+
+    assert 'supplier_declared_dg_hz_regulation' in columns_by_key
+    assert columns_by_key['supplier_declared_dg_hz_regulation']['level'] == 'required'
+    assert columns_by_key['supplier_declared_dg_hz_regulation']['source_attribute'] == 'supplier_declared_dg_hz_regulation'
+    assert 'hazmat_declaration' not in columns_by_key
+
+
+def test_mapper_maps_dg_alias_and_official_field_to_schema_attribute():
+    from amazon.mapper import FieldMapper
+
+    mapper = FieldMapper('ATVPDKIKX0DER')
+
+    # 新模板字段：直接透传到 schema 阻断字段
+    attrs_official = mapper.build_listing_attributes({
+        'sku': 'SKU-DG-1',
+        'title': 'Demo Mouse',
+        'main_image_url': 'https://example.com/demo.jpg',
+        'batteries_required': 'Yes',
+        'supplier_declared_dg_hz_regulation': 'ghs',
+    })
+    assert attrs_official['supplier_declared_dg_hz_regulation'][0]['value'] == 'ghs'
+
+    # 兼容旧模板字段别名：hazmat_declaration 仍映射到同一阻断字段
+    attrs_alias = mapper.build_listing_attributes({
+        'sku': 'SKU-DG-2',
+        'title': 'Demo Mouse',
+        'main_image_url': 'https://example.com/demo.jpg',
+        'batteries_required': 'Yes',
+        'hazmat_declaration': 'not_applicable',
+    })
+    assert attrs_alias['supplier_declared_dg_hz_regulation'][0]['value'] == 'not_applicable'
+    assert 'hazmat_declaration' not in attrs_alias
+
+
+def test_mapper_skips_template_and_diagnostic_runtime_columns():
+    from amazon.mapper import FieldMapper
+
+    mapper = FieldMapper('ATVPDKIKX0DER')
+    row = {
+        'SKU': 'SKU-1',
+        'item_name': 'Demo Mouse',
+        'product_type': 'INPUT_MOUSE',
+        'template_id': 'tpl_mouse',
+        'template_blocking_issues': 'Compatible Devices missing',
+        'listing_check_status': 'fail',
+        'preview_status': 'INVALID',
+        'submit_status': 'PENDING',
+    }
+    col_map = {
+        'sku': 'SKU',
+        'title': 'item_name',
+        'product_type': 'product_type',
+    }
+
+    product = mapper.map_excel_row(row, col_map)
+
+    assert 'template_id' not in product
+    assert 'template_blocking_issues' not in product
+    assert 'listing_check_status' not in product
+    assert 'preview_status' not in product
+    assert 'submit_status' not in product
 
 def test_config_endpoint_round_trips_general_settings(monkeypatch):
     temp_dir = Path(web_config.OUTPUT_DIR).resolve() / f'tmp_config_test_{uuid4().hex[:8]}'
@@ -1328,6 +1598,49 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
         sku_entry = products_response.get_json()['products'][0]['skus'][0]
         assert sku_entry['preview_status'] == 'VALID'
         assert sku_entry['preview_account'] == 'US Preview'
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_submit_task_endpoint_returns_task_and_result(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_submit_task_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price'])
+    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99'])
+    wb.save(input_path)
+    wb.close()
+
+    def fake_execute(task_id, input_file, skus, preview, account_id):
+        web_app._complete_task_record(task_id, message='预览完成：1/1 可提交', result={
+            'success': True,
+            'mode': 'preview',
+            'total': 1,
+            'valid': 1,
+            'invalid': 0,
+            'results': [{'sku': 'SKU-1', 'valid': True, 'status': 'VALID', 'errors': [], 'warnings': []}],
+            'message': '预校验完成: 1/1 个商品可提交',
+        }, progress=1, total=1, current_item='完成')
+
+    try:
+        monkeypatch.setattr(web_app, '_execute_submit_task', fake_execute)
+        client = app.test_client()
+        response = client.post('/api/submit-task', json={
+            'file': str(input_path),
+            'skus': ['SKU-1'],
+            'preview': True,
+        })
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+        task_payload = _wait_for_task(client, payload['task_id'])
+        assert task_payload['status'] == 'completed'
+        assert task_payload['result']['valid'] == 1
+        assert task_payload['stage_name'] == '解析文件'
     finally:
         if input_path.exists():
             input_path.unlink()

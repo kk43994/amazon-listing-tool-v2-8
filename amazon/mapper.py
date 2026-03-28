@@ -57,7 +57,8 @@ GENERIC_ATTRIBUTE_EXCLUDE = {
     'batteries_included', 'battery_type', 'number_of_batteries',
     'battery_cell_composition', 'lithium_battery_packaging',
     'lithium_battery_energy_content', 'lithium_battery_weight',
-    'hazmat_declaration', 'parent_sku', 'parentage_level', 'variation_theme',
+    'hazmat_declaration', 'supplier_declared_dg_hz_regulation',
+    'parent_sku', 'parentage_level', 'variation_theme',
     'capacity', 'special_feature', 'included_components', 'care_instructions',
     'unit_count', 'number_of_items', 'main_image_url', 'main_image_source',
     'ai_main_image_path',
@@ -308,7 +309,16 @@ class FieldMapper:
                 'marketplace_id': mp,
             }]
 
-        if not self._coerce_bool(product.get('batteries_required')) and not product.get('hazmat_declaration'):
+        declared_dg_regulation = (
+            self._clean_value(product.get('supplier_declared_dg_hz_regulation'))
+            or self._clean_value(product.get('hazmat_declaration'))
+        )
+        if declared_dg_regulation:
+            attrs['supplier_declared_dg_hz_regulation'] = [{
+                'value': declared_dg_regulation,
+                'marketplace_id': mp,
+            }]
+        elif not self._coerce_bool(product.get('batteries_required')):
             attrs['supplier_declared_dg_hz_regulation'] = [{
                 'value': 'not_applicable',
                 'marketplace_id': mp,
@@ -524,7 +534,8 @@ class FieldMapper:
             'lithium_battery_packaging': ['lithium_battery_packaging'],
             'lithium_battery_energy_content': ['lithium_battery_energy_content'],
             'lithium_battery_weight': ['lithium_battery_weight'],
-            'hazmat_declaration': ['hazmat_declaration'],
+            'supplier_declared_dg_hz_regulation': ['supplier_declared_dg_hz_regulation', 'hazmat_declaration'],
+            'hazmat_declaration': ['hazmat_declaration', 'supplier_declared_dg_hz_regulation'],
             'parent_sku': ['parent_sku'],
             'parentage_level': ['parentage_level'],
             'variation_theme': ['variation_theme'],
@@ -696,7 +707,7 @@ class FieldMapper:
 
     def _normalize_dynamic_field_name(self, raw_name) -> str:
         text = self._clean_value(raw_name)
-        if text.startswith('source_'):
+        if text.startswith(('source_', 'ai_', 'listing_check_', 'validation_', 'preview_', 'submit_', 'template_')):
             return ""
         alias_map = {
             'are_batteries_included': 'batteries_included',

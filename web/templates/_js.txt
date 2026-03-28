@@ -275,10 +275,47 @@ function isRowDisabled(product) {
   });
 }
 
+function splitIssueText(text) {
+  return String(text || '').split(/[;|]/).map(item => item.trim()).filter(Boolean);
+}
+
+function getTemplateBlockingReasons(product) {
+  const reasons = [];
+  splitIssueText(product.template_blocking_issues || '').forEach(reason => reasons.push(reason));
+  splitIssueText(product.template_required_missing_fields || '').forEach(reason => reasons.push(`模板必填缺失：${reason}`));
+  if (String(product.listing_check_status || '').toLowerCase() === 'fail') {
+    if (product.listing_check_summary) reasons.push(`缺项诊断未通过：${product.listing_check_summary}`);
+    else reasons.push('缺项诊断未通过');
+  }
+  return Array.from(new Set(reasons));
+}
+
+function hasTemplateBlockingIssues(product) {
+  if (!product) return false;
+  if (Number(product.template_required_missing_count || 0) > 0) return true;
+  if (String(product.template_ready_to_submit || '').toLowerCase() === 'no') return true;
+  if (String(product.listing_check_status || '').toLowerCase() === 'fail') return true;
+  return getTemplateBlockingReasons(product).length > 0;
+}
+
+function getSubmitEligibleSkus() {
+  return products
+    .filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p))
+    .filter(p => !hasTemplateBlockingIssues(p))
+    .map(p => p.sku)
+    .filter(Boolean);
+}
+
+function updateSubmitAvailability() {
+  const btn = document.getElementById('btnSubmit');
+  if (!btn) return;
+  btn.disabled = products.length === 0 || getSubmitEligibleSkus().length === 0;
+}
+
 function getSelectedActionableSkus() {
   const actionableSet = new Set(
     products
-      .filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p))
+      .filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p) && !hasTemplateBlockingIssues(p))
       .map(p => p.sku)
       .filter(Boolean)
   );
@@ -396,6 +433,11 @@ function collectActionPlan(action, scope) {
       if (!hasHttpUrl(mainImage)) missing.push('主图');
       if (missing.length > 0) {
         addSkipped(product, `缺少${missing.join('、')}`);
+        return;
+      }
+      if (hasTemplateBlockingIssues(product)) {
+        const reasons = getTemplateBlockingReasons(product);
+        addSkipped(product, reasons[0] || '模板阻断项未修复');
         return;
       }
     }
@@ -592,6 +634,10 @@ function showValidationIssues(sku) {
   }
   if (schemaMissing.length) {
     lines.push(`<div><strong>类目必填缺失</strong><ul style="margin:8px 0 0 18px">${schemaMissing.map(item => `<li>${escHtml(item.title || item.name || '')} (${escHtml(item.name || '')})</li>`).join('')}</ul></div>`);
+  }
+  const templateBlocking = getTemplateBlockingReasons(product);
+  if (templateBlocking.length) {
+    lines.push(`<div style="margin-bottom:12px"><strong style="color:#cf1322">模板阻断项</strong><ul style="margin:8px 0 0 18px">${templateBlocking.map(msg => `<li>${escHtml(msg)}</li>`).join('')}</ul></div>`);
   }
 
   if (lines.length === 0) {
@@ -995,10 +1041,11 @@ function flattenProducts(groups) {
 }
 
 function enableToolbar(enabled) {
-  ['btnBatchCopy','btnBatchImg','btnValidate','btnListingCheck','btnSubmit','btnExport'].forEach(id => {
+  ['btnBatchCopy','btnBatchImg','btnValidate','btnListingCheck','btnExport'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = !enabled;
   });
+  updateSubmitAvailability();
 }
 
 // ===== 8. Stats =====
@@ -1011,7 +1058,7 @@ function updateStats() {
     const previewStatus = String(p.preview_status || '').toUpperCase();
     if (st === 'completed' || st === 'done') processed++;
     else pending++;
-    if (p._validErrors && p._validErrors.length > 0) errors++;
+    if ((p._validErrors && p._validErrors.length > 0) || hasTemplateBlockingIssues(p)) errors++;
     if (previewStatus === 'VALID') previewPass++;
     else if (previewStatus) previewFail++;
   });
@@ -1030,6 +1077,7 @@ function updateStats() {
   const previewFailEl = document.getElementById('filterCountPreviewFail');
   if (previewPassEl) previewPassEl.textContent = previewPass;
   if (previewFailEl) previewFailEl.textContent = previewFail;
+  updateSubmitAvailability();
 }
 
 // ===== 9. Filter & Search =====
@@ -1091,7 +1139,7 @@ function matchFilter(p) {
   if (currentFilter === 'pending') return st !== 'completed' && st !== 'done';
   if (currentFilter === 'processed') return st === 'completed' || st === 'done';
   if (currentFilter === 'valid') return p._validPass === true;
-  if (currentFilter === 'error') return p._validErrors && p._validErrors.length > 0;
+  if (currentFilter === 'error') return (p._validErrors && p._validErrors.length > 0) || hasTemplateBlockingIssues(p);
   if (currentFilter === 'previewPass') return previewStatus === 'VALID';
   if (currentFilter === 'previewFail') return previewStatus && previewStatus !== 'VALID';
   return true;
@@ -1157,7 +1205,9 @@ function renderTable() {
 
     // Validation
     let validCell;
-    if (p._validErrors && p._validErrors.length > 0) validCell = `<span class="valid-fail" onclick="showValidationIssues('${escHtml(sku)}')" title="${escHtml(p._validErrors.join('; '))}">&#10007;</span>`;
+    const templateBlockingReasons = getTemplateBlockingReasons(p);
+    if (templateBlockingReasons.length > 0) validCell = `<span class="valid-fail" onclick="showValidationIssues('${escHtml(sku)}')" title="${escHtml(templateBlockingReasons.join('; '))}">&#10007;</span>`;
+    else if (p._validErrors && p._validErrors.length > 0) validCell = `<span class="valid-fail" onclick="showValidationIssues('${escHtml(sku)}')" title="${escHtml(p._validErrors.join('; '))}">&#10007;</span>`;
     else if (p._validWarnings && p._validWarnings.length > 0) validCell = `<span class="valid-warn" onclick="showValidationIssues('${escHtml(sku)}')" title="${escHtml(p._validWarnings.join('; '))}">&#9888;</span>`;
     else if (p._validPass === true) validCell = '<span class="valid-pass">&#10003;</span>';
     else validCell = '<span class="valid-none">-</span>';
@@ -1294,7 +1344,7 @@ function updateBatchBar() {
   if (rawCountEl) rawCountEl.textContent = rawCount;
   if (noteEl) {
     const ignored = rawCount - actionableCount;
-    noteEl.textContent = ignored > 0 ? `（已忽略 ${ignored} 个无效/父体选择）` : '';
+    noteEl.textContent = ignored > 0 ? `（已忽略 ${ignored} 个无效/父体/阻断 SKU）` : '';
   }
   bar.classList.toggle('hidden', actionableCount === 0);
 }
@@ -1452,7 +1502,7 @@ function renderStatusOverview(p) {
   const requiredTotal = Number(p.template_required_total || 0);
   const requiredFilled = Number(p.template_required_filled || 0);
   const requiredMissing = Number(p.template_required_missing_count || 0);
-  const templateReady = String(p.template_ready_to_submit || '').toLowerCase() === 'yes';
+  const templateReady = !hasTemplateBlockingIssues(p);
   let submitStatus = p.submit_status || '未提交';
   if (submitStatus === 'ACCEPTED') submitStatus = 'ACCEPTED（待平台最终处理）';
   if (submitStatus === 'PENDING') submitStatus = '未提交';
@@ -2781,7 +2831,10 @@ function downloadTemplate() {
 async function submitToAmazon(mode) {
   if (!currentFile) return showToast('warning', '请先导入文件');
   const plan = collectActionPlan(mode === 'preview' ? 'preview' : 'submit', 'all');
-  if (plan.actionableSkus.length === 0) return showToast('warning', '没有可提交的商品');
+  if (plan.actionableSkus.length === 0) {
+    if (plan.skipped.length > 0) return showToast('warning', `当前没有可提交 SKU：${plan.skipped[0].reason}`);
+    return showToast('warning', '没有可提交的商品');
+  }
   closeAllDropdowns();
 
   let accounts = [];
@@ -2847,26 +2900,57 @@ function confirmSubmitAccount() {
 async function executeSubmit(mode, accountId, skus) {
   const isPreview = mode === 'preview';
   showToast('info', `正在${isPreview ? '预览验证' : '提交上架'} ${skus.length} 个商品...`);
+  showProgress(isPreview ? 'Amazon 预览验证' : '正式提交到亚马逊', 0, skus.length, { cancelable: false });
 
   try {
-    const response = await fetch('/api/submit', {
+    const response = await fetch('/api/submit-task', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ skus, file: currentFile, preview: isPreview, account_id: accountId })
     });
     const data = await response.json();
-    if (data.error) return showToast('error', data.error);
-    if (currentFile) loadProducts();
-    if (data.persist_warning) showToast('warning', data.persist_warning);
+    if (data.error) {
+      hideProgress();
+      return showToast('error', data.error);
+    }
+    pollSubmitTask(data.task_id, isPreview);
+  } catch (e) {
+    hideProgress();
+    showToast('error', '请求失败: ' + e.message);
+  }
+}
+
+async function pollSubmitTask(taskId, isPreview) {
+  if (!taskId) { hideProgress(); return; }
+  try {
+    const response = await fetch('/api/tasks/' + encodeURIComponent(taskId));
+    const task = await response.json();
+    if (task.error) throw new Error(task.error);
+    const result = task.result || {};
+    const total = Number(task.total || result.total || 0) || 1;
+    const done = Math.min(Number(task.progress || 0), total);
+    const stage = task.stage_name ? `${task.stage_name}` : (isPreview ? 'Amazon 预览' : '正式提交');
+    document.getElementById('progressTitle').textContent = isPreview ? 'Amazon 预览验证' : '正式提交到亚马逊';
+    updateProgress(done, total, [stage, task.current_item || ''].filter(Boolean).join(' · '));
     loadTaskCenter();
 
-    if (data.results && data.results.length > 0) {
-      showSubmitResults(data, isPreview);
-    } else {
-      showToast('success', data.message || '完成');
+    if (task.status === 'completed') {
+      hideProgress();
+      if (currentFile) loadProducts();
+      if (result.persist_warning) showToast('warning', result.persist_warning);
+      if (result.results && result.results.length > 0) showSubmitResults(result, isPreview);
+      else showToast('success', result.message || task.message || '完成');
+      return;
     }
+    if (task.status === 'failed') {
+      hideProgress();
+      showToast('error', task.error || task.message || '任务失败');
+      return;
+    }
+    setTimeout(() => pollSubmitTask(taskId, isPreview), 1000);
   } catch (e) {
-    showToast('error', '请求失败: ' + e.message);
+    hideProgress();
+    showToast('error', '任务查询失败: ' + e.message);
   }
 }
 
@@ -3155,8 +3239,15 @@ function closeModal() {
 }
 
 function showProgress(title, done, total) {
+  const options = arguments[3] || {};
   document.getElementById('progressTitle').textContent = title;
   updateProgress(done, total, '');
+  const cancelBtn = document.getElementById('progressCancelBtn');
+  if (cancelBtn) {
+    const cancelable = options.cancelable !== false;
+    cancelBtn.style.display = cancelable ? '' : 'none';
+    cancelBtn.textContent = options.buttonText || t('cancel_process');
+  }
   document.getElementById('progressOverlay').classList.add('show');
 }
 function updateProgress(done, total, item) {

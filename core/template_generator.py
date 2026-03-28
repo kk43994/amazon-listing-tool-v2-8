@@ -49,6 +49,8 @@ THIN_BORDER = Border(
     bottom=Side(style="thin", color="D9D9D9"),
 )
 
+CURRENT_TEMPLATE_VERSION = "2.1"
+
 LABEL_ZH = {
     "sku": "SKU",
     "product_type": "产品类型",
@@ -222,7 +224,7 @@ PRESET_FIELD_SPECS = {
         {"key": "package_height", "group": "shipping"},
         {"key": "dimension_unit", "group": "shipping", "level": "recommended"},
     ],
-    "supplier_declared_dg_hz_regulation": [{"key": "hazmat_declaration", "group": "compliance"}],
+    "supplier_declared_dg_hz_regulation": [{"key": "supplier_declared_dg_hz_regulation", "group": "compliance"}],
 }
 
 
@@ -232,7 +234,7 @@ def build_template_definition(
     marketplace: str = "US",
     variation_mode: str = "single",
     template_id: Optional[str] = None,
-    template_version: str = "2.0",
+    template_version: str = CURRENT_TEMPLATE_VERSION,
 ) -> Dict:
     """将 schema 字段清单转换为 Excel 模板定义。"""
     variation_mode = "variation" if str(variation_mode or "").strip().lower() == "variation" else "single"

@@ -636,7 +636,7 @@
       </div>
       <p id="progressText" class="progress-text">0 / 0</p>
       <p id="progressItem" class="progress-item"></p>
-      <button class="btn btn-ghost btn-sm" onclick="cancelProcess()" data-t="cancel_process">取消处理</button>
+      <button class="btn btn-ghost btn-sm" id="progressCancelBtn" onclick="cancelProcess()" data-t="cancel_process">取消处理</button>
     </div>
   </div>
 </div>

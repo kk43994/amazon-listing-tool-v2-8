@@ -33,6 +33,7 @@ from core.template_service import (
     recommend_product_types,
     summarize_template_issues,
     template_definition_summary,
+    update_template_overlay,
 )
 
 logger = logging.getLogger(__name__)
@@ -992,16 +993,19 @@ def _extract_listing_asin(payload: dict) -> str:
     return ''
 
 
-def _collect_missing_fields(validation: dict, preview_issues: list, listing_issues: list, field_titles: dict) -> list:
+def _collect_missing_fields(validation: dict, preview_issues: list, listing_issues: list, field_meta: dict) -> list:
     merged = {}
 
     for item in validation.get('schema_required_missing', []) or []:
         name = str(item.get('name', '') or '').strip()
         if not name:
             continue
+        meta = field_meta.get(name, {})
         merged[name] = {
             'name': name,
-            'title': str(item.get('title', '') or field_titles.get(name, name)).strip() or name,
+            'title': str(item.get('title', '') or meta.get('title', name)).strip() or name,
+            'group': str(item.get('group', '') or meta.get('group', '') or 'other').strip() or 'other',
+            'description': str(item.get('description', '') or meta.get('description', '') or '').strip(),
             'source': 'schema',
         }
 
@@ -1015,9 +1019,12 @@ def _collect_missing_fields(validation: dict, preview_issues: list, listing_issu
                 attr_name = str(attr_name or '').strip()
                 if not attr_name:
                     continue
+                meta = field_meta.get(attr_name, {})
                 merged.setdefault(attr_name, {
                     'name': attr_name,
-                    'title': str(field_titles.get(attr_name, attr_name)).strip() or attr_name,
+                    'title': str(meta.get('title', attr_name)).strip() or attr_name,
+                    'group': str(meta.get('group', '') or 'other').strip() or 'other',
+                    'description': str(meta.get('description', '') or '').strip(),
                     'source': source,
                 })
 
@@ -1092,12 +1099,16 @@ def _run_listing_check_for_product(product: dict, mapper, listings_api=None, inc
                                    include_media_probe: bool = True) -> dict:
     sku = str(product.get('sku', '') or '').strip() or 'N/A'
     schema_fields = mapper._load_schema_fields(product.get('product_type', ''))
-    field_titles = {}
+    field_meta = {}
     if schema_fields:
-        for field in schema_fields.get('required_fields', []) or []:
+        for field in (schema_fields.get('required_fields', []) or []) + (schema_fields.get('optional_fields', []) or []):
             name = str(field.get('name', '') or '').strip()
             if name:
-                field_titles[name] = str(field.get('title', '') or name).strip() or name
+                field_meta[name] = {
+                    'title': str(field.get('title', '') or name).strip() or name,
+                    'group': str(field.get('group', '') or 'other').strip() or 'other',
+                    'description': str(field.get('description', '') or '').strip(),
+                }
 
     validation = mapper.validate_required_fields(product, schema_fields=schema_fields)
     media = _probe_product_media(product) if include_media_probe else {
@@ -1153,7 +1164,7 @@ def _run_listing_check_for_product(product: dict, mapper, listings_api=None, inc
         validation=validation,
         preview_issues=preview.get('issues', []),
         listing_issues=listing_state.get('issues', []),
-        field_titles=field_titles,
+        field_meta=field_meta,
     )
 
     local_errors = [str(message or '').strip() for message in validation.get('errors', []) or [] if str(message or '').strip()]
@@ -3031,17 +3042,55 @@ def _apply_template_results_to_file(input_file: str, headers: list, results: lis
             continue
         row_updates = _build_template_row_updates(headers, result, template_meta)
         row_updates.update(_build_listing_check_persist_updates(headers, result, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), result.get('account_name', '') or ''))
+        row_updates.update(_build_preview_persist_updates(
+            headers,
+            {
+                'status': result.get('preview', {}).get('status', ''),
+                'valid': str(result.get('preview', {}).get('status', '') or '').strip().upper() == 'VALID',
+                'errors': [
+                    issue.get('message', '')
+                    for issue in (result.get('preview', {}).get('issues', []) or [])
+                    if issue.get('level') == 'error'
+                ],
+                'warnings': [
+                    issue.get('message', '')
+                    for issue in (result.get('preview', {}).get('issues', []) or [])
+                    if issue.get('level') != 'error'
+                ],
+            },
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            result.get('account_name', '') or '',
+        ))
         updates_by_sku[sku] = row_updates
     if updates_by_sku:
         _persist_bulk_row_updates(input_file, updates_by_sku)
 
 
+def _build_template_column_lookup(template_definition: dict) -> dict:
+    lookup = {}
+    for column in (template_definition or {}).get('columns', []) or []:
+        key = str(column.get('key', '') or '').strip()
+        if not key:
+            continue
+        lookup[key] = {
+            'title': str(column.get('label_zh', '') or column.get('label_en', '') or key).strip() or key,
+            'description': str(column.get('description', '') or '').strip(),
+            'group': str(column.get('group', '') or 'other').strip() or 'other',
+        }
+    return lookup
+
+
 def _merge_template_diagnostic(result_entry: dict, template_eval: dict, column_issues: list):
     template_info = dict(template_eval or {})
+    blocking = list(template_info.get('blocking_issues') or [])
     if column_issues:
-        blocking = list(template_info.get('blocking_issues') or [])
         blocking.extend(issue.get('message', '') for issue in column_issues if issue.get('message'))
-        template_info['blocking_issues'] = [msg for msg in blocking if str(msg or '').strip()]
+    for item in result_entry.get('missing_fields', []) or []:
+        name = str(item.get('name', '') or '').strip()
+        title = str(item.get('title', '') or name).strip() or name
+        if name:
+            blocking.append(f"Amazon 预览缺失：{title} ({name})")
+    template_info['blocking_issues'] = [msg for msg in blocking if str(msg or '').strip()]
     result_entry['template'] = template_info
     summary = summarize_template_issues(result_entry)
     if summary:
@@ -3062,6 +3111,7 @@ def _execute_template_diagnosis(task_id: str, input_file: str, account_id: str =
         headers = list(processor.headers)
         meta, template_definition = _load_template_definition_for_file(input_file)
         column_issues = _template_column_issues(headers, template_definition)
+        template_column_lookup = _build_template_column_lookup(template_definition)
 
         sku_col = col_map.get('sku', '')
         sku_set = {str(sku or '').strip() for sku in (selected_skus or []) if str(sku or '').strip()}
@@ -3096,11 +3146,33 @@ def _execute_template_diagnosis(task_id: str, input_file: str, account_id: str =
             result['account_name'] = account_name
             if context_message:
                 result['account_message'] = context_message
+            for missing in result.get('missing_fields', []) or []:
+                name = str(missing.get('name', '') or '').strip()
+                if not name:
+                    continue
+                meta_info = template_column_lookup.get(name, {})
+                if meta_info.get('title'):
+                    missing['title'] = meta_info['title']
+                if meta_info.get('description'):
+                    missing['description'] = meta_info['description']
+                if meta_info.get('group'):
+                    missing['group'] = meta_info['group']
             _merge_template_diagnostic(result, template_eval, column_issues)
             results.append(result)
 
         _set_task_stage(task_id, stages[4], 5, stages, progress=len(rows), total=len(rows), current_item='写回诊断结果')
         _apply_template_results_to_file(input_file, headers, results, meta)
+        preview_missing_fields = []
+        for result in results:
+            for item in result.get('missing_fields', []) or []:
+                if str(item.get('source', '') or '').strip() == 'amazon_preview':
+                    preview_missing_fields.append(item)
+        if preview_missing_fields and template_definition:
+            update_template_overlay(
+                product_type=template_definition.get('product_type', ''),
+                marketplace=template_definition.get('marketplace', DEFAULT_MARKETPLACE),
+                missing_fields=preview_missing_fields,
+            )
 
         pass_count = sum(1 for item in results if item.get('status') == 'pass')
         warn_count = sum(1 for item in results if item.get('status') == 'warn')
@@ -3158,6 +3230,267 @@ def _execute_template_generation(task_id: str, product_type: str, variation_mode
         )
     except Exception as exc:
         _append_task_log(task_id, f'❌ {exc}')
+        _fail_task_record(task_id, str(exc))
+
+
+def _run_submit_operation(input_file: str, skus: list, preview: bool = True, account_id: str = '',
+                          progress_callback=None) -> dict:
+    processor = ExcelProcessor()
+    all_data = processor.read_input(input_file)
+    col_map = processor.detect_columns()
+    headers = list(processor.headers)
+
+    sku_col = col_map.get('sku', '')
+    sku_set = set(skus or [])
+    matched = [item for item in all_data if str(item.get(sku_col, '') or item.get('SKU', '')).strip() in sku_set]
+    if not matched:
+        raise ValueError(f'未匹配到{len(skus)}个SKU')
+
+    def emit(stage_name: str, done: int, total: int, current_item: str):
+        if progress_callback:
+            progress_callback(stage_name, done, total, current_item)
+
+    results = []
+
+    if preview:
+        emit('读取商品文件', 0, len(matched), '准备预览验证')
+        from amazon.accounts import AccountManager
+        from amazon.auth import AmazonAuth
+        from amazon.listings import ListingsAPI
+        from amazon.mapper import FieldMapper
+
+        mgr = AccountManager()
+        acc = mgr.get_account(account_id) if account_id else mgr.get_default_account()
+        mapper = FieldMapper(acc.get('marketplace_id', 'ATVPDKIKX0DER')) if acc else FieldMapper()
+
+        listings_api = None
+        if acc and all([acc.get('lwa_client_id'), acc.get('lwa_client_secret'), acc.get('refresh_token')]):
+            auth = AmazonAuth(
+                client_id=acc['lwa_client_id'],
+                client_secret=acc['lwa_client_secret'],
+                refresh_token=acc['refresh_token'],
+            )
+            listings_api = ListingsAPI(
+                auth=auth,
+                seller_id=acc['seller_id'],
+                marketplace_id=acc.get('marketplace_id', 'ATVPDKIKX0DER'),
+            )
+
+        total = len(matched)
+        for idx, item in enumerate(matched, start=1):
+            product = mapper.map_excel_row(item, col_map)
+            sku = product.get('sku', '')
+            emit('本地字段校验', idx - 1, total, sku)
+            validation = mapper.validate_required_fields(product)
+
+            if not validation['valid'] or listings_api is None:
+                results.append({
+                    'sku': sku,
+                    'valid': validation['valid'],
+                    'errors': validation['errors'],
+                    'warnings': validation['warnings'],
+                    'source': 'local',
+                })
+                continue
+
+            emit('调用 Amazon 预览', idx - 1, total, sku)
+            preview_result = listings_api.put_listings_item(sku, product, preview=True)
+            issues = preview_result.get('issues', []) or []
+            errors = list(validation['errors'])
+            warnings = list(validation['warnings'])
+
+            for issue in issues:
+                message = issue.get('message', '')
+                severity = str(issue.get('severity', '')).upper()
+                if severity == 'ERROR':
+                    errors.append(message)
+                else:
+                    warnings.append(message)
+
+            preview_status = str(preview_result.get('status', '')).upper()
+            is_valid = preview_status == 'VALID' and len(errors) == 0
+
+            results.append({
+                'sku': sku,
+                'valid': is_valid,
+                'errors': errors,
+                'warnings': warnings,
+                'source': 'amazon_preview',
+                'status': preview_status or 'UNKNOWN',
+            })
+            time.sleep(1.0)
+
+        valid_count = sum(1 for r in results if r.get('valid'))
+        if input_file and os.path.exists(input_file):
+            _apply_preview_results_to_file(
+                input_file=input_file,
+                headers=headers,
+                results=results,
+                account_name=acc.get('name', acc.get('seller_id', '')) if acc else '',
+            )
+        return {
+            'success': True,
+            'mode': 'preview',
+            'total': len(results),
+            'valid': valid_count,
+            'invalid': len(results) - valid_count,
+            'results': results,
+            'message': f'预校验完成: {valid_count}/{len(results)} 个商品可提交',
+        }
+
+    emit('读取商品文件', 0, len(matched), '准备正式提交')
+    from amazon.accounts import AccountManager
+    from amazon.auth import AmazonAuth
+    from amazon.listings import ListingsAPI
+    from amazon.mapper import FieldMapper
+
+    mgr = AccountManager()
+    acc = mgr.get_account(account_id) if account_id else mgr.get_default_account()
+    if not acc:
+        raise ValueError('未配置亚马逊账号，请先在设置页面添加账号')
+    mapper = FieldMapper(acc.get('marketplace_id', 'ATVPDKIKX0DER'))
+
+    auth = AmazonAuth(
+        client_id=acc['lwa_client_id'],
+        client_secret=acc['lwa_client_secret'],
+        refresh_token=acc['refresh_token'],
+    )
+    listings_api = ListingsAPI(
+        auth=auth,
+        seller_id=acc['seller_id'],
+        marketplace_id=acc.get('marketplace_id', 'ATVPDKIKX0DER'),
+    )
+
+    total = len(matched)
+    precheck_results = []
+    for idx, item in enumerate(matched, start=1):
+        product = mapper.map_excel_row(item, col_map)
+        sku = product.get('sku', '')
+        result_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        emit('提交门禁检查', idx - 1, total, sku)
+        precheck_result = _run_listing_check_for_product(
+            product,
+            mapper=mapper,
+            listings_api=listings_api,
+            include_listing_lookup=False,
+            include_media_probe=False,
+        )
+        precheck_results.append(precheck_result)
+        if precheck_result.get('status') == 'fail':
+            results.append({
+                'sku': sku,
+                'status': 'PREVIEW_BLOCKED',
+                'submit_time': result_time,
+                'message': precheck_result.get('summary_text', '') or '提交前诊断未通过',
+                'issues': [{'severity': 'ERROR', 'message': precheck_result.get('summary_text', '') or '提交前诊断未通过'}],
+                })
+            continue
+
+        emit('调用 Amazon 正式提交', idx - 1, total, sku)
+        try:
+            submit_result = listings_api.put_listings_item(sku, product, preview=False)
+            status = submit_result.get('status', 'UNKNOWN')
+            result_entry = {
+                'sku': sku,
+                'status': status,
+                'submit_time': result_time,
+                'submission_id': submit_result.get('submissionId', ''),
+                'issues': submit_result.get('issues', []),
+            }
+            for ident in submit_result.get('identifiers', []):
+                if ident.get('asin'):
+                    result_entry['asin'] = ident['asin']
+                    break
+            results.append(result_entry)
+            time.sleep(0.5)
+        except Exception as submit_err:
+            logger.error(f'SKU {sku} 提交异常: {submit_err}')
+            results.append({
+                'sku': sku,
+                'status': 'ERROR',
+                'submit_time': result_time,
+                'message': str(submit_err),
+            })
+
+    _apply_listing_check_results_to_file(
+        input_file=input_file,
+        headers=headers,
+        results=precheck_results,
+        account_name=acc.get('name', acc.get('seller_id', '')),
+    )
+
+    accepted = sum(1 for r in results if r.get('status') == 'ACCEPTED')
+    failed = sum(1 for r in results if r.get('status') in ('ERROR', 'INVALID', 'SKIPPED', 'PREVIEW_BLOCKED'))
+
+    submission_record = {
+        'timestamp': datetime.now().isoformat(),
+        'account': acc.get('name', acc.get('seller_id', '')),
+        'total': len(results),
+        'accepted': accepted,
+        'failed': failed,
+        'results': results,
+    }
+
+    submissions_dir = os.path.join(config.OUTPUT_DIR, 'submissions')
+    os.makedirs(submissions_dir, exist_ok=True)
+    record_file = os.path.join(submissions_dir, f'submit_{time.strftime("%Y%m%d_%H%M%S")}.json')
+    with open(record_file, 'w', encoding='utf-8') as f:
+        json.dump(submission_record, f, ensure_ascii=False, indent=2)
+
+    persist_warning = ''
+    try:
+        updates_by_sku = {}
+        for result_entry in results:
+            sku = str(result_entry.get('sku', '') or '').strip()
+            if not sku:
+                continue
+            submit_time = str(result_entry.get('submit_time', '') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')).strip()
+            updates_by_sku[sku] = _build_submit_persist_updates(headers, result_entry, submit_time)
+        if updates_by_sku:
+            _persist_bulk_row_updates(input_file, updates_by_sku)
+    except Exception as persist_err:
+        persist_warning = f'提交结果已返回，但写回Excel失败: {persist_err}'
+        logger.error(persist_warning)
+
+    return {
+        'success': True,
+        'mode': 'submit',
+        'total': len(results),
+        'accepted': accepted,
+        'failed': failed,
+        'results': results,
+        'record_file': record_file,
+        'persist_warning': persist_warning,
+        'message': f'提交完成: {accepted}个已接受, {failed}个失败',
+    }
+
+
+def _execute_submit_task(task_id: str, input_file: str, skus: list, preview: bool, account_id: str):
+    stages = ['读取商品文件', '本地字段校验', '调用 Amazon 预览'] if preview else ['读取商品文件', '提交门禁检查', '调用 Amazon 正式提交']
+
+    def on_progress(stage_name: str, done: int, total: int, current_item: str):
+        stage_index = stages.index(stage_name) + 1 if stage_name in stages else 1
+        _set_task_stage(task_id, stage_name, stage_index, stages, progress=done, total=total, current_item=current_item)
+
+    try:
+        result = _run_submit_operation(
+            input_file=input_file,
+            skus=skus,
+            preview=preview,
+            account_id=account_id,
+            progress_callback=on_progress,
+        )
+        total = int(result.get('total', len(skus)) or len(skus) or 0)
+        _complete_task_record(
+            task_id,
+            message=result.get('message', '执行完成'),
+            result=result,
+            progress=total,
+            total=total,
+            current_item='完成',
+        )
+    except Exception as exc:
         _fail_task_record(task_id, str(exc))
 
 
@@ -3578,269 +3911,39 @@ def submit_to_amazon():
             return jsonify({'error': '没有选中的SKU'}), 400
         if not input_file or not os.path.exists(input_file):
             return jsonify({'error': '文件不存在'}), 400
-
-        # 读取Excel数据
-        processor = ExcelProcessor()
-        all_data = processor.read_input(input_file)
-        col_map = processor.detect_columns()
-        headers = list(processor.headers)
-
-        sku_col = col_map.get('sku', '')
-        sku_set = set(skus)
-        matched = [item for item in all_data
-                    if str(item.get(sku_col, '') or item.get('SKU', '')).strip() in sku_set]
-
-        if not matched:
-            return jsonify({'error': f'未匹配到{len(skus)}个SKU'}), 400
-
-        results = []
-
+        payload = _run_submit_operation(
+            input_file=input_file,
+            skus=skus,
+            preview=preview,
+            account_id=account_id,
+        )
         if preview:
-            # === 预览模式: 优先使用 Amazon VALIDATION_PREVIEW ===
-            from amazon.accounts import AccountManager
-            from amazon.auth import AmazonAuth
-            from amazon.listings import ListingsAPI
-            from amazon.mapper import FieldMapper
-
-            mgr = AccountManager()
-            acc = mgr.get_account(account_id) if account_id else mgr.get_default_account()
-            mapper = FieldMapper(acc.get('marketplace_id', 'ATVPDKIKX0DER')) if acc else FieldMapper()
-
-            listings_api = None
-            if acc and all([acc.get('lwa_client_id'), acc.get('lwa_client_secret'), acc.get('refresh_token')]):
-                auth = AmazonAuth(
-                    client_id=acc['lwa_client_id'],
-                    client_secret=acc['lwa_client_secret'],
-                    refresh_token=acc['refresh_token'],
-                )
-                listings_api = ListingsAPI(
-                    auth=auth,
-                    seller_id=acc['seller_id'],
-                    marketplace_id=acc.get('marketplace_id', 'ATVPDKIKX0DER'),
-                )
-
-            for item in matched:
-                product = mapper.map_excel_row(item, col_map)
-                sku = product.get('sku', '')
-                validation = mapper.validate_required_fields(product)
-
-                if not validation['valid'] or listings_api is None:
-                    results.append({
-                        'sku': sku,
-                        'valid': validation['valid'],
-                        'errors': validation['errors'],
-                        'warnings': validation['warnings'],
-                        'source': 'local',
-                    })
-                    continue
-
-                preview_result = listings_api.put_listings_item(sku, product, preview=True)
-                issues = preview_result.get('issues', []) or []
-                errors = list(validation['errors'])
-                warnings = list(validation['warnings'])
-
-                for issue in issues:
-                    message = issue.get('message', '')
-                    severity = str(issue.get('severity', '')).upper()
-                    if severity == 'ERROR':
-                        errors.append(message)
-                    else:
-                        warnings.append(message)
-
-                preview_status = str(preview_result.get('status', '')).upper()
-                is_valid = preview_status == 'VALID' and len(errors) == 0
-
-                results.append({
-                    'sku': sku,
-                    'valid': is_valid,
-                    'errors': errors,
-                    'warnings': warnings,
-                    'source': 'amazon_preview',
-                    'status': preview_status or 'UNKNOWN',
-                })
-                time.sleep(1.0)
-
-            valid_count = sum(1 for r in results if r.get('valid'))
-            if input_file and os.path.exists(input_file):
-                _apply_preview_results_to_file(
-                    input_file=input_file,
-                    headers=headers,
-                    results=results,
-                    account_name=acc.get('name', acc.get('seller_id', '')) if acc else '',
-                )
             _record_instant_task(
                 kind='preview_submit',
                 title='Amazon 预览验证',
                 status='completed',
                 input_file=input_file,
-                total=len(results),
-                success=valid_count,
-                failed=len(results) - valid_count,
-                account=acc.get('name', acc.get('seller_id', '')) if acc else '',
-                message=f'预览完成：{valid_count}/{len(results)} 可提交',
+                total=payload.get('total', 0),
+                success=payload.get('valid', 0),
+                failed=payload.get('invalid', 0),
+                account=account_id,
+                message=payload.get('message', ''),
             )
-            return jsonify({
-                'success': True,
-                'mode': 'preview',
-                'total': len(results),
-                'valid': valid_count,
-                'invalid': len(results) - valid_count,
-                'results': results,
-                'message': f'预校验完成: {valid_count}/{len(results)} 个商品可提交',
-            })
-
-        # === 正式提交模式 ===
-
-        # 1. 初始化账号和API（只创建一次）
-        from amazon.accounts import AccountManager
-        from amazon.auth import AmazonAuth
-        from amazon.listings import ListingsAPI
-        from amazon.mapper import FieldMapper
-
-        mgr = AccountManager()
-        acc = mgr.get_account(account_id) if account_id else mgr.get_default_account()
-        if not acc:
-            return jsonify({'error': '未配置亚马逊账号，请先在设置页面添加账号'}), 400
-        mapper = FieldMapper(acc.get('marketplace_id', 'ATVPDKIKX0DER'))
-
-        auth = AmazonAuth(
-            client_id=acc['lwa_client_id'],
-            client_secret=acc['lwa_client_secret'],
-            refresh_token=acc['refresh_token'],
-        )
-        listings_api = ListingsAPI(
-            auth=auth,
-            seller_id=acc['seller_id'],
-            marketplace_id=acc.get('marketplace_id', 'ATVPDKIKX0DER'),
-        )
-
-        # 2. 逐条提交
-        precheck_results = []
-        for item in matched:
-            product = mapper.map_excel_row(item, col_map)
-            sku = product.get('sku', '')
-            result_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-            precheck_result = _run_listing_check_for_product(
-                product,
-                mapper=mapper,
-                listings_api=listings_api,
-                include_listing_lookup=False,
-                include_media_probe=False,
+        else:
+            _record_instant_task(
+                kind='submit',
+                title='正式提交到亚马逊',
+                status='completed' if not payload.get('failed') else ('failed' if payload.get('accepted', 0) == 0 else 'completed'),
+                input_file=input_file,
+                total=payload.get('total', 0),
+                success=payload.get('accepted', 0),
+                failed=payload.get('failed', 0),
+                account=account_id,
+                result_file=payload.get('record_file', ''),
+                message=payload.get('message', ''),
+                warning=payload.get('persist_warning', ''),
             )
-            precheck_results.append(precheck_result)
-            if precheck_result.get('status') == 'fail':
-                results.append({
-                    'sku': sku,
-                    'status': 'PREVIEW_BLOCKED',
-                    'submit_time': result_time,
-                    'message': precheck_result.get('summary_text', '') or '提交前诊断未通过',
-                    'issues': [
-                        {'severity': 'ERROR', 'message': precheck_result.get('summary_text', '') or '提交前诊断未通过'}
-                    ],
-                })
-                continue
-
-            try:
-                submit_result = listings_api.put_listings_item(sku, product, preview=False)
-                status = submit_result.get('status', 'UNKNOWN')
-
-                result_entry = {
-                    'sku': sku,
-                    'status': status,
-                    'submit_time': result_time,
-                    'submission_id': submit_result.get('submissionId', ''),
-                    'issues': submit_result.get('issues', []),
-                }
-
-                # 提取ASIN
-                for ident in submit_result.get('identifiers', []):
-                    if ident.get('asin'):
-                        result_entry['asin'] = ident['asin']
-                        break
-
-                results.append(result_entry)
-                time.sleep(0.5)
-
-            except Exception as submit_err:
-                logger.error(f'SKU {sku} 提交异常: {submit_err}')
-                results.append({
-                    'sku': sku,
-                    'status': 'ERROR',
-                    'submit_time': result_time,
-                    'message': str(submit_err),
-                })
-
-        _apply_listing_check_results_to_file(
-            input_file=input_file,
-            headers=headers,
-            results=precheck_results,
-            account_name=acc.get('name', acc.get('seller_id', '')),
-        )
-
-        # 3. 保存提交记录
-        accepted = sum(1 for r in results if r.get('status') == 'ACCEPTED')
-        failed = sum(1 for r in results if r.get('status') in ('ERROR', 'INVALID', 'SKIPPED', 'PREVIEW_BLOCKED'))
-
-        submission_record = {
-            'timestamp': datetime.now().isoformat(),
-            'account': acc.get('name', acc.get('seller_id', '')),
-            'total': len(results),
-            'accepted': accepted,
-            'failed': failed,
-            'results': results,
-        }
-
-        # 保存到 output/submissions/
-        submissions_dir = os.path.join(config.OUTPUT_DIR, 'submissions')
-        os.makedirs(submissions_dir, exist_ok=True)
-        record_file = os.path.join(
-            submissions_dir,
-            f'submit_{time.strftime("%Y%m%d_%H%M%S")}.json'
-        )
-        with open(record_file, 'w', encoding='utf-8') as f:
-            json.dump(submission_record, f, ensure_ascii=False, indent=2)
-
-        persist_warning = ''
-        try:
-            updates_by_sku = {}
-            for result_entry in results:
-                sku = str(result_entry.get('sku', '') or '').strip()
-                if not sku:
-                    continue
-                submit_time = str(result_entry.get('submit_time', '') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')).strip()
-                updates_by_sku[sku] = _build_submit_persist_updates(headers, result_entry, submit_time)
-            if updates_by_sku:
-                _persist_bulk_row_updates(input_file, updates_by_sku)
-        except Exception as persist_err:
-            persist_warning = f'提交结果已返回，但写回Excel失败: {persist_err}'
-            logger.error(persist_warning)
-
-        _record_instant_task(
-            kind='submit',
-            title='正式提交到亚马逊',
-            status='completed' if not failed else ('failed' if accepted == 0 else 'completed'),
-            input_file=input_file,
-            total=len(results),
-            success=accepted,
-            failed=failed,
-            account=acc.get('name', acc.get('seller_id', '')),
-            result_file=record_file,
-            message=f'提交完成：{accepted} 个已接受，{failed} 个失败',
-            warning=persist_warning,
-        )
-
-        return jsonify({
-            'success': True,
-            'mode': 'submit',
-            'total': len(results),
-            'accepted': accepted,
-            'failed': failed,
-            'results': results,
-            'record_file': record_file,
-            'persist_warning': persist_warning,
-            'message': f'提交完成: {accepted}个已接受, {failed}个失败',
-        })
+        return jsonify(payload)
 
     except Exception as e:
         logger.error(f'提交失败: {e}')
@@ -3853,6 +3956,44 @@ def submit_to_amazon():
             error=str(e),
         )
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/submit-task', methods=['POST'])
+def submit_to_amazon_task():
+    """异步启动 Amazon 预览验证或正式提交任务。"""
+    data = request.json or {}
+    skus = data.get('skus', []) or []
+    input_file = data.get('file', '')
+    preview = bool(data.get('preview', True))
+    account_id = data.get('account_id', '')
+
+    if not skus:
+        return jsonify({'error': '没有选中的SKU'}), 400
+    if not input_file or not os.path.exists(input_file):
+        return jsonify({'error': '文件不存在'}), 400
+
+    title = 'Amazon 预览验证' if preview else '正式提交到亚马逊'
+    stages = ['解析文件', '本地校验', 'Amazon 预览'] if preview else ['解析文件', '提交门禁检查', '正式提交']
+    task = _start_task_record(
+        kind='preview_submit' if preview else 'submit',
+        title=title,
+        input_file=input_file,
+        status='running',
+        progress=0,
+        total=len(skus),
+        stage_name=stages[0],
+        stage_index=1,
+        stages=stages,
+        result={},
+    )
+
+    thread = threading.Thread(
+        target=_execute_submit_task,
+        args=(task['id'], input_file, skus, preview, account_id),
+        daemon=True,
+    )
+    thread.start()
+    return jsonify({'success': True, 'task_id': task['id']})
 
 
 @app.route('/api/submission-history')

@@ -15,7 +15,7 @@ import requests
 from openpyxl import load_workbook
 
 from config import get_config
-from core.template_generator import build_template_definition, generate_template
+from core.template_generator import CURRENT_TEMPLATE_VERSION, build_template_definition, generate_template
 
 
 TEMPLATE_CACHE_TTL = 7 * 24 * 3600
@@ -47,12 +47,24 @@ def _generated_template_dir() -> str:
     return path
 
 
+def _template_overlay_dir() -> str:
+    path = os.path.join(_base_output_dir(), "template_overlays")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def _definition_path(template_id: str) -> str:
     return os.path.join(_template_definition_dir(), f"{template_id}.json")
 
 
 def _workbook_path(template_id: str) -> str:
     return os.path.join(_generated_template_dir(), f"{template_id}.xlsx")
+
+
+def _overlay_path(product_type: str, marketplace: str) -> str:
+    safe_product_type = re.sub(r"[^0-9A-Za-z_-]+", "_", str(product_type or "").strip()).strip("_") or "product"
+    safe_marketplace = re.sub(r"[^0-9A-Za-z_-]+", "_", str(marketplace or DEFAULT_MARKETPLACE).strip()).strip("_") or DEFAULT_MARKETPLACE
+    return os.path.join(_template_overlay_dir(), f"{safe_marketplace.lower()}_{safe_product_type.lower()}.json")
 
 
 def extract_source_keyword(source_url: str = "", title: str = "", keyword: str = "") -> Dict[str, str]:
@@ -132,7 +144,12 @@ def ensure_template_definition(
         mtime = os.path.getmtime(definition_path)
         if time.time() - mtime < TEMPLATE_CACHE_TTL:
             with open(definition_path, "r", encoding="utf-8") as fh:
-                return json.load(fh)
+                definition = json.load(fh)
+            if _is_template_definition_current(definition):
+                _apply_template_overlay(definition)
+                with open(definition_path, "w", encoding="utf-8") as fh:
+                    json.dump(definition, fh, ensure_ascii=False, indent=2)
+                return definition
 
     from amazon.schema_manager import fetch_schema, parse_schema
 
@@ -146,6 +163,7 @@ def ensure_template_definition(
         template_id=template_id,
     )
     definition["generated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _apply_template_overlay(definition)
 
     with open(definition_path, "w", encoding="utf-8") as fh:
         json.dump(definition, fh, ensure_ascii=False, indent=2)
@@ -155,8 +173,7 @@ def ensure_template_definition(
 def ensure_template_workbook(template_id: str) -> Tuple[str, Dict]:
     definition = load_template_definition(template_id)
     output_path = _workbook_path(template_id)
-    if not os.path.exists(output_path):
-        generate_template(definition, output_path)
+    generate_template(definition, output_path)
     return output_path, definition
 
 
@@ -188,6 +205,16 @@ def read_template_metadata(filepath: str) -> Dict[str, str]:
         return meta
     finally:
         wb.close()
+
+
+def _is_template_definition_current(definition: Dict) -> bool:
+    version = str(definition.get("template_version", "") or "").strip()
+    if version != CURRENT_TEMPLATE_VERSION:
+        return False
+    columns = {str(item.get("key", "") or "").strip() for item in (definition.get("columns", []) or [])}
+    if "hazmat_declaration" in columns and "supplier_declared_dg_hz_regulation" not in columns:
+        return False
+    return True
 
 
 def evaluate_template_row(
@@ -264,6 +291,84 @@ def summarize_template_issues(result: Dict) -> str:
     if variation_issues:
         parts.append(f"变体问题 {len(variation_issues)} 项")
     return "；".join(parts)
+
+
+def update_template_overlay(product_type: str, marketplace: str, missing_fields: List[Dict]):
+    product_type = str(product_type or "").strip()
+    marketplace = str(marketplace or DEFAULT_MARKETPLACE).strip().upper() or DEFAULT_MARKETPLACE
+    if not product_type:
+        return
+
+    overlay_path = _overlay_path(product_type, marketplace)
+    overlay = {}
+    if os.path.exists(overlay_path):
+        with open(overlay_path, "r", encoding="utf-8") as fh:
+            overlay = json.load(fh) or {}
+
+    fields = {str(item.get('key', '') or item.get('name', '') or '').strip(): dict(item) for item in (overlay.get('fields') or []) if str(item.get('key', '') or item.get('name', '') or '').strip()}
+    for field in missing_fields or []:
+        key = str(field.get('name', '') or field.get('key', '') or '').strip()
+        if not key:
+            continue
+        title = str(field.get('title', '') or key).strip() or key
+        fields[key] = {
+            'key': key,
+            'label_zh': title,
+            'label_en': str(field.get('label_en', '') or title).strip() or title,
+            'level': 'required',
+            'group': str(field.get('group', '') or 'overlay').strip() or 'overlay',
+            'description': (
+                str(field.get('description', '') or '').strip()
+                or '历史 Amazon 预览中出现的真实阻断缺字段，建议在模板中提前填写。'
+            ),
+            'source_attribute': key,
+        }
+
+    overlay = {
+        'product_type': product_type,
+        'marketplace': marketplace,
+        'updated_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'fields': list(fields.values()),
+    }
+    with open(overlay_path, 'w', encoding='utf-8') as fh:
+        json.dump(overlay, fh, ensure_ascii=False, indent=2)
+
+
+def _apply_template_overlay(definition: Dict):
+    overlay_path = _overlay_path(definition.get('product_type', ''), definition.get('marketplace', DEFAULT_MARKETPLACE))
+    if not os.path.exists(overlay_path):
+        return definition
+
+    with open(overlay_path, 'r', encoding='utf-8') as fh:
+        overlay = json.load(fh) or {}
+
+    columns = list(definition.get('columns', []) or [])
+    by_key = {str(item.get('key', '') or '').strip(): item for item in columns if str(item.get('key', '') or '').strip()}
+    changed = False
+    for field in overlay.get('fields') or []:
+        key = str(field.get('key', '') or '').strip()
+        if not key:
+            continue
+        if key in by_key:
+            if by_key[key].get('level') != 'required':
+                by_key[key]['level'] = 'required'
+                changed = True
+            if field.get('description') and field.get('description') not in str(by_key[key].get('description', '') or ''):
+                by_key[key]['description'] = str(by_key[key].get('description', '') or '').strip() + ' ' + str(field.get('description', '') or '').strip()
+                changed = True
+            continue
+        columns.append(dict(field))
+        changed = True
+
+    if changed:
+        def level_rank(value):
+            return {'required': 0, 'recommended': 1, 'optional': 2}.get(str(value or '').strip(), 9)
+
+        columns.sort(key=lambda item: (level_rank(item.get('level')), str(item.get('group', 'overlay')), str(item.get('key', ''))))
+        definition['columns'] = columns
+        definition['required_total'] = sum(1 for item in columns if str(item.get('level', '')).strip() == 'required')
+        definition['recommended_total'] = sum(1 for item in columns if str(item.get('level', '')).strip() == 'recommended')
+    return definition
 
 
 def template_definition_summary(template_definition: Optional[Dict]) -> Dict[str, object]:

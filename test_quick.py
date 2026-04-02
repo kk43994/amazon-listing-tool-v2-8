@@ -1,6 +1,7 @@
-from amazon.mapper import FieldMapper
+from amazon.mapper import FieldMapper, SEARCH_TERM_BYTE_LIMIT
 from config import reload_config
 import config as config_module
+from core.search_term_utils import count_search_term_bytes, dedup_search_terms, truncate_search_terms
 from core.template_service import evaluate_template_families, extract_source_keyword, validate_product_type_candidate
 from web.app import _prepare_submission_products, _resolve_ai_public_image_url, _resolve_ai_status_from_result
 
@@ -627,3 +628,189 @@ def test_config_supports_separate_text_and_image_settings(monkeypatch):
     assert cfg.AI_IMAGE_API_BASE == 'https://api.kk666.online'
     assert cfg.AI_TEXT_PROTOCOL == 'gemini_generate_content'
     assert cfg.AI_IMAGE_PROTOCOL == 'gemini_generate_content'
+
+
+# ===== Group 1: 搜索词合规测试 =====
+
+def test_count_search_term_bytes_excludes_spaces_and_punctuation():
+    assert count_search_term_bytes("hello world foo") == 13  # 5+5+3, 空格不计入
+    assert count_search_term_bytes("hello, world; foo.") == 13  # 标点也不计入
+    assert count_search_term_bytes("") == 0
+    assert count_search_term_bytes("  ") == 0
+
+
+def test_count_search_term_bytes_multibyte():
+    assert count_search_term_bytes("café") == 5  # c=1, a=1, f=1, é=2
+    assert count_search_term_bytes("東京") == 6  # 每个 CJK 字符 3 字节
+
+
+def test_dedup_removes_title_words():
+    result = dedup_search_terms(
+        "portable water bottle travel hydration",
+        title="Portable Stainless Steel Water Bottle",
+        bullets=[],
+    )
+    # "portable", "water", "bottle" 已在标题中
+    assert "portable" not in result.lower()
+    assert "water" not in result.lower()
+    assert "bottle" not in result.lower()
+    assert "travel" in result.lower()
+    assert "hydration" in result.lower()
+
+
+def test_dedup_removes_bullet_words():
+    result = dedup_search_terms(
+        "durable lightweight compact",
+        title="Steel Bottle",
+        bullets=["Durable construction", "Lightweight design"],
+    )
+    assert "durable" not in result.lower()
+    assert "lightweight" not in result.lower()
+    assert "compact" in result.lower()
+
+
+def test_dedup_case_insensitive():
+    result = dedup_search_terms("PREMIUM quality", title="Premium Quality Product")
+    assert "premium" not in result.lower()
+    assert "quality" not in result.lower()
+
+
+def test_truncate_respects_byte_limit():
+    terms = "aaa bbb ccc ddd eee fff ggg"  # 各 3 字节
+    result = truncate_search_terms(terms, 10)
+    # 10 字节能放 3 个词 (3+3+3=9)，第 4 个会超限
+    assert count_search_term_bytes(result) <= 10
+    assert len(result.split()) == 3
+
+
+def test_truncate_multibyte_limit():
+    terms = "café résumé naïve"  # café=5, résumé=8, naïve=6
+    result = truncate_search_terms(terms, 13)
+    assert count_search_term_bytes(result) <= 13
+    assert "café" in result  # 5 <= 13
+    assert "résumé" in result  # 5+8=13 <= 13
+    assert "naïve" not in result  # 5+8+6=19 > 13
+
+
+def test_mapper_search_term_jp_500_limit(monkeypatch):
+    """日本站搜索词限制 500 字节，不是 250。"""
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+    mapper = FieldMapper('A1VC38T7YXB528')  # JP
+    product = {
+        'sku': 'TEST-JP',
+        'title': 'Test Product',
+        'brand': 'TestBrand',
+        'keywords': 'a ' * 260,  # ~260 字节单词，超过 250 但低于 500
+    }
+    result = mapper.validate_required_fields(product)
+    # JP 限制 500，260 字节应该通过
+    kw_errors = [e for e in result['errors'] if '搜索词' in e]
+    assert not kw_errors
+
+
+def test_mapper_search_term_over_limit_is_error(monkeypatch):
+    """搜索词超限应该是 error（valid=False），不是 warning。"""
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+    mapper = FieldMapper('ATVPDKIKX0DER')  # US, limit=250
+    product = {
+        'sku': 'TEST-US',
+        'title': 'Test Product',
+        'brand': 'TestBrand',
+        'keywords': 'abcdefghij ' * 30,  # 每词 10 字节 * 30 = 300 字节，超过 250
+    }
+    result = mapper.validate_required_fields(product)
+    assert not result['valid']
+    assert any('搜索词' in e and '失效' in e for e in result['errors'])
+
+
+# ===== Group 2: 标题合规测试 =====
+
+from core.title_validation import find_banned_characters, find_duplicate_words, fix_title, validate_title
+
+
+def test_find_banned_chars_detects_exclamation():
+    result = find_banned_characters("Amazing Product! Buy Now$")
+    chars = [v['char'] for v in result]
+    assert '!' in chars
+    assert '$' in chars
+
+
+def test_find_banned_chars_allows_brand():
+    result = find_banned_characters("Ca$h Brand Premium Bottle", brand="Ca$h Brand")
+    # $ 在品牌名范围内，应被豁免
+    assert len(result) == 0
+
+
+def test_find_banned_chars_empty():
+    assert find_banned_characters("") == []
+    assert find_banned_characters("Normal Title Here") == []
+
+
+def test_find_duplicate_words_detects_triple():
+    dupes = find_duplicate_words("Premium Steel Premium Water Premium Bottle")
+    words = [d['word'] for d in dupes]
+    assert 'premium' in words
+    assert dupes[0]['count'] == 3
+
+
+def test_find_duplicate_words_allows_double():
+    dupes = find_duplicate_words("Premium Water Premium Bottle")
+    # 恰好 2 次，不应报错
+    assert len(dupes) == 0
+
+
+def test_find_duplicate_words_exempts_prepositions():
+    dupes = find_duplicate_words("Bag for Travel for Work for Gym")
+    # "for" 是介词，豁免
+    assert len(dupes) == 0
+
+
+def test_fix_title_removes_banned_chars():
+    fixed, changes = fix_title("Amazing! Product$ Here")
+    assert '!' not in fixed
+    assert '$' not in fixed
+    assert len(changes) > 0
+
+
+def test_fix_title_removes_excess_duplicates():
+    fixed, changes = fix_title("Blue Steel Blue Water Blue Bottle")
+    # "blue" 出现 3 次，应去掉 1 次
+    assert fixed.lower().count('blue') == 2
+    assert len(changes) > 0
+
+
+def test_validate_title_combined():
+    result = validate_title("Premium! Premium Premium Bottle$")
+    assert not result['valid']
+    assert len(result['banned_chars']) == 2  # ! and $
+    assert len(result['duplicate_words']) == 1  # premium x3
+    assert result['suggested_fix'] is not None
+
+
+def test_mapper_validates_title_banned_chars(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+    mapper = FieldMapper('ATVPDKIKX0DER')
+    product = {
+        'sku': 'TEST',
+        'title': 'Great Product! Buy Now$',
+        'brand': 'TestBrand',
+    }
+    result = mapper.validate_required_fields(product)
+    assert not result['valid']
+    assert any('禁止字符' in e for e in result['errors'])
+
+
+def test_mapper_validates_title_duplicate_words(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+    mapper = FieldMapper('ATVPDKIKX0DER')
+    product = {
+        'sku': 'TEST',
+        'title': 'Steel Steel Steel Bottle',
+        'brand': 'TestBrand',
+    }
+    result = mapper.validate_required_fields(product)
+    assert any('steel' in w and '3' in w for w in result['warnings'])

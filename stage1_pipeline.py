@@ -18,11 +18,12 @@ from uuid import uuid4
 
 from PIL import Image
 
-from amazon.mapper import MARKETPLACE_CODE_BY_ID, MARKETPLACE_LANGUAGE, MARKETPLACE_IDS
+from amazon.mapper import MARKETPLACE_CODE_BY_ID, MARKETPLACE_LANGUAGE, MARKETPLACE_IDS, SEARCH_TERM_BYTE_LIMIT
 from config import get_config
 from core.excel.processor import ExcelProcessor
 from core.ai_client import ai_text, ai_image_edit_url
 from core.media_store import get_media_store
+from core.search_term_utils import count_search_term_bytes, dedup_search_terms, truncate_search_terms
 from core.utils import filter_rows
 from core.prompts.amazon_prompts import (
     TITLE_PROMPT, BULLET_POINTS_PROMPT, DESCRIPTION_PROMPT,
@@ -504,6 +505,16 @@ class Stage1Pipeline:
             if len(title) > 200:
                 title = title[:197] + "..."
                 logger.warning("  ⚠️ 标题超长，已截断至200字符")
+            # Amazon 合规校验：禁用字符 + 同词重复
+            from core.title_validation import validate_title, fix_title
+            brand = item.get(col_map.get('brand', ''), '') or item.get('brand', '')
+            title_check = validate_title(title, brand=brand)
+            if not title_check['valid']:
+                title, fix_changes = fix_title(title, brand=brand)
+                for change in fix_changes:
+                    logger.warning(f"  ⚠️ 标题自动修正: {change}")
+                if len(title) > 200:
+                    title = title[:197] + "..."
             item['AI标题'] = title
             logger.info(f"     → [{len(title)}字符] {title[:80]}...")
             generated_any = generated_any or bool(str(title).strip())
@@ -572,33 +583,34 @@ class Stage1Pipeline:
                 return generated_any
             logger.info("  📝 生成搜索关键词...")
             existing_title = title or item.get(col_map.get('title', ''), '')
+            marketplace_id = str(getattr(self.config, 'AMAZON_MARKETPLACE', '') or '').strip()
+            kw_byte_limit = SEARCH_TERM_BYTE_LIMIT.get(marketplace_id, 250)
             keywords_result = self._ai_text_with_retry(
                 SEARCH_TERMS_PROMPT.format(
                     product_info=product_info,
                     product_type=product_type,
                     title=existing_title,
                     language=marketplace_language,
+                    byte_limit=kw_byte_limit,
                 )
             )
             text_attempts += keywords_result['attempts']
             if keywords_result['error']:
                 text_errors.append(f"搜索词: {keywords_result['error']}")
             keywords = keywords_result['text']
-            kw_bytes = len(keywords.encode('utf-8'))
-            if kw_bytes > 250:
-                words = keywords.split()
-                result = []
-                total = 0
-                for w in words:
-                    wb = len(w.encode('utf-8')) + 1
-                    if total + wb > 249:
-                        break
-                    result.append(w)
-                    total += wb
-                keywords = " ".join(result)
-                logger.warning("  ⚠️ 搜索词超过250字节，已截断")
+
+            # 去重：移除标题和五点中已有的词
+            existing_bullets = [item.get(f'AI卖点{i}', '') for i in range(1, 6)]
+            keywords = dedup_search_terms(keywords, existing_title, existing_bullets)
+
+            # 按 Amazon 规则截断（仅统计单词字节，空格和标点不计入）
+            kw_bytes = count_search_term_bytes(keywords)
+            if kw_bytes > kw_byte_limit:
+                keywords = truncate_search_terms(keywords, kw_byte_limit)
+                logger.warning(f"  ⚠️ 搜索词超过{kw_byte_limit}字节限制，已截断")
             item['AI搜索关键词'] = keywords
-            logger.info(f"     [{len(keywords.encode('utf-8'))}字节] {keywords[:60]}...")
+            kw_bytes = count_search_term_bytes(keywords)
+            logger.info(f"     [{kw_bytes}/{kw_byte_limit}字节] {keywords[:60]}...")
 
             generated_any = generated_any or bool(str(keywords).strip())
             if keywords:

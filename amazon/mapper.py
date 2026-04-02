@@ -72,6 +72,23 @@ MARKETPLACE_LANGUAGE = {
     'A1RKKUPIHCS9HS': 'es_ES',
     'A1VC38T7YXB528': 'ja_JP',
     'A39IBJ37TRP1C6': 'en_AU',
+    'A21TJRUUN4KGV': 'en_IN',
+}
+
+# 搜索词字节限制（仅统计单词字节，空格和标点不计入）
+# 超限会导致整条搜索词全部失效
+SEARCH_TERM_BYTE_LIMIT = {
+    'ATVPDKIKX0DER': 250,   # US
+    'A2EUQ1WTGCTBG2': 250,  # CA
+    'A1AM78C64UM0Y8': 250,  # MX
+    'A1F83G8C2ARO7P': 250,  # UK
+    'A1PA6795UKMFR9': 250,  # DE
+    'A13V1IB3VIYZZH': 250,  # FR
+    'APJ6JRA9NG5V4': 250,   # IT
+    'A1RKKUPIHCS9HS': 250,  # ES
+    'A1VC38T7YXB528': 500,  # JP
+    'A39IBJ37TRP1C6': 250,  # AU
+    'A21TJRUUN4KGV': 200,   # IN
 }
 
 GENERIC_ATTRIBUTE_EXCLUDE = {
@@ -534,10 +551,23 @@ class FieldMapper:
             if is_parent and product.get('parent_sku'):
                 result['warnings'].append("父体通常不需要填写 parent_sku，当前值会在提交时忽略")
 
-        # 检查标题长度
-        if product.get('title') and len(product['title']) > 200:
-            result['errors'].append(f"标题超过200字符({len(product['title'])}字符)")
-            result['valid'] = False
+        # 检查标题
+        if product.get('title'):
+            if len(product['title']) > 200:
+                result['errors'].append(f"标题超过200字符({len(product['title'])}字符)")
+                result['valid'] = False
+            from core.title_validation import find_banned_characters, find_duplicate_words
+            brand = product.get('brand', '')
+            banned = find_banned_characters(product['title'], brand=brand)
+            for item in banned:
+                result['errors'].append(
+                    f"标题含有Amazon禁止字符 '{item['char']}' (位置{item['position']})"
+                )
+                result['valid'] = False
+            for dup in find_duplicate_words(product['title']):
+                result['warnings'].append(
+                    f"标题中 '{dup['word']}' 出现{dup['count']}次(Amazon规定最多2次)"
+                )
 
         # 检查bullet points
         bullets = self._extract_bullets(product)
@@ -545,11 +575,16 @@ class FieldMapper:
             if len(bp) > 500:
                 result['warnings'].append(f"卖点{i+1}超过500字符({len(bp)}字符)")
 
-        # 检查搜索词字节数
+        # 检查搜索词字节数（Amazon 规则：仅统计单词字节，空格和标点不计入；超限整条失效）
         if product.get('keywords'):
-            kw_bytes = len(str(product['keywords']).encode('utf-8'))
-            if kw_bytes > 250:
-                result['warnings'].append(f"搜索词超过250字节({kw_bytes}字节)")
+            from core.search_term_utils import count_search_term_bytes
+            kw_bytes = count_search_term_bytes(str(product['keywords']))
+            kw_limit = SEARCH_TERM_BYTE_LIMIT.get(self.marketplace_id, 250)
+            if kw_bytes > kw_limit:
+                result['errors'].append(
+                    f"搜索词超过{kw_limit}字节限制({kw_bytes}字节)，将导致整条搜索词失效"
+                )
+                result['valid'] = False
 
         # 检查币种
         user_currency = product.get('currency', '').strip()

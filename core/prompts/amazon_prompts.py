@@ -17,8 +17,10 @@ STRICT RULES:
 - Use synonyms for descriptive words
 - Follow Amazon title rules: Brand + Key Feature + Product Type + Specs
 - Title Case capitalization, NO ALL CAPS words
-- NO promotional language ("best", "top", "#1")
-- NO special characters or emojis
+- Same word must NOT appear more than twice (prepositions/articles like "the", "for", "with" are exempt)
+- BANNED characters (never use): ! $ ? _ {{ }} ^ ~ ¬ ¦
+- NO promotional language ("best", "top", "#1", "free shipping")
+- NO emojis
 
 Product Type: {product_type}
 Target Marketplace Language: {language}
@@ -91,7 +93,7 @@ SEARCH_TERMS_PROMPT = """You are an Amazon SEO expert. Generate backend search t
 TASK: Create search terms that complement the title (don't repeat title words).
 
 STRICT RULES:
-- **MAXIMUM 250 bytes** (approximately 250 ASCII characters)
+- **MAXIMUM {byte_limit} bytes** (spaces and punctuation do NOT count toward the limit)
 - Space-separated words (NO commas, NO semicolons)
 - Do NOT repeat ANY word from the title below
 - Include: misspellings, synonyms, abbreviations, related terms, use-case words
@@ -109,7 +111,7 @@ Title (do NOT repeat these words):
 {title}
 
 IMPORTANT: Search terms MUST be in the target marketplace language specified above.
-Return ONLY the search terms, space-separated, all lowercase. Stay under 250 bytes."""
+Return ONLY the search terms, space-separated, all lowercase. Stay under {byte_limit} bytes."""
 
 # ===== 特殊功能/亮点 =====
 SPECIAL_FEATURE_PROMPT = """You are an Amazon listing specialist. Generate concise special feature tags for this product.

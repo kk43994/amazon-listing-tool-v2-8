@@ -569,11 +569,16 @@ class FieldMapper:
                     f"标题中 '{dup['word']}' 出现{dup['count']}次(Amazon规定最多2次)"
                 )
 
-        # 检查bullet points
+        # 检查bullet points（长度 + 禁止内容 + emoji）
         bullets = self._extract_bullets(product)
-        for i, bp in enumerate(bullets):
-            if len(bp) > 500:
-                result['warnings'].append(f"卖点{i+1}超过500字符({len(bp)}字符)")
+        from core.bullet_validation import validate_bullets
+        bp_result = validate_bullets(bullets)
+        for issue in bp_result['issues']:
+            if issue['level'] == 'error':
+                result['errors'].append(issue['message'])
+                result['valid'] = False
+            else:
+                result['warnings'].append(issue['message'])
 
         # 检查搜索词字节数（Amazon 规则：仅统计单词字节，空格和标点不计入；超限整条失效）
         if product.get('keywords'):

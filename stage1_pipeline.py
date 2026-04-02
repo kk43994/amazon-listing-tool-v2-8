@@ -827,6 +827,25 @@ class Stage1Pipeline:
                     continue
 
                 self._save_image(result, output_path)
+
+                # Amazon 图片合规校验
+                from core.image_validation import validate_image, ensure_jpeg
+                try:
+                    with Image.open(output_path) as saved_img:
+                        is_main = (slot == 'main')
+                        img_check = validate_image(saved_img, is_main=is_main)
+                        for issue in img_check['issues']:
+                            icon = '❌' if issue['level'] == 'error' else '⚠️'
+                            logger.warning(f"     {icon} {label}: {issue['message']}")
+                            image_errors.append(f"{label}: {issue['message']}")
+                        if img_check['format_hint']:
+                            logger.info(f"     ℹ️ {label}: {img_check['format_hint']}")
+                        # 确保保存为 JPEG
+                        rgb_img = ensure_jpeg(saved_img)
+                        rgb_img.save(output_path, format='JPEG', quality=95)
+                except Exception as img_err:
+                    logger.warning(f"     ⚠️ {label}合规校验失败: {img_err}")
+
                 upload_result = self._upload_generated_image(item, col_map, slot, output_path)
                 self._store_generated_image(item, slot, output_path, upload_result)
                 logger.info(f"     → {label}保存: {output_path}")

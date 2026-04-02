@@ -46,6 +46,8 @@ STRICT RULES:
 - Address different customer pain points than the original
 - Include relevant keywords naturally
 - NO promotional superlatives ("best", "perfect", "amazing", "#1")
+- NO pricing, shipping info, refund promises, or company info
+- NO emoji or special symbols
 - If original says "lightweight and portable", try "Easy to carry — weighing just X oz, this..."
 
 Product Type: {product_type}

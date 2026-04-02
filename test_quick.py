@@ -814,3 +814,122 @@ def test_mapper_validates_title_duplicate_words(monkeypatch):
     }
     result = mapper.validate_required_fields(product)
     assert any('steel' in w and '3' in w for w in result['warnings'])
+
+
+# ===== Group 3: Bullet Points 合规测试 =====
+
+from core.bullet_validation import validate_bullet, validate_bullets, clean_bullet
+
+
+def test_bullet_validates_length():
+    result = validate_bullet("x" * 501, index=1)
+    assert not result['valid']
+    assert any('超过' in i['message'] for i in result['issues'])
+
+
+def test_bullet_detects_pricing():
+    result = validate_bullet("Great value at $19.99 per unit", index=1)
+    assert any('价格' in i['message'] for i in result['issues'])
+
+
+def test_bullet_detects_shipping():
+    result = validate_bullet("Enjoy free shipping on all orders", index=1)
+    assert any('运费' in i['message'] for i in result['issues'])
+
+
+def test_bullet_detects_refund():
+    result = validate_bullet("100% money-back guarantee if not satisfied", index=1)
+    assert any('退款' in i['message'] or '保证' in i['message'] for i in result['issues'])
+
+
+def test_bullet_detects_emoji():
+    result = validate_bullet("Amazing product 🔥 with great features ✅", index=1)
+    assert any('emoji' in i['message'] for i in result['issues'])
+
+
+def test_bullet_clean_removes_emoji():
+    cleaned = clean_bullet("Great product 🔥✅ for everyone")
+    assert '🔥' not in cleaned
+    assert '✅' not in cleaned
+    assert 'Great product' in cleaned
+
+
+def test_bullet_passes_valid():
+    result = validate_bullet("PREMIUM STAINLESS STEEL — Double-wall vacuum insulation keeps drinks cold for 24 hours", index=1)
+    assert result['valid']
+    assert len(result['issues']) == 0
+
+
+def test_validate_bullets_mixed():
+    bullets = [
+        "DURABLE DESIGN — Built to last with premium materials",
+        "x" * 501,  # 超长
+        "Free shipping included",  # 运费
+        "",
+        "EASY TO USE — Simple one-click operation",
+    ]
+    result = validate_bullets(bullets)
+    assert not result['valid']
+    assert len(result['issues']) >= 2
+
+
+def test_mapper_validates_bullets(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+    mapper = FieldMapper('ATVPDKIKX0DER')
+    product = {
+        'sku': 'TEST',
+        'title': 'Test Product',
+        'brand': 'TestBrand',
+        'bullet_point_1': 'Get it now for $9.99',
+        'bullet_point_2': 'Free shipping worldwide',
+    }
+    result = mapper.validate_required_fields(product)
+    assert any('价格' in w for w in result['warnings'])
+    assert any('运费' in w for w in result['warnings'])
+
+
+# ===== Group 4: 图片合规测试 =====
+
+from PIL import Image
+from core.image_validation import validate_image, check_white_background, ensure_jpeg
+
+
+def test_image_validates_min_size():
+    small_img = Image.new('RGB', (500, 500), (255, 255, 255))
+    result = validate_image(small_img, is_main=True)
+    assert not result['valid']
+    assert any('1000' in i['message'] for i in result['issues'])
+
+
+def test_image_passes_valid_size():
+    good_img = Image.new('RGB', (1500, 1500), (255, 255, 255))
+    result = validate_image(good_img, is_main=True)
+    assert result['valid']
+
+
+def test_white_background_pure_white():
+    white_img = Image.new('RGB', (200, 200), (255, 255, 255))
+    result = check_white_background(white_img)
+    assert result['is_white']
+    assert result['avg_brightness'] >= 254
+
+
+def test_white_background_dark():
+    dark_img = Image.new('RGB', (200, 200), (50, 50, 50))
+    result = check_white_background(dark_img)
+    assert not result['is_white']
+
+
+def test_ensure_jpeg_converts_rgba():
+    rgba_img = Image.new('RGBA', (100, 100), (255, 0, 0, 128))
+    rgb_img = ensure_jpeg(rgba_img)
+    assert rgb_img.mode == 'RGB'
+
+
+def test_image_non_white_background_warning():
+    blue_bg = Image.new('RGB', (1200, 1200), (100, 150, 255))
+    result = validate_image(blue_bg, is_main=True)
+    # 尺寸 OK 但背景不是白色
+    assert result['valid']  # 白底是 warning 不是 error
+    assert any('白' in i['message'] for i in result['issues'])

@@ -217,6 +217,17 @@ python upload_ai_images_temp.py --input output/处理结果_xxx.xlsx --in-place
    - tag 描述必须写清楚“这次更新了什么”
    - release notes 内容以 `CHANGELOG.md` 对应条目为准
 
+## Amazon 内容合规校验
+
+AI 生成内容后会自动做 Amazon 官方规范校验和修正：
+
+| 字段 | 校验项 | 参考文档 |
+|------|--------|----------|
+| 标题 | 200字符限制、禁用字符、同词不超过2次 | [Product title requirements](https://sellercentral.amazon.com/help/hub/reference/external/GYTR6SYGFA5E3EQC) |
+| 五点 | 500字符限制、禁止价格/运费/退款信息、禁止emoji | [Bullet point guidelines](https://sellercentral.amazon.com/help/hub/reference/external/GX5L8BF8GLMML6CX) |
+| 搜索词 | 按站点字节限制(US:250/JP:500/IN:200)、空格不计入、自动去重 | [Generic Keyword Field Length](https://sellercentral.amazon.com/help/hub/reference/external/YTR72HN26BQ3TGN) |
+| 图片 | 最长边≥1000px、主图白底校验、自动转JPEG | [Product image requirements](https://sellercentral.amazon.com/gp/help/external/G1881) |
+
 ## 测试
 
 建议常用回归命令：

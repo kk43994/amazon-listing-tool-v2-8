@@ -102,26 +102,39 @@ def _gemini_generate_content(
         return response.json()
 
 
+AMAZON_SYSTEM_PROMPT = (
+    "You are an expert Amazon product listing copywriter and SEO specialist. "
+    "You produce content that is original, conversion-focused, and compliant with Amazon's listing policies. "
+    "Always return ONLY the requested content — no explanations, no markdown code blocks, no extra commentary. "
+    "Follow all character/byte limits precisely. "
+    "When given a target marketplace language, write entirely in that language."
+)
+
+
 def ai_text(
     prompt: str,
     temperature: float = 0.7,
     max_tokens: int = 2000,
     raise_on_error: bool = False,
+    system_prompt: str = "",
 ) -> str:
     """
     AI 文本生成。
 
     根据配置自动走 OpenAI 兼容 chat.completions 或 Gemini generateContent。
+    system_prompt 为空时使用默认 Amazon 专家角色。
     """
     cfg = get_config()
+    system = system_prompt or AMAZON_SYSTEM_PROMPT
     try:
         if cfg.AI_TEXT_PROTOCOL == GEMINI_PROTOCOL:
+            combined_prompt = f"{system}\n\n{prompt}"
             result = _gemini_generate_content(
                 api_key=cfg.AI_TEXT_API_KEY,
                 base_url=cfg.AI_TEXT_API_BASE,
                 endpoint_template=cfg.AI_TEXT_ENDPOINT_TEMPLATE,
                 model=cfg.AI_TEXT_MODEL,
-                contents=[{"parts": [{"text": prompt}]}],
+                contents=[{"parts": [{"text": combined_prompt}]}],
                 generation_config={
                     "temperature": temperature,
                     "maxOutputTokens": max_tokens,
@@ -132,7 +145,10 @@ def ai_text(
         client = _build_openai_client(cfg.AI_TEXT_API_KEY, cfg.AI_TEXT_API_BASE)
         response = client.chat.completions.create(
             model=cfg.AI_TEXT_MODEL,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
             temperature=temperature,
             max_tokens=max_tokens,
         )

@@ -2970,7 +2970,7 @@ def test_ai_config():
     try:
         from core.ai_client import ai_text
 
-        result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8, raise_on_error=True)
+        result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8, raise_on_error=True, system_prompt='You are a helpful assistant.')
         if result:
             return jsonify({'success': True, 'message': f'AI连接成功: {result[:60]}'})
         return jsonify({'success': False, 'message': 'AI请求已发送，但未返回有效文本'})
@@ -3007,7 +3007,7 @@ def run_self_check():
     # 文本AI
     try:
         from core.ai_client import ai_text, ai_image_generate
-        text_result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8, raise_on_error=True)
+        text_result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8, raise_on_error=True, system_prompt='You are a helpful assistant.')
         if text_result:
             append_check('text_ai', 'pass', '文本 AI 接口可用', text_result[:60])
         else:

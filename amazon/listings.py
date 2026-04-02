@@ -228,11 +228,14 @@ class ListingsAPI:
                 result = self._normalize_put_response(response.status_code, result)
                 status = result.get('status', 'UNKNOWN')
 
-                if status == 'ACCEPTED':
+                if status in ('ACCEPTED', 'ACCEPTED_WITH_WARNINGS'):
                     asin = self.resolve_submission_asin(sku, result) if not preview else ''
                     if asin:
                         result['asin'] = asin
-                    logger.info(f"  ✅ 已接受 (submissionId: {result.get('submissionId', 'N/A')})")
+                    logger.info(
+                        f"  ✅ 已接受{'（含警告）' if status == 'ACCEPTED_WITH_WARNINGS' else ''} "
+                        f"(submissionId: {result.get('submissionId', 'N/A')})"
+                    )
                     if result.get('asin'):
                         logger.info(f"  📌 ASIN: {result['asin']}")
                 elif status == 'VALID':
@@ -471,17 +474,10 @@ class ListingsAPI:
         results = []
         total = len(products)
 
-        # 重复 SKU 检测
-        seen_skus = set()
-        for product in products:
-            sku = str(product.get('sku', '') or '').strip()
-            if sku and sku in seen_skus:
-                logger.warning(f"  ⚠️ 检测到重复 SKU: {sku}，跳过重复项")
-            if sku:
-                seen_skus.add(sku)
+        processed_skus = set()
 
         for idx, product in enumerate(products):
-            sku = product.get('sku')
+            sku = str(product.get('sku', '') or '').strip()
             if not sku:
                 results.append({
                     'sku': 'MISSING',
@@ -489,6 +485,15 @@ class ListingsAPI:
                     'issues': [{'message': '缺少SKU'}]
                 })
                 continue
+            if sku in processed_skus:
+                logger.warning(f"  ⚠️ 检测到重复 SKU: {sku}，跳过重复项")
+                results.append({
+                    'sku': sku,
+                    'status': 'SKIPPED',
+                    'issues': [{'message': f'重复 SKU 已跳过: {sku}'}],
+                })
+                continue
+            processed_skus.add(sku)
 
             logger.info(f"\n--- 提交 {idx+1}/{total}: SKU={sku} ---")
 
@@ -535,7 +540,10 @@ class ListingsAPI:
             time.sleep(delay)
 
         # 汇总
-        accepted = sum(1 for r in results if r.get('status') == 'ACCEPTED')
+        accepted = sum(
+            1 for r in results
+            if str(r.get('status', '')).upper() in ('ACCEPTED', 'ACCEPTED_WITH_WARNINGS')
+        )
         invalid = sum(1 for r in results if 'INVALID' in r.get('status', ''))
         errors = sum(1 for r in results if r.get('status') == 'ERROR')
 

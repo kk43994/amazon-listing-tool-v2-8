@@ -175,3 +175,44 @@ def test_stage1_respects_image_concurrency(monkeypatch):
         for path in (input_file, result_file):
             if path.exists():
                 path.unlink()
+
+
+def test_stage1_passes_image_reference_url_to_initial_workers(monkeypatch):
+    output_dir = Path('output').resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffix = uuid4().hex[:8]
+    input_file = output_dir / f'test_image_reference_{suffix}.xlsx'
+    result_file = output_dir / f'test_image_reference_result_{suffix}.xlsx'
+    reference_url = 'https://example.com/reference.jpg'
+
+    try:
+        _create_excel(input_file, 'REF')
+
+        pipeline = Stage1Pipeline()
+        pipeline.config.OUTPUT_DIR = str(output_dir)
+
+        captured = []
+
+        def fake_images(item, *args, **kwargs):
+            captured.append(kwargs.get('reference_image_url'))
+            item['AI主图路径'] = str(output_dir / f"{item['SKU']}.jpg")
+            return True
+
+        monkeypatch.setattr(pipeline, '_process_images', fake_images)
+        monkeypatch.setattr(pipeline, '_save_progress', lambda *args, **kwargs: None)
+        monkeypatch.setattr(pipeline.excel, 'write_comparison_output', lambda *args, **kwargs: None)
+
+        pipeline.run(
+            input_file=str(input_file),
+            output_file=str(result_file),
+            process_images=True,
+            process_text=False,
+            image_reference_url=reference_url,
+        )
+
+        assert captured
+        assert set(captured) == {reference_url}
+    finally:
+        for path in (input_file, result_file):
+            if path.exists():
+                path.unlink()

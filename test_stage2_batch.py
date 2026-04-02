@@ -229,6 +229,34 @@ def test_stage2_individual_blocks_submit_when_preview_fails(monkeypatch):
     assert results[0]['status'] == 'PREVIEW_INVALID'
 
 
+def test_stage2_individual_counts_accepted_with_warnings_as_success(monkeypatch):
+    pipeline = Stage2Pipeline()
+
+    monkeypatch.setattr(
+        pipeline.mapper,
+        'validate_required_fields',
+        lambda product: {'valid': True, 'errors': [], 'warnings': []},
+    )
+    monkeypatch.setattr('stage2_pipeline.time.sleep', lambda *_args: None)
+    monkeypatch.setattr(
+        pipeline.listings,
+        'put_listings_item',
+        lambda sku, product, preview=False: (
+            {'status': 'VALID', 'issues': []}
+            if preview
+            else {'status': 'ACCEPTED_WITH_WARNINGS', 'issues': [{'severity': 'WARNING', 'message': 'minor'}]}
+        ),
+    )
+
+    results = pipeline._submit_individual([
+        {'sku': 'SKU-1', 'title': 'Demo', 'product_type': 'PRODUCT'},
+    ])
+
+    assert results[0]['status'] == 'ACCEPTED_WITH_WARNINGS'
+    assert pipeline.stats['success'] == 1
+    assert pipeline.stats['failed'] == 0
+
+
 def test_field_mapper_accepts_s3_media_locator():
     mapper = FieldMapper()
     attrs = mapper.build_listing_attributes({

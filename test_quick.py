@@ -1,6 +1,7 @@
 from amazon.mapper import FieldMapper, SEARCH_TERM_BYTE_LIMIT
 from config import reload_config
 import config as config_module
+from core.excel.processor import ExcelProcessor
 from core.search_term_utils import count_search_term_bytes, dedup_search_terms, truncate_search_terms
 from core.template_service import evaluate_template_families, extract_source_keyword, validate_product_type_candidate
 from web.app import _prepare_submission_products, _resolve_ai_public_image_url, _resolve_ai_status_from_result
@@ -363,6 +364,73 @@ def test_mapper_requires_valid_real_gtin_when_identity_mode_is_real(monkeypatch)
 
     assert validation['valid'] is False
     assert any('必须为纯数字' in msg for msg in validation['errors'])
+
+
+def test_excel_processor_keeps_ean_column_separate_from_upc(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    processor = ExcelProcessor()
+    processor.headers = ['SKU', 'EAN', 'item_name', 'main_image_url']
+    col_map = processor.detect_columns()
+
+    mapper = FieldMapper()
+    product = mapper.map_excel_row({
+        'SKU': 'SKU-EAN',
+        'EAN': '4006381333931',
+        'item_name': 'Demo Product',
+        'main_image_url': 'https://example.com/demo.jpg',
+    }, col_map)
+    validation = mapper.validate_required_fields(product)
+
+    assert col_map['ean'] == 'EAN'
+    assert 'upc' not in col_map
+    assert product['ean'] == '4006381333931'
+    assert validation['valid'] is True
+
+
+def test_excel_processor_keeps_gtin_column_separate_from_upc(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    processor = ExcelProcessor()
+    processor.headers = ['SKU', 'GTIN', 'item_name', 'main_image_url']
+    col_map = processor.detect_columns()
+
+    mapper = FieldMapper()
+    product = mapper.map_excel_row({
+        'SKU': 'SKU-GTIN',
+        'GTIN': '01234567890128',
+        'item_name': 'Demo Product',
+        'main_image_url': 'https://example.com/demo.jpg',
+    }, col_map)
+    validation = mapper.validate_required_fields(product)
+
+    assert col_map['gtin'] == 'GTIN'
+    assert 'upc' not in col_map
+    assert product['gtin'] == '01234567890128'
+    assert validation['valid'] is True
+
+
+def test_mapper_allows_offer_only_submission_without_title_or_gtin(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    product = {
+        'sku': 'SKU-OFFER',
+        'asin': 'B000123456',
+        'price': '19.99',
+    }
+
+    body = mapper.build_put_body(product)
+    validation = mapper.validate_required_fields(product)
+
+    assert body['requirements'] == 'LISTING_OFFER_ONLY'
+    assert validation['valid'] is True
+    assert not any('商品标题' in msg for msg in validation['errors'])
+    assert not any('商品标识信息' in msg for msg in validation['errors'])
+    assert 'merchant_suggested_asin' in body['attributes']
 
 
 def test_mapper_builds_variant_relationship_attributes_for_parent_and_child(monkeypatch):

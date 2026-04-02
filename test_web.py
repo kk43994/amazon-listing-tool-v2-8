@@ -1569,6 +1569,62 @@ def test_export_endpoint_accepts_sp_api_alias_and_selected_skus(monkeypatch):
             exported_path.unlink()
 
 
+def test_export_endpoint_preserves_all_sp_api_additional_images(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    output_dir = Path(web_config.OUTPUT_DIR).resolve()
+    filename = f'test_export_images_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    headers = ['SKU', 'item_name', 'main_image_url'] + [f'image_{slot}' for slot in range(2, 10)] + ['price']
+    ws.append(headers)
+    ws.append([
+        'SKU-IMG',
+        'Demo Product Images',
+        'https://example.com/main.jpg',
+        *[f'https://example.com/extra-{slot}.jpg' for slot in range(2, 10)],
+        '12.99',
+    ])
+    wb.save(input_path)
+    wb.close()
+
+    exported_path = None
+
+    try:
+        monkeypatch.setattr(web_config, 'INPUT_DIR', str(input_dir))
+        monkeypatch.setattr(web_config, 'OUTPUT_DIR', str(output_dir))
+
+        client = app.test_client()
+        response = client.post(
+            '/api/export',
+            json={
+                'file': str(input_path),
+                'format': 'sp-api',
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+
+        exported_path = output_dir / payload['filename']
+        assert exported_path.exists()
+
+        wb2 = load_workbook(exported_path)
+        ws2 = wb2.active
+        header_row = [str(cell.value) if cell.value is not None else '' for cell in ws2[1]]
+        header_map = {header: idx + 1 for idx, header in enumerate(header_row)}
+        for slot in range(1, 9):
+            assert ws2.cell(row=2, column=header_map[f'other_image_url_{slot}']).value == f'https://example.com/extra-{slot + 1}.jpg'
+        wb2.close()
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+        if exported_path and exported_path.exists():
+            exported_path.unlink()
+
+
 def test_submit_endpoint_persists_results_to_excel(monkeypatch):
     input_dir = Path(web_config.INPUT_DIR).resolve()
     filename = f'test_submit_{uuid4().hex[:8]}.xlsx'
@@ -1607,6 +1663,7 @@ def test_submit_endpoint_persists_results_to_excel(monkeypatch):
         monkeypatch.setattr(ListingsAPI, 'put_listings_item', lambda self, sku, product, preview=False: {
             'status': 'ACCEPTED',
             'submissionId': 'SUB-001',
+            'summaries': [{'asin': 'B00TEST123'}],
             'issues': [{'severity': 'WARNING', 'code': 'W1', 'message': 'Need review'}],
         })
         monkeypatch.setattr(ListingsAPI, 'resolve_submission_asin', lambda self, sku, submit_result=None, max_attempts=2, delay=0.5: 'B00TEST123')
@@ -1633,6 +1690,7 @@ def test_submit_endpoint_persists_results_to_excel(monkeypatch):
         header_map = {header: idx + 1 for idx, header in enumerate(headers)}
         assert ws2.cell(row=2, column=header_map['submit_status']).value == 'ACCEPTED'
         assert ws2.cell(row=2, column=header_map['submission_id']).value == 'SUB-001'
+        assert ws2.cell(row=2, column=header_map['submission_route']).value == 'new_listing'
         assert ws2.cell(row=2, column=header_map['asin']).value == 'B00TEST123'
         assert 'Need review' in str(ws2.cell(row=2, column=header_map['submit_message']).value or '')
         assert ws2.cell(row=2, column=header_map['submit_time']).value
@@ -1641,6 +1699,7 @@ def test_submit_endpoint_persists_results_to_excel(monkeypatch):
         products_response = client.get('/api/products', query_string={'file': str(input_path)})
         sku_entry = products_response.get_json()['products'][0]['skus'][0]
         assert sku_entry['submit_status'] == 'ACCEPTED'
+        assert sku_entry['submission_route'] == 'new_listing'
         assert sku_entry['asin'] == 'B00TEST123'
     finally:
         if input_path.exists():
@@ -1797,6 +1856,76 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
         assert sku_entry['preview_status'] == 'VALID'
         assert sku_entry['preview_account'] == 'US Preview'
         assert 'item_name' in sku_entry['preview_issue_payload']
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_submit_counts_accepted_with_warnings_as_success(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_submit_warning_success_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price'])
+    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99'])
+    wb.save(input_path)
+    wb.close()
+
+    try:
+        monkeypatch.setattr(web_config, 'INPUT_DIR', str(input_dir))
+        monkeypatch.setattr(web_app.time, 'sleep', lambda *_args, **_kwargs: None)
+
+        from amazon.accounts import AccountManager
+        from amazon.listings import ListingsAPI
+        from amazon.mapper import FieldMapper
+
+        monkeypatch.setattr(AccountManager, 'get_default_account', lambda self: {
+            'name': 'US Warning',
+            'seller_id': 'SELLER-WARN',
+            'marketplace_id': 'ATVPDKIKX0DER',
+            'lwa_client_id': 'client',
+            'lwa_client_secret': 'secret',
+            'refresh_token': 'refresh',
+        })
+        monkeypatch.setattr(FieldMapper, 'validate_required_fields', lambda self, product, schema_fields=None: {
+            'valid': True,
+            'errors': [],
+            'warnings': [],
+            'info': [],
+            'schema_required_missing': [],
+        })
+        monkeypatch.setattr(web_app, '_run_listing_check_for_product', lambda *args, **kwargs: {
+            'sku': 'SKU-1',
+            'status': 'pass',
+            'summary_text': '',
+        })
+        monkeypatch.setattr(ListingsAPI, 'put_listings_item', lambda self, sku, product, preview=False: {
+            'status': 'ACCEPTED_WITH_WARNINGS',
+            'asin': 'B00WARN123456',
+            'issues': [{'severity': 'WARNING', 'message': 'minor warning'}],
+        })
+
+        client = app.test_client()
+        response = client.post('/api/submit', json={
+            'file': str(input_path),
+            'skus': ['SKU-1'],
+            'preview': False,
+        })
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['accepted'] == 1
+        assert payload['failed'] == 0
+        assert payload['results'][0]['status'] == 'ACCEPTED_WITH_WARNINGS'
+
+        wb2 = load_workbook(input_path)
+        ws2 = wb2.active
+        headers = [str(cell.value) if cell.value is not None else '' for cell in ws2[1]]
+        header_map = {header: idx + 1 for idx, header in enumerate(headers)}
+        assert ws2.cell(row=2, column=header_map['submit_status']).value == 'ACCEPTED_WITH_WARNINGS'
+        wb2.close()
     finally:
         if input_path.exists():
             input_path.unlink()
@@ -2035,12 +2164,14 @@ def test_submit_task_endpoint_returns_task_and_result(monkeypatch):
             'file': str(input_path),
             'skus': ['SKU-1'],
             'preview': True,
+            'account_id': 'SELLER-42',
         })
         assert response.status_code == 200
         payload = response.get_json()
         assert payload['success'] is True
         task_payload = _wait_for_task(client, payload['task_id'])
         assert task_payload['status'] == 'completed'
+        assert task_payload['account_id'] == 'SELLER-42'
         assert task_payload['result']['valid'] == 1
         assert task_payload['stage_name'] == '解析文件'
     finally:

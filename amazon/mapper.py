@@ -170,22 +170,11 @@ class FieldMapper:
 
         # 产品标识(UPC/EAN/GTIN)
         identity_mode = self._resolve_product_identity_mode(product)
-        if not is_parent and identity_mode == 'real_gtin' and product.get('upc'):
+        identifier_type, identifier_value = self._resolve_external_product_identifier(product)
+        if not is_parent and identity_mode == 'real_gtin' and identifier_type and identifier_value:
             attrs['externally_assigned_product_identifier'] = [{
-                'type': 'upc',
-                'value': str(product['upc']),
-                'marketplace_id': mp,
-            }]
-        elif not is_parent and identity_mode == 'real_gtin' and product.get('ean'):
-            attrs['externally_assigned_product_identifier'] = [{
-                'type': 'ean',
-                'value': str(product['ean']),
-                'marketplace_id': mp,
-            }]
-        elif not is_parent and identity_mode == 'real_gtin' and product.get('gtin'):
-            attrs['externally_assigned_product_identifier'] = [{
-                'type': 'gtin',
-                'value': str(product['gtin']),
+                'type': identifier_type.lower(),
+                'value': identifier_value,
                 'marketplace_id': mp,
             }]
 
@@ -453,16 +442,7 @@ class FieldMapper:
             }
         """
         product_type = product.get('product_type', 'PRODUCT')
-        parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
-
-        # 决定requirements类型
-        if parentage_level == 'parent':
-            requirements = 'LISTING_PRODUCT_ONLY'
-        elif product.get('asin') and not product.get('title'):
-            # 有ASIN没标题 = 跟卖(offer only)
-            requirements = 'LISTING_OFFER_ONLY'
-        else:
-            requirements = 'LISTING'
+        requirements = self._resolve_requirements(product)
 
         return {
             'productType': product_type,
@@ -491,11 +471,15 @@ class FieldMapper:
             'product_identity_mode': '',
         }
 
+        requirements = self._resolve_requirements(product)
+        is_offer_only = requirements == 'LISTING_OFFER_ONLY'
+
         # 必填字段
         required = {
             'sku': 'SKU(卖家商品编号)',
-            'title': '商品标题(item_name)',
         }
+        if not is_offer_only:
+            required['title'] = '商品标题(item_name)'
         parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
         is_parent = parentage_level == 'parent'
         is_child = parentage_level == 'child'
@@ -510,16 +494,17 @@ class FieldMapper:
                 result['valid'] = False
 
         # 强烈推荐
-        recommended = {
-            'brand': '品牌(brand)',
-            'description': '商品描述',
-            'keywords': '搜索关键词',
-        }
-        for field, label in recommended.items():
-            if not product.get(field):
-                result['warnings'].append(f"建议填写: {label}")
+        if not is_offer_only:
+            recommended = {
+                'brand': '品牌(brand)',
+                'description': '商品描述',
+                'keywords': '搜索关键词',
+            }
+            for field, label in recommended.items():
+                if not product.get(field):
+                    result['warnings'].append(f"建议填写: {label}")
 
-        if not is_parent:
+        if not is_parent and not is_offer_only:
             identity_validation = self._validate_product_identity(product)
             result['product_identity_mode'] = identity_validation['mode']
             if identity_validation['mode_missing']:
@@ -552,7 +537,7 @@ class FieldMapper:
                 result['warnings'].append("父体通常不需要填写 parent_sku，当前值会在提交时忽略")
 
         # 检查标题
-        if product.get('title'):
+        if not is_offer_only and product.get('title'):
             if len(product['title']) > 200:
                 result['errors'].append(f"标题超过200字符({len(product['title'])}字符)")
                 result['valid'] = False
@@ -570,18 +555,19 @@ class FieldMapper:
                 )
 
         # 检查bullet points（长度 + 禁止内容 + emoji）
-        bullets = self._extract_bullets(product)
-        from core.bullet_validation import validate_bullets
-        bp_result = validate_bullets(bullets)
-        for issue in bp_result['issues']:
-            if issue['level'] == 'error':
-                result['errors'].append(issue['message'])
-                result['valid'] = False
-            else:
-                result['warnings'].append(issue['message'])
+        if not is_offer_only:
+            bullets = self._extract_bullets(product)
+            from core.bullet_validation import validate_bullets
+            bp_result = validate_bullets(bullets)
+            for issue in bp_result['issues']:
+                if issue['level'] == 'error':
+                    result['errors'].append(issue['message'])
+                    result['valid'] = False
+                else:
+                    result['warnings'].append(issue['message'])
 
         # 检查搜索词字节数（Amazon 规则：仅统计单词字节，空格和标点不计入；超限整条失效）
-        if product.get('keywords'):
+        if not is_offer_only and product.get('keywords'):
             from core.search_term_utils import count_search_term_bytes
             kw_bytes = count_search_term_bytes(str(product['keywords']))
             kw_limit = SEARCH_TERM_BYTE_LIMIT.get(self.marketplace_id, 250)
@@ -601,16 +587,17 @@ class FieldMapper:
             )
 
         # 检查图片
-        main_image_url = product.get('main_image_url')
-        if not main_image_url:
-            result['warnings'].append("缺少主图URL")
-        elif not self._is_media_locator(main_image_url):
-            result['errors'].append("主图媒体地址必须是 http(s) 或 s3:// 地址")
-            result['valid'] = False
-        elif product.get('main_image_source') == 'original_fallback_local_ai':
-            result['warnings'].append(
-                "AI主图仅保存在本地，当前回退为原始远程图；如需提交 AI 图，请启用媒体存储并完成上传"
-            )
+        if not is_offer_only:
+            main_image_url = product.get('main_image_url')
+            if not main_image_url:
+                result['warnings'].append("缺少主图URL")
+            elif not self._is_media_locator(main_image_url):
+                result['errors'].append("主图媒体地址必须是 http(s) 或 s3:// 地址")
+                result['valid'] = False
+            elif product.get('main_image_source') == 'original_fallback_local_ai':
+                result['warnings'].append(
+                    "AI主图仅保存在本地，当前回退为原始远程图；如需提交 AI 图，请启用媒体存储并完成上传"
+                )
 
         # 检查合规字段
         if self._coerce_bool(product.get('batteries_required')):
@@ -619,7 +606,7 @@ class FieldMapper:
             if not product.get('batteries_included'):
                 result['warnings'].append("标记需要电池但未说明是否含电池(batteries_included)")
 
-        schema_fields = schema_fields or self._load_schema_fields(product.get('product_type', ''))
+        schema_fields = None if is_offer_only else (schema_fields or self._load_schema_fields(product.get('product_type', '')))
         if schema_fields:
             attrs = self.build_listing_attributes(product)
             for field in schema_fields.get('required_fields', []):
@@ -639,6 +626,14 @@ class FieldMapper:
                 result['valid'] = False
 
         return result
+
+    def _resolve_requirements(self, product: Dict) -> str:
+        parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
+        if parentage_level == 'parent':
+            return 'LISTING_PRODUCT_ONLY'
+        if product.get('asin') and not product.get('title'):
+            return 'LISTING_OFFER_ONLY'
+        return 'LISTING'
 
     def _normalize_parentage_level(self, value) -> str:
         text = self._clean_value(value).lower()
@@ -958,6 +953,25 @@ class FieldMapper:
         if self._clean_value(product.get('upc') or product.get('ean') or product.get('gtin')):
             return 'real_gtin'
         return ''
+
+    def _resolve_external_product_identifier(self, product: Dict) -> tuple[str, str]:
+        explicit_type = self._clean_value(product.get('external_product_id_type')).upper()
+        values = {
+            'UPC': self._clean_value(product.get('upc')),
+            'EAN': self._clean_value(product.get('ean')),
+            'GTIN': self._clean_value(product.get('gtin')),
+        }
+        fallback_code = self._clean_value(product.get('upc') or product.get('ean') or product.get('gtin'))
+
+        if explicit_type in values:
+            value = values[explicit_type] or fallback_code
+            if value:
+                return explicit_type, value
+
+        for identifier_type in ('UPC', 'EAN', 'GTIN'):
+            if values[identifier_type]:
+                return identifier_type, values[identifier_type]
+        return '', ''
 
     def _validate_product_identity(self, product: Dict) -> Dict:
         mode = self._resolve_product_identity_mode(product)

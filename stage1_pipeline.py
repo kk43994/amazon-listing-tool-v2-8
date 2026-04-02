@@ -164,6 +164,7 @@ class Stage1Pipeline:
                         image_scope=image_scope,
                         image_style=image_style,
                         image_custom_prompt=image_custom_prompt,
+                        image_reference_url=image_reference_url,
                         cancel_event=cancel_event,
                     )
                     if not submitted:

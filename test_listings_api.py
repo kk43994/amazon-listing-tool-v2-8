@@ -123,3 +123,33 @@ def test_submit_listings_uses_resolved_asin_when_submit_response_has_none(monkey
 
     assert results[0]['status'] == 'ACCEPTED'
     assert results[0]['asin'] == 'B00RESOLVED123'
+
+
+def test_submit_listings_skips_duplicate_skus(monkeypatch):
+    api = ListingsAPI(auth=_FakeAuth(), seller_id='SELLER', marketplace_id='ATVPDKIKX0DER')
+    calls = []
+
+    monkeypatch.setattr(
+        api.mapper,
+        'validate_required_fields',
+        lambda product: {'valid': True, 'errors': [], 'warnings': []},
+    )
+
+    def fake_put(sku, product, preview=False):
+        calls.append((sku, preview))
+        if preview:
+            return {'status': 'VALID', 'issues': []}
+        return {'status': 'ACCEPTED', 'issues': [], 'submissionId': f'SUB-{sku}'}
+
+    monkeypatch.setattr(api, 'put_listings_item', fake_put)
+    monkeypatch.setattr(api, 'resolve_submission_asin', lambda *args, **kwargs: '')
+
+    results = api.submit_listings([
+        {'sku': 'SKU-1', 'title': 'Demo 1', 'product_type': 'PRODUCT'},
+        {'sku': 'SKU-1', 'title': 'Demo 1 Duplicate', 'product_type': 'PRODUCT'},
+    ], preview_first=True, delay=0)
+
+    assert calls == [('SKU-1', True), ('SKU-1', False)]
+    assert results[0]['status'] == 'ACCEPTED'
+    assert results[1]['status'] == 'SKIPPED'
+    assert '重复 SKU' in results[1]['issues'][0]['message']

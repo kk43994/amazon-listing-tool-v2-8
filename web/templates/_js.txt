@@ -5907,24 +5907,73 @@ async function validateDrawerProduct() {
 }
 
 function showListingCheckReport(results) {
+  const statusBadge = (s) => {
+    const map = { pass: ['通过', 'success'], warn: ['警告', 'warn'], fail: ['失败', 'danger'] };
+    const [label, tone] = map[s] || [s || '-', 'default'];
+    return `<span class="task-badge ${tone}">${label}</span>`;
+  };
+  const issueIcon = (level) => level === 'error' ? '&#10060;' : (level === 'warning' ? '&#9888;&#65039;' : '&#8505;&#65039;');
+
   const rows = (results || []).map(result => {
-    const status = result.status || '-';
-    const summary = result.summary_text || '-';
+    const local = result.local || {};
+    const preview = result.preview || {};
+    const listing = result.listing || {};
+    const media = result.media || {};
     const product = products.find(item => item && item.sku === result.sku) || null;
     const missing = (result.missing_fields || []).map(item => formatSchemaFieldReference(product, item.name || '', item.title || item.name || '')).join('，');
+    const counts = result.summary_counts || {};
+
+    // 本地校验明细
+    const localErrors = (local.errors || []).map(e => `<div class="diagnostic-list-item"><span style="color:var(--danger)">${issueIcon('error')} ${escHtml(e)}</span></div>`).join('');
+    const localWarnings = (local.warnings || []).map(w => `<div class="diagnostic-list-item"><span style="color:var(--warning)">${issueIcon('warning')} ${escHtml(w)}</span></div>`).join('');
+
+    // Amazon 预览明细
+    const previewIssues = (preview.issues || []).map(issue => {
+      const code = issue.code ? `[${escHtml(issue.code)}] ` : '';
+      const attrs = (issue.attributeNames || []).length > 0 ? ` (${escHtml(issue.attributeNames.join(', '))})` : '';
+      const color = issue.level === 'error' ? 'var(--danger)' : 'var(--warning)';
+      const hint = issue.hint ? `<div style="margin-left:20px;font-size:11px;color:var(--text-muted)">${escHtml(issue.hint)}</div>` : '';
+      const fix = issue.fix ? `<div style="margin-left:20px;font-size:11px;color:var(--primary)">${escHtml(issue.fix)}</div>` : '';
+      return `<div class="diagnostic-list-item"><span style="color:${color}">${issueIcon(issue.level)} ${code}${escHtml(issue.message || '')}${attrs}</span>${hint}${fix}</div>`;
+    }).join('');
+
+    // Listing 后台 issues
+    const listingIssues = (listing.issues || []).map(issue => {
+      const code = issue.code ? `[${escHtml(issue.code)}] ` : '';
+      const color = issue.level === 'error' ? 'var(--danger)' : 'var(--warning)';
+      return `<div class="diagnostic-list-item"><span style="color:${color}">${issueIcon(issue.level)} ${code}${escHtml(issue.message || '')}</span></div>`;
+    }).join('');
+
+    // 媒体连通性
+    const mediaChecks = (media.checks || []).map(chk => {
+      const ok = chk.status === 'ok' || chk.status === 'pass';
+      return `<div class="diagnostic-list-item"><span style="color:${ok ? 'var(--success)' : 'var(--danger)'}">
+        ${ok ? '&#9989;' : '&#10060;'} ${escHtml(chk.slot || chk.label || '')} ${escHtml(chk.message || chk.url || '')}
+      </span></div>`;
+    }).join('');
+
+    const section = (title, content) => content ? `<div style="margin-top:8px"><div style="font-weight:600;font-size:12px;margin-bottom:4px">${title}</div>${content}</div>` : '';
+
     return `
-      <div style="padding:10px 0; border-bottom:1px solid var(--line);">
+      <div style="padding:12px 0; border-bottom:1px solid var(--line);">
         <div style="display:flex; justify-content:space-between; gap:12px; align-items:center;">
           <strong>${escHtml(result.sku || '-')}</strong>
-          <span>${escHtml(status)}</span>
+          ${statusBadge(result.status)}
         </div>
-        <div style="margin-top:6px; color:var(--text-secondary); line-height:1.6;">${escHtml(summary)}</div>
-        ${missing ? `<div style="margin-top:6px; font-size:12px; color:var(--text-secondary);">缺失字段: ${escHtml(missing)}</div>` : ''}
+        <div style="margin-top:4px; color:var(--text-secondary); font-size:13px;">${escHtml(result.summary_text || '-')}</div>
+        <div style="margin-top:4px; font-size:12px; color:var(--text-muted);">
+          错误 ${counts.errors || 0} · 警告 ${counts.warnings || 0} · 缺失字段 ${counts.missing_fields || 0} · 媒体失败 ${counts.media_failed || 0}
+        </div>
+        ${missing ? `<div style="margin-top:6px; font-size:12px; color:var(--text-secondary);">缺失字段：${escHtml(missing)}</div>` : ''}
+        ${section('本地校验', localErrors + localWarnings)}
+        ${section('Amazon 预览' + (preview.status ? ' (' + escHtml(preview.status) + ')' : ''), preview.message ? `<div style="font-size:12px;color:var(--text-muted)">${escHtml(preview.message)}</div>` + previewIssues : previewIssues)}
+        ${section('Listing 后台问题', listingIssues)}
+        ${section('媒体连通性', mediaChecks)}
         ${buildResultActionButtons(result, 'diagnose')}
       </div>
     `;
   }).join('');
-  showModal('缺项诊断结果', `<div style="max-height:55vh; overflow:auto;">${rows || '<p>暂无结果</p>'}</div>`);
+  showModal('缺项诊断结果', `<div style="max-height:65vh; overflow:auto;">${rows || '<p>暂无结果</p>'}</div>`, { wide: true });
 }
 
 async function runListingCheck(targetSku = '', overrideSkus = null) {

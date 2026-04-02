@@ -208,6 +208,10 @@
           <div class="task-center-section-title">最近记录</div>
           <div id="taskHistory" class="task-list"></div>
         </div>
+        <div class="task-center-column">
+          <div class="task-center-section-title">提交历史</div>
+          <div id="submissionHistory" class="task-list"></div>
+        </div>
       </div>
 
       <!-- Toolbar -->

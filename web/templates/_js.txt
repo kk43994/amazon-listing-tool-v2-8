@@ -151,7 +151,7 @@ const i18n = {
 let lang = 'zh';
 let products = [];
 let filteredProducts = [];
-let currentFile = '';
+let currentFile = localStorage.getItem('amazon28_currentFile') || '';
 let currentFileMeta = { type: '', warning: '', xlsPreserveSupported: false };
 let selectedSkus = new Set();
 let currentPage = 1;
@@ -1567,6 +1567,7 @@ function uploadTemplateFile(file) {
     .then(d => {
       if (d.error) throw new Error(d.error);
       currentFile = d.filepath || d.filename || file.name;
+      localStorage.setItem('amazon28_currentFile', currentFile);
       workspaceTemplateSummary = d.template || null;
       currentFileMeta = { type: (d.filename || '').toLowerCase().endsWith('.xls') ? 'xls' : 'xlsx', warning: '', xlsPreserveSupported: true };
       const fileInfo = document.getElementById('fileInfo');
@@ -1600,6 +1601,7 @@ function uploadExcel(file) {
     .then(d => {
       if (d.error) return showToast('error', d.error);
       currentFile = d.filepath || d.filename || file.name;
+      localStorage.setItem('amazon28_currentFile', currentFile);
       currentFileMeta = {
         type: d.file_type || '',
         warning: d.warning || '',
@@ -6740,6 +6742,21 @@ function testConnection() {
   }).catch(e => showToast('error', e.message));
 }
 
+function testAccountConnection(sellerId) {
+  showToast('info', '正在测试 Amazon 账号连接...');
+  fetch('/api/accounts/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ seller_id: sellerId })
+  }).then(r => r.json()).then(d => {
+    if (d.success) {
+      showToast('success', d.message || '账号连接成功');
+    } else {
+      showToast('error', d.message || '账号连接失败');
+    }
+  }).catch(e => showToast('error', '测试失败: ' + e.message));
+}
+
 // ===== 24. Account Management =====
 function loadAccounts() {
   fetch('/api/accounts').then(r => r.json()).then(d => {
@@ -6767,6 +6784,7 @@ function loadAccounts() {
         a.has_credentials === false ? '<span class="badge badge-warning">缺少凭证</span>' : '<span class="badge badge-success">凭证完整</span>'
       ].filter(Boolean).join(' ')}</td>
       <td>
+        <button class="btn-link" onclick="testAccountConnection('${escHtml(a.seller_id)}')">测试</button> |
         ${!a.is_default && a.enabled !== false ? `<button class="btn-link" onclick="setDefaultAccount('${escHtml(a.seller_id)}')">设为默认</button> | ` : ''}
         <button class="btn-danger-link" onclick="deleteAccount('${escHtml(a.seller_id)}')">删除</button>
       </td>
@@ -6942,7 +6960,39 @@ async function loadTaskCenter() {
     taskCenterData = data || { current: null, history: [] };
     renderTaskCenter();
     renderRecentSubmitBanner();
+    loadSubmissionHistory();
   } catch (e) {}
+}
+
+async function loadSubmissionHistory() {
+  const el = document.getElementById('submissionHistory');
+  if (!el) return;
+  try {
+    const response = await fetch('/api/submission-history');
+    const data = await response.json();
+    const records = (data.records || []).slice(0, 8);
+    if (records.length === 0) {
+      el.innerHTML = '<div class="task-empty">暂无提交记录</div>';
+      return;
+    }
+    el.innerHTML = records.map(rec => {
+      const accepted = rec.accepted || rec.success || 0;
+      const failed = rec.failed || 0;
+      const total = rec.total || 0;
+      const status = failed === 0 && accepted > 0 ? 'success' : (accepted === 0 ? 'danger' : 'warn');
+      const time = (rec.timestamp || rec.time || '').replace('T', ' ').substring(0, 19);
+      return `<div class="task-card">
+        <div class="task-card-head">
+          <strong>${escHtml(rec.account || '未知账号')}</strong>
+          <span class="task-badge ${status}">${accepted}/${total}</span>
+        </div>
+        <div class="task-card-meta">${escHtml(time)}</div>
+        <div class="task-card-progress">成功 ${accepted} · 失败 ${failed}${rec.file ? ` · ${escHtml(String(rec.file).split('/').pop())}` : ''}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div class="task-empty">加载提交历史失败</div>';
+  }
 }
 
 function formatTaskStatus(status) {
@@ -6982,15 +7032,9 @@ function getLatestCompletedSubmitTask() {
 
 function resolveTaskAccountId(task) {
   const result = task && typeof task.result === 'object' ? task.result : {};
-  const accountHint = result.account || task.account || '';
-  const marketplaceHint = result.marketplace || task.marketplace || '';
-  const account = amazonAccounts.find(item =>
-    item && (
-      item.seller_id === accountHint
-      || item.name === accountHint
-      || item.marketplace_name === marketplaceHint
-    )
-  ) || amazonAccounts.find(item => item && item.is_default) || amazonAccounts[0] || null;
+  const exactId = String(result.account_id || task.account_id || task.account || '').trim();
+  if (!exactId) return '';
+  const account = amazonAccounts.find(item => item && item.seller_id === exactId) || null;
   return account ? (account.seller_id || '') : '';
 }
 
@@ -7046,8 +7090,9 @@ async function openRecentSubmitListingStatus() {
   if (!first || !first.sku) return showToast('warning', '最近一次提交缺少 SKU');
 
   const originalAccountId = selectedAccountId;
-  const accountId = resolveTaskAccountId(task) || selectedAccountId;
-  if (accountId) selectedAccountId = accountId;
+  const accountId = resolveTaskAccountId(task);
+  if (!accountId) return showToast('warning', '这条历史提交没有保存明确账号，请重新选择账号后再查最终状态');
+  selectedAccountId = accountId;
   try {
     const listing = await fetchListingStatusFor(task.input_file || currentFile, first.sku, accountId);
     showModal('Amazon 最终状态', `
@@ -7226,17 +7271,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isMobileViewport()) closeMobileSidebar();
   });
   window.setInterval(loadTaskCenter, 5000);
-  // Load existing files
+  // Load existing files — restore from localStorage if available
+  if (currentFile) {
+    const baseName = currentFile.split('/').pop();
+    templatePanelCollapsed = true;
+    currentFileMeta = { type: baseName.toLowerCase().endsWith('.xls') ? 'xls' : 'xlsx', warning: '', xlsPreserveSupported: false };
+    document.getElementById('fileInfo').dataset.baseName = baseName;
+    document.getElementById('fileInfo').textContent = baseName;
+    loadProducts();
+  }
   fetch('/api/files').then(r => r.json()).then(d => {
     const files = d.input || [];
-    if (files.length > 0) {
+    if (!currentFile && files.length > 0) {
       templatePanelCollapsed = true;
       currentFile = files[0].path || files[0].name;
+      localStorage.setItem('amazon28_currentFile', currentFile);
       currentFileMeta = { type: (files[0].name || '').toLowerCase().endsWith('.xls') ? 'xls' : 'xlsx', warning: '', xlsPreserveSupported: false };
       document.getElementById('fileInfo').dataset.baseName = files[0].name;
       document.getElementById('fileInfo').textContent = files[0].name;
       loadProducts();
-    } else {
+    } else if (!currentFile) {
       refreshTemplateFlowUi();
     }
   }).catch(() => {});

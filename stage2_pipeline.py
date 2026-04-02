@@ -214,6 +214,7 @@ class Stage2Pipeline:
     def _submit_individual(self, products: List[Dict], preview_before_submit: bool = True) -> List[Dict]:
         """逐条提交 (使用Listings API)"""
         results = []
+        success_statuses = {'ACCEPTED', 'ACCEPTED_WITH_WARNINGS'}
         for idx, product in enumerate(products):
             sku = product.get('sku')
             if not sku:
@@ -248,9 +249,9 @@ class Stage2Pipeline:
                 result = self.listings.put_listings_item(sku, product)
                 status = result.get('status', 'UNKNOWN')
 
-                if status == 'ACCEPTED':
+                if status in success_statuses:
                     self.stats['success'] += 1
-                    logger.info("  ✅ 已接收")
+                    logger.info("  ✅ 已接收" if status == 'ACCEPTED' else "  ✅ 已接收（含警告）")
                 else:
                     self.stats['failed'] += 1
                     logger.warning(f"  ⚠️ 状态: {status}")

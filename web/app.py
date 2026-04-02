@@ -23,17 +23,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_config, reload_config
 from core.excel.processor import ExcelProcessor
 from core.media_store import get_media_store
+from core.utils import sanitize_filename as _sanitize_filename, filter_rows as _filter_rows
 from core.template_service import (
     DEFAULT_MARKETPLACE,
     ensure_template_definition,
     ensure_template_workbook,
+    evaluate_template_families,
     evaluate_template_row,
     load_template_definition,
+    manual_search_product_types,
     read_template_metadata,
     recommend_product_types,
     summarize_template_issues,
     template_definition_summary,
     update_template_overlay,
+    validate_product_type_candidate,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,8 +67,33 @@ def err(message, code=400):
     return jsonify({'success': False, 'error': message}), code
 
 
+def _validate_file_path(filepath: str) -> str | None:
+    """校验客户端传入的文件路径是否在允许的目录内。返回 realpath 或 None。"""
+    filepath = str(filepath or '').strip()
+    if not filepath:
+        return None
+    real = os.path.realpath(filepath)
+    allowed_dirs = [os.path.realpath(config.INPUT_DIR), os.path.realpath(config.OUTPUT_DIR)]
+    if any(real.startswith(d + os.sep) or real == d for d in allowed_dirs):
+        return real
+    return None
+
+
 def _env_file_path() -> str:
     return os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+
+
+def _accounts_file_path() -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'accounts.json')
+
+
+def _restrict_secret_file_permissions(path: str):
+    if os.name == 'nt' or not os.path.exists(path):
+        return
+    try:
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        logger.warning("收紧敏感配置文件权限失败 %s: %s", path, exc)
 
 
 def _write_env_updates(updates: dict):
@@ -91,9 +120,140 @@ def _write_env_updates(updates: dict):
 
     with open(env_path, 'w', encoding='utf-8') as f:
         f.writelines(new_lines)
+    _restrict_secret_file_permissions(env_path)
 
     for key, val in updates.items():
         os.environ[str(key)] = str(val)
+
+
+def _marketplace_name(marketplace_id: str) -> str:
+    names = {
+        'ATVPDKIKX0DER': 'Amazon US',
+        'A2EUQ1WTGCTBG2': 'Amazon CA',
+        'A1AM78C64UM0Y8': 'Amazon MX',
+        'A1F83G8C2ARO7P': 'Amazon UK',
+        'A1PA6795UKMFR9': 'Amazon DE',
+        'A13V1IB3VIYZZH': 'Amazon FR',
+        'APJ6JRA9NG5V4': 'Amazon IT',
+        'A1RKKUPIHCS9HS': 'Amazon ES',
+        'A1VC38T7YXB528': 'Amazon JP',
+        'A39IBJ37TRP1C6': 'Amazon AU',
+    }
+    return names.get(marketplace_id, marketplace_id or 'Amazon')
+
+
+def _sync_sp_config_to_accounts(data: dict) -> bool:
+    """把设置页的单账号 SP 配置同步到 accounts.json，供 Web 提交流程直接使用。"""
+    accounts_path = _accounts_file_path()
+    payload = {}
+    if os.path.exists(accounts_path):
+        try:
+            with open(accounts_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except Exception as exc:
+            logger.warning("读取 accounts.json 失败，准备重建: %s", exc)
+            payload = {}
+
+    accounts = payload.get('accounts')
+    if not isinstance(accounts, list):
+        accounts = []
+
+    seller_id = str(data.get('seller_id') or '').strip()
+    default_idx = None
+    match_idx = None
+    for idx, account in enumerate(accounts):
+        if account.get('is_default'):
+            default_idx = idx
+        if seller_id and account.get('seller_id') == seller_id:
+            match_idx = idx
+
+    target_idx = match_idx if match_idx is not None else default_idx
+    if target_idx is None and not seller_id:
+        logger.warning("保存 SP 配置时缺少 seller_id，跳过 accounts.json 同步")
+        return False
+
+    account = dict(accounts[target_idx]) if target_idx is not None else {}
+    marketplace_id = (
+        account.get('marketplace_id')
+        or str(data.get('marketplace_id') or '').strip()
+        or config.AMAZON_MARKETPLACE
+        or 'ATVPDKIKX0DER'
+    )
+
+    account.update({
+        'name': account.get('name') or '默认亚马逊账号',
+        'seller_id': seller_id or account.get('seller_id', ''),
+        'marketplace_id': marketplace_id,
+        'marketplace_name': account.get('marketplace_name') or _marketplace_name(marketplace_id),
+        'is_default': True,
+        'enabled': True,
+    })
+
+    field_map = {
+        'client_id': 'lwa_client_id',
+        'client_secret': 'lwa_client_secret',
+        'refresh_token': 'refresh_token',
+    }
+    for source_key, target_key in field_map.items():
+        value = str(data.get(source_key) or '').strip()
+        if value:
+            account[target_key] = value
+
+    if target_idx is None:
+        accounts.append(account)
+        target_idx = len(accounts) - 1
+    else:
+        accounts[target_idx] = account
+
+    for idx, other in enumerate(accounts):
+        if idx != target_idx:
+            other['is_default'] = False
+
+    payload['accounts'] = accounts
+    payload.setdefault('_注释', {
+        'seller_id': '卖家ID，在Seller Central的Account Info中查看',
+        'marketplace_id': '参考: US=ATVPDKIKX0DER, UK=A1F83G8C2ARO7P, DE=A1PA6795UKMFR9',
+        'lwa_client_id': '在Developer Central的应用信息中获取',
+        'lwa_client_secret': '在Developer Central的应用信息中获取',
+        'refresh_token': '通过OAuth2授权流程获取',
+    })
+
+    with open(accounts_path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    _restrict_secret_file_permissions(accounts_path)
+    return True
+
+
+def _amazon_credentials_configured() -> bool:
+    def is_real(value: str) -> bool:
+        text = str(value or '').strip()
+        upper = text.upper()
+        return bool(text) and 'YOUR_' not in upper
+
+    env_ready = bool(
+        is_real(config.AMAZON_CLIENT_ID)
+        and is_real(config.AMAZON_CLIENT_SECRET)
+        and is_real(config.AMAZON_REFRESH_TOKEN)
+        and is_real(config.AMAZON_SELLER_ID)
+    )
+    if env_ready:
+        return True
+
+    try:
+        from amazon.accounts import AccountManager
+
+        acc = AccountManager(_accounts_file_path()).get_default_account()
+    except Exception as exc:
+        logger.warning("读取默认亚马逊账号失败: %s", exc)
+        return False
+
+    return bool(
+        acc
+        and is_real(acc.get('seller_id'))
+        and is_real(acc.get('lwa_client_id'))
+        and is_real(acc.get('lwa_client_secret'))
+        and is_real(acc.get('refresh_token'))
+    )
 
 
 # ===== Excel 文件读取缓存 =====
@@ -101,6 +261,142 @@ def _write_env_updates(updates: dict):
 _excel_cache = {}
 _excel_cache_lock = threading.Lock()
 _EXCEL_CACHE_MAX = 5
+_excel_file_locks = {}
+_excel_file_locks_lock = threading.Lock()
+
+
+def _normalize_header_name(name: str) -> str:
+    return re.sub(r'[\s_\-]+', '', str(name or '').strip().lower())
+
+
+def _get_excel_file_lock(filepath: str):
+    normalized = os.path.realpath(str(filepath or ''))
+    with _excel_file_locks_lock:
+        lock = _excel_file_locks.get(normalized)
+        if lock is None:
+            lock = threading.Lock()
+            _excel_file_locks[normalized] = lock
+        return lock
+
+
+_WORKFLOW_RESET_FIELDS = (
+    ('preview_status', '预览状态'),
+    ('preview_message', '预览信息'),
+    ('preview_time', '预览时间'),
+    ('preview_account', '预览账号'),
+    ('preview_issue_payload',),
+    ('validation_status',),
+    ('validation_errors',),
+    ('validation_warnings',),
+    ('listing_check_status', '缺项诊断状态'),
+    ('listing_check_summary', '缺项诊断摘要'),
+    ('listing_check_missing_fields', '缺失字段清单'),
+    ('listing_check_issues', '缺项诊断问题'),
+    ('listing_check_time', '缺项诊断时间'),
+    ('listing_check_account', '缺项诊断账号'),
+    ('listing_check_payload',),
+    ('template_required_filled', '模板必填已填'),
+    ('template_required_missing_count', '模板必填缺失数'),
+    ('template_required_missing_fields', '模板必填缺失字段'),
+    ('template_recommended_missing_fields', '模板建议补充字段'),
+    ('template_blocking_issues', '模板阻断问题'),
+    ('template_ready_to_submit', '模板提交就绪'),
+)
+
+_NON_REVALIDATING_HEADER_ALIASES = {
+    'preview_status', '预览状态',
+    'preview_message', '预览信息',
+    'preview_time', '预览时间',
+    'preview_account', '预览账号',
+    'preview_issue_payload',
+    'validation_status', 'validation_errors', 'validation_warnings',
+    'listing_check_status', '缺项诊断状态',
+    'listing_check_summary', '缺项诊断摘要',
+    'listing_check_missing_fields', '缺失字段清单',
+    'listing_check_issues', '缺项诊断问题',
+    'listing_check_time', '缺项诊断时间',
+    'listing_check_account', '缺项诊断账号',
+    'listing_check_payload',
+    'template_id', '模板ID',
+    'template_product_type', '模板产品类型',
+    'template_variation_mode', '模板变体模式',
+    'template_required_total', '模板必填总数',
+    'template_required_filled', '模板必填已填',
+    'template_required_missing_count', '模板必填缺失数',
+    'template_required_missing_fields', '模板必填缺失字段',
+    'template_recommended_missing_fields', '模板建议补充字段',
+    'template_blocking_issues', '模板阻断问题',
+    'template_ready_to_submit', '模板提交就绪',
+    'submit_status', '提交状态',
+    'submission_id', '提交ID',
+    'submit_time', '提交时间',
+    'submit_message', '提交信息',
+    'asin', 'ASIN',
+    'AI状态',
+    'AI主图上传状态', 'AI主图上传错误',
+}
+for _slot in range(2, 10):
+    _NON_REVALIDATING_HEADER_ALIASES.add(f'AI副图{_slot}上传状态')
+    _NON_REVALIDATING_HEADER_ALIASES.add(f'AI副图{_slot}上传错误')
+_NON_REVALIDATING_HEADERS = {_normalize_header_name(name) for name in _NON_REVALIDATING_HEADER_ALIASES}
+
+
+def _build_header_lookup(headers) -> dict:
+    names = headers.keys() if isinstance(headers, dict) else headers
+    lookup = {}
+    for name in names or []:
+        normalized = _normalize_header_name(name)
+        if normalized and normalized not in lookup:
+            lookup[normalized] = name
+    return lookup
+
+
+def _resolve_existing_header(header_lookup: dict, aliases: tuple[str, ...]) -> str | None:
+    for alias in aliases:
+        resolved = header_lookup.get(_normalize_header_name(alias))
+        if resolved:
+            return resolved
+    return None
+
+
+def _should_invalidate_workflow_state(updates: dict) -> bool:
+    return any(
+        _normalize_header_name(header_name) not in _NON_REVALIDATING_HEADERS
+        for header_name in dict(updates or {}).keys()
+    )
+
+
+def _augment_updates_with_workflow_resets(headers, updates: dict) -> dict:
+    prepared = dict(updates or {})
+    if not prepared or not _should_invalidate_workflow_state(prepared):
+        return prepared
+
+    header_lookup = _build_header_lookup(headers)
+    for aliases in _WORKFLOW_RESET_FIELDS:
+        existing_header = _resolve_existing_header(header_lookup, aliases)
+        if existing_header and existing_header not in prepared:
+            prepared[existing_header] = ''
+    return prepared
+
+
+def _prepare_appended_row(headers, row_data: dict) -> dict:
+    prepared = dict(row_data or {})
+    if not prepared:
+        return prepared
+
+    header_lookup = _build_header_lookup(list(headers) + list(prepared.keys()))
+    reset_aliases = list(_WORKFLOW_RESET_FIELDS) + [
+        ('submit_status', '提交状态'),
+        ('submission_id', '提交ID'),
+        ('submit_time', '提交时间'),
+        ('submit_message', '提交信息'),
+        ('asin', 'ASIN'),
+    ]
+    for aliases in reset_aliases:
+        existing_header = _resolve_existing_header(header_lookup, aliases)
+        if existing_header:
+            prepared[existing_header] = ''
+    return prepared
 
 
 def read_excel_cached(filepath):
@@ -172,13 +468,24 @@ def _persist_row_updates(input_file: str, sku: str, updates: dict):
 
 def _persist_bulk_row_updates(input_file: str, updates_by_sku: dict):
     """批量更新多个 SKU，xlsx 保持原表结构，xls 使用 xlwt 重写。"""
-    ext = os.path.splitext(str(input_file))[1].lower()
-    if ext == '.xls':
-        _persist_bulk_row_updates_xls(input_file, updates_by_sku)
-    else:
-        _persist_bulk_row_updates_xlsx(input_file, updates_by_sku)
+    with _get_excel_file_lock(input_file):
+        ext = os.path.splitext(str(input_file))[1].lower()
+        if ext == '.xls':
+            _persist_bulk_row_updates_xls(input_file, updates_by_sku)
+        else:
+            _persist_bulk_row_updates_xlsx(input_file, updates_by_sku)
 
-    invalidate_excel_cache(input_file)
+        invalidate_excel_cache(input_file)
+
+
+def _append_rows(input_file: str, rows: list[dict]):
+    with _get_excel_file_lock(input_file):
+        ext = os.path.splitext(str(input_file))[1].lower()
+        if ext == '.xls':
+            _append_rows_xls_rebuild(input_file, rows)
+        else:
+            _append_rows_xlsx(input_file, rows)
+        invalidate_excel_cache(input_file)
 
 
 def _persist_bulk_row_updates_xlsx(input_file: str, updates_by_sku: dict):
@@ -212,7 +519,27 @@ def _persist_bulk_row_updates_xlsx(input_file: str, updates_by_sku: dict):
 
     for sku, updates in updates_by_sku.items():
         target_row_idx = row_map[sku]
-        for header_name, value in updates.items():
+        prepared_updates = _augment_updates_with_workflow_resets(headers, updates)
+        for header_name, value in prepared_updates.items():
+            col_idx = _ensure_header(ws, header_row, headers, header_name)
+            ws.cell(row=target_row_idx, column=col_idx, value=value)
+
+    wb.save(input_file)
+    wb.close()
+
+
+def _append_rows_xlsx(input_file: str, rows: list[dict]):
+    from openpyxl import load_workbook
+
+    wb = load_workbook(input_file)
+    ws = wb.active
+    header_row = _detect_header_row(ws)
+    headers = _build_header_index(ws, header_row)
+
+    for row_data in rows or []:
+        row_data = _prepare_appended_row(headers, row_data)
+        target_row_idx = ws.max_row + 1
+        for header_name, value in row_data.items():
             col_idx = _ensure_header(ws, header_row, headers, header_name)
             ws.cell(row=target_row_idx, column=col_idx, value=value)
 
@@ -221,10 +548,42 @@ def _persist_bulk_row_updates_xlsx(input_file: str, updates_by_sku: dict):
 
 
 def _persist_bulk_row_updates_xls(input_file: str, updates_by_sku: dict):
-    if _persist_bulk_row_updates_xls_preserve_format(input_file, updates_by_sku):
+    import xlrd
+
+    workbook = xlrd.open_workbook(input_file)
+    sheet = workbook.sheet_by_index(0)
+    rows = [
+        [sheet.cell_value(row_idx, col_idx) for col_idx in range(sheet.ncols)]
+        for row_idx in range(sheet.nrows)
+    ]
+    if not rows:
+        raise ValueError('Excel内容为空')
+
+    header_row = None
+    indicators = ['SKU', 'sku', 'item_name', 'product_id', 'brand_name',
+                  'standard_price', '商品编号', '标题', '品牌', 'ASIN', 'title', 'brand', 'price']
+    for row_idx, row_values in enumerate(rows[:10], start=1):
+        normalized = [str(value or '').strip() for value in row_values]
+        if any(indicator in normalized for indicator in indicators):
+            header_row = row_idx
+            break
+    if header_row is None:
+        header_row = 1
+
+    header_idx = header_row - 1
+    headers = {
+        str(value).strip(): idx + 1
+        for idx, value in enumerate(rows[header_idx])
+        if str(value or '').strip()
+    }
+    prepared_updates = {
+        sku: _augment_updates_with_workflow_resets(headers, updates)
+        for sku, updates in dict(updates_by_sku or {}).items()
+    }
+    if _persist_bulk_row_updates_xls_preserve_format(input_file, prepared_updates):
         return
     logger.warning("`.xls` 保样式写回不可用，回退到重建工作簿模式，原样式/公式可能丢失")
-    _persist_bulk_row_updates_xls_rebuild(input_file, updates_by_sku)
+    _persist_bulk_row_updates_xls_rebuild(input_file, prepared_updates)
 
 
 def _persist_bulk_row_updates_xls_preserve_format(input_file: str, updates_by_sku: dict) -> bool:
@@ -489,6 +848,67 @@ def _persist_bulk_row_updates_xls_rebuild(input_file: str, updates_by_sku: dict)
     new_workbook.save(input_file)
 
 
+def _append_rows_xls_rebuild(input_file: str, rows_to_append: list[dict]):
+    import xlrd
+    import xlwt
+
+    workbook = xlrd.open_workbook(input_file)
+    sheet = workbook.sheet_by_index(0)
+    rows = [
+        [sheet.cell_value(row_idx, col_idx) for col_idx in range(sheet.ncols)]
+        for row_idx in range(sheet.nrows)
+    ]
+
+    if not rows:
+        raise ValueError('Excel内容为空')
+
+    header_row = None
+    indicators = ['SKU', 'sku', 'item_name', 'product_id', 'brand_name',
+                  'standard_price', '商品编号', '标题', '品牌', 'ASIN', 'title', 'brand', 'price']
+    for row_idx, row_values in enumerate(rows[:10], start=1):
+        normalized = [str(value or '').strip() for value in row_values]
+        if any(indicator in normalized for indicator in indicators):
+            header_row = row_idx
+            break
+    if header_row is None:
+        header_row = 1
+
+    header_idx = header_row - 1
+    headers = {
+        str(value).strip(): idx + 1
+        for idx, value in enumerate(rows[header_idx])
+        if str(value or '').strip()
+    }
+
+    max_cols = max((len(row) for row in rows), default=0)
+    for row in rows:
+        if len(row) < max_cols:
+            row.extend([''] * (max_cols - len(row)))
+
+    for row_data in rows_to_append or []:
+        row_data = _prepare_appended_row(headers, row_data)
+        for header_name in row_data.keys():
+            if header_name not in headers:
+                max_cols += 1
+                headers[header_name] = max_cols
+                rows[header_idx].append(header_name)
+                for row_idx, row in enumerate(rows):
+                    if row_idx != header_idx:
+                        row.append('')
+
+        new_row = [''] * max_cols
+        for header_name, value in row_data.items():
+            new_row[headers[header_name] - 1] = value
+        rows.append(new_row)
+
+    new_workbook = xlwt.Workbook()
+    new_sheet = new_workbook.add_sheet(sheet.name or 'Sheet1')
+    for row_idx, row in enumerate(rows):
+        for col_idx, value in enumerate(row):
+            new_sheet.write(row_idx, col_idx, value)
+    new_workbook.save(input_file)
+
+
 def _detect_xls_preserve_support() -> dict:
     """检测本机是否有可用于保样式写回 .xls 的电子表格 COM 应用。"""
     script = r"""
@@ -545,6 +965,8 @@ exit 1
 
 
 def _map_regenerate_field(field: str):
+    _CORE_FIELDS = ['title', 'bullets', 'description', 'keywords']
+    _EXTRA_FIELDS = ['special_feature', 'target_audience', 'subject_keywords']
     mapping = {
         'title': ['title'],
         'bullet_1': ['bullets'],
@@ -555,9 +977,13 @@ def _map_regenerate_field(field: str):
         'bullets': ['bullets'],
         'description': ['description'],
         'keywords': ['keywords'],
-        'all': ['title', 'bullets', 'description', 'keywords'],
+        'special_feature': ['special_feature'],
+        'target_audience': ['target_audience'],
+        'subject_keywords': ['subject_keywords'],
+        'all': _CORE_FIELDS + _EXTRA_FIELDS,
+        'core': _CORE_FIELDS,
     }
-    return mapping.get(str(field or '').strip(), ['title', 'bullets', 'description', 'keywords'])
+    return mapping.get(str(field or '').strip(), _CORE_FIELDS)
 
 
 def _logical_field_to_excel_header(field: str, col_map: dict):
@@ -791,6 +1217,18 @@ def _collect_ai_image_persist_updates(item: dict) -> dict:
     return updates
 
 
+def _collect_ai_trace_persist_updates(item: dict) -> dict:
+    fields = [
+        'AI文案模型', 'AI文案协议', 'AI文案尝试次数', 'AI文案生成时间', 'AI文案最后错误',
+        'AI图片模型', 'AI图片协议', 'AI图片尝试次数', 'AI图片生成时间', 'AI图片最后错误',
+    ]
+    updates = {}
+    for field in fields:
+        if field in item or str(item.get(field, '') or '').strip():
+            updates[field] = item.get(field, '')
+    return updates
+
+
 def _pick_existing_header(headers, *candidates, default=''):
     header_set = {str(header).strip() for header in headers if str(header or '').strip()}
     for candidate in candidates:
@@ -820,6 +1258,89 @@ def _format_submit_issues(result_entry: dict) -> str:
     if messages:
         return '; '.join(messages)
     return str(result_entry.get('message', '') or '').strip()
+
+
+def _compact_json_cell(payload) -> str:
+    try:
+        return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+    except Exception:
+        return ''
+
+
+def _normalize_issue_list(issues, default_source: str) -> list:
+    normalized = []
+    for issue in issues or []:
+        if isinstance(issue, dict):
+            cleaned = _normalize_diagnostic_issue(issue, str(issue.get('source', '') or default_source).strip() or default_source)
+        else:
+            text = str(issue or '').strip()
+            if not text:
+                continue
+            cleaned = {
+                'source': default_source,
+                'level': 'error',
+                'severity': 'ERROR',
+                'code': '',
+                'message': text,
+                'attributeNames': [],
+                'categories': [],
+            }
+        if cleaned.get('message') or cleaned.get('code') or cleaned.get('attributeNames'):
+            normalized.append(cleaned)
+    return normalized
+
+
+def _build_preview_issue_payload(result_entry: dict) -> dict:
+    status = str(result_entry.get('status', '') or '').strip().upper()
+    if not status:
+        status = 'VALID' if result_entry.get('valid') else 'INVALID'
+    return {
+        'status': status,
+        'valid': bool(result_entry.get('valid')),
+        'issues': _normalize_issue_list(result_entry.get('issues') or [], 'amazon_preview'),
+    }
+
+
+def _build_listing_check_payload(result_entry: dict, checked_time: str, account_name: str) -> dict:
+    media = result_entry.get('media', {}) or {}
+    return {
+        'status': str(result_entry.get('status', '') or '').strip(),
+        'summary_text': str(result_entry.get('summary_text', '') or '').strip(),
+        'checked_at': str(result_entry.get('checked_at', '') or checked_time or '').strip(),
+        'account_name': str(result_entry.get('account_name', '') or account_name or '').strip(),
+        'missing_fields': list(result_entry.get('missing_fields', []) or []),
+        'local': {
+            'valid': bool(result_entry.get('local', {}).get('valid')),
+            'errors': [str(msg).strip() for msg in (result_entry.get('local', {}).get('errors') or []) if str(msg).strip()],
+            'warnings': [str(msg).strip() for msg in (result_entry.get('local', {}).get('warnings') or []) if str(msg).strip()],
+        },
+        'preview': {
+            'attempted': bool(result_entry.get('preview', {}).get('attempted')),
+            'status': str(result_entry.get('preview', {}).get('status', '') or '').strip(),
+            'message': str(result_entry.get('preview', {}).get('message', '') or '').strip(),
+            'issues': _normalize_issue_list(result_entry.get('preview', {}).get('issues') or [], 'amazon_preview'),
+        },
+        'listing': {
+            'queried': bool(result_entry.get('listing', {}).get('queried')),
+            'exists': bool(result_entry.get('listing', {}).get('exists')),
+            'asin': str(result_entry.get('listing', {}).get('asin', '') or '').strip(),
+            'issues': _normalize_issue_list(result_entry.get('listing', {}).get('issues') or [], 'listing_runtime'),
+        },
+        'media': {
+            'status': str(media.get('status', '') or '').strip(),
+            'failed': int(media.get('failed', 0) or 0),
+            'checks': [
+                {
+                    'field': str(item.get('field', '') or '').strip(),
+                    'ok': bool(item.get('ok')),
+                    'status_code': item.get('status_code'),
+                    'message': str(item.get('message', '') or '').strip(),
+                }
+                for item in (media.get('checks') or [])
+                if str(item.get('field', '') or '').strip()
+            ],
+        },
+    }
 
 
 def _build_submit_persist_updates(headers, result_entry: dict, submit_time: str) -> dict:
@@ -863,11 +1384,14 @@ def _build_preview_persist_updates(headers, result_entry: dict, preview_time: st
         _pick_existing_header(headers, 'preview_message', '预览信息', default='preview_message'): '; '.join(details),
         _pick_existing_header(headers, 'preview_time', '预览时间', default='preview_time'): preview_time,
         _pick_existing_header(headers, 'preview_account', '预览账号', default='preview_account'): account_name,
+        _pick_existing_header(headers, 'preview_issue_payload', default='preview_issue_payload'): _compact_json_cell(
+            _build_preview_issue_payload(result_entry)
+        ),
     }
 
 
 def _build_listing_api_context(account_id: str = ''):
-    from amazon.accounts import AccountManager
+    from amazon.accounts import AccountManager, account_has_real_credentials
     from amazon.auth import AmazonAuth
     from amazon.listings import ListingsAPI
     from amazon.mapper import FieldMapper
@@ -879,9 +1403,8 @@ def _build_listing_api_context(account_id: str = ''):
     if not acc:
         return acc, mapper, None, '未配置亚马逊账号'
 
-    required = [acc.get('lwa_client_id'), acc.get('lwa_client_secret'), acc.get('refresh_token'), acc.get('seller_id')]
-    if not all(required):
-        return acc, mapper, None, '亚马逊账号凭证不完整'
+    if not account_has_real_credentials(acc):
+        return acc, mapper, None, '亚马逊账号凭证未配置完成或仍为模板占位值'
 
     auth = AmazonAuth(
         client_id=acc['lwa_client_id'],
@@ -993,6 +1516,81 @@ def _extract_listing_asin(payload: dict) -> str:
     return ''
 
 
+def _infer_submission_route(product: dict | None = None, listing_payload: dict | None = None) -> str:
+    product = product or {}
+    hinted_asin = str(
+        product.get('asin', '')
+        or product.get('merchant_suggested_asin', '')
+        or product.get('source_asin', '')
+        or ''
+    ).strip()
+    if hinted_asin:
+        return 'existing_asin'
+    if _extract_listing_asin(listing_payload or {}):
+        return 'new_listing'
+    return 'unknown'
+
+
+def _summarize_listing_status(payload: dict | None, product: dict | None = None) -> dict:
+    payload = payload or {}
+    product = product or {}
+    summary = (payload.get('summaries') or [{}])[0] if payload else {}
+    statuses = [str(item or '').strip() for item in (summary.get('status') or []) if str(item or '').strip()]
+    issues = payload.get('issues') or []
+    offers = payload.get('offers') or []
+    fulfillment = payload.get('fulfillmentAvailability') or []
+    asin = _extract_listing_asin(payload)
+    discoverable = any(status.upper() == 'DISCOVERABLE' for status in statuses)
+    suppressed = any(
+        str(action.get('action', '') or '').strip().upper() == 'LISTING_SUPPRESSED'
+        for issue in issues
+        for action in ((issue.get('enforcements') or {}).get('actions') or [])
+    )
+
+    if suppressed:
+        final_status = 'suppressed'
+    elif discoverable and asin:
+        final_status = 'discoverable'
+    elif asin:
+        final_status = 'asin_linked'
+    elif statuses:
+        final_status = 'processing'
+    else:
+        final_status = 'pending'
+
+    return {
+        'sku': str(payload.get('sku', '') or product.get('sku', '') or '').strip(),
+        'asin': asin,
+        'route': _infer_submission_route(product, payload),
+        'product_type': str(summary.get('productType', '') or '').strip(),
+        'status': statuses,
+        'final_status': final_status,
+        'discoverable': discoverable,
+        'suppressed': suppressed,
+        'item_name': str(summary.get('itemName', '') or '').strip(),
+        'issues': issues,
+        'issue_count': len(issues),
+        'offers': offers,
+        'offer_count': len(offers),
+        'fulfillmentAvailability': fulfillment,
+        'fulfillment_count': len(fulfillment),
+        'last_updated': str(summary.get('lastUpdatedDate', '') or '').strip(),
+    }
+
+
+def _find_row_by_sku(filepath: str, sku: str) -> tuple[dict | None, dict | None]:
+    cached = read_excel_cached(filepath)
+    rows = cached['data']
+    col_map = cached['col_map']
+    sku_col = col_map.get('sku', '')
+    target = str(sku or '').strip()
+    for row in rows:
+        row_sku = str(row.get(sku_col, '') or row.get('SKU', '') or '').strip()
+        if row_sku == target:
+            return row, col_map
+    return None, col_map
+
+
 def _collect_missing_fields(validation: dict, preview_issues: list, listing_issues: list, field_meta: dict) -> list:
     merged = {}
 
@@ -1078,6 +1676,9 @@ def _build_listing_check_persist_updates(headers, result_entry: dict, checked_ti
         _pick_existing_header(headers, 'listing_check_issues', '缺项诊断问题', default='listing_check_issues'): ' | '.join(issue_messages),
         _pick_existing_header(headers, 'listing_check_time', '缺项诊断时间', default='listing_check_time'): checked_time,
         _pick_existing_header(headers, 'listing_check_account', '缺项诊断账号', default='listing_check_account'): account_name,
+        _pick_existing_header(headers, 'listing_check_payload', default='listing_check_payload'): _compact_json_cell(
+            _build_listing_check_payload(result_entry, checked_time, account_name)
+        ),
     }
 
 
@@ -1266,6 +1867,61 @@ task_history = []
 single_tasks = {}
 
 
+def _task_history_file_path() -> str:
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    return os.path.join(config.OUTPUT_DIR, 'task_history.json')
+
+
+def _save_task_history_locked():
+    history_path = _task_history_file_path()
+    temp_path = f"{history_path}.tmp"
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(task_history[:_TASK_HISTORY_MAX], f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, history_path)
+    except Exception as exc:
+        logger.warning("写入任务历史失败: %s", exc)
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except OSError:
+            pass
+
+
+def _load_task_history_from_disk():
+    history_path = _task_history_file_path()
+    if not os.path.exists(history_path):
+        return
+
+    try:
+        with open(history_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+    except Exception as exc:
+        logger.warning("读取任务历史失败: %s", exc)
+        return
+
+    if not isinstance(payload, list):
+        return
+
+    recovered = []
+    now = datetime.now().isoformat(timespec='seconds')
+    for raw_record in payload[:_TASK_HISTORY_MAX]:
+        if not isinstance(raw_record, dict):
+            continue
+        record = dict(raw_record)
+        if record.get('status') == 'running':
+            record['status'] = 'failed'
+            record['message'] = record.get('message') or '应用重启，任务中断'
+            record['error'] = record.get('error') or '应用重启，任务中断'
+            record['ended_at'] = record.get('ended_at') or now
+        record['updated_at'] = record.get('updated_at') or now
+        recovered.append(record)
+
+    with _task_lock:
+        task_history.clear()
+        task_history.extend(recovered)
+
+
 def update_status(**kwargs):
     """线程安全地更新task_status"""
     with _task_lock:
@@ -1299,6 +1955,7 @@ def _append_task_record(record: dict):
         task_history.insert(0, record)
         if len(task_history) > _TASK_HISTORY_MAX:
             del task_history[_TASK_HISTORY_MAX:]
+        _save_task_history_locked()
 
 
 def _update_task_record(task_id: str, **updates):
@@ -1309,6 +1966,7 @@ def _update_task_record(task_id: str, **updates):
             if record.get('id') == task_id:
                 record.update(updates)
                 record['updated_at'] = datetime.now().isoformat(timespec='seconds')
+                _save_task_history_locked()
                 return
 
 
@@ -1453,6 +2111,9 @@ def _finalize_current_task_record():
     )
 
 
+_load_task_history_from_disk()
+
+
 # ===== 路由 =====
 
 @app.route('/')
@@ -1480,13 +2141,10 @@ def upload_excel():
     if file.content_type and file.content_type not in allowed_mimes:
         return jsonify({'error': f'不支持的文件类型: {file.content_type}'}), 400
 
-    filename = secure_filename(original_filename) or 'upload.xlsx'
-    # 保持原始中文文件名
-    if original_filename:
-        filename = original_filename.replace('/', '_').replace('\\', '_')
+    filename = _sanitize_filename(original_filename)
 
-    filepath = os.path.join(config.INPUT_DIR, filename)
     os.makedirs(config.INPUT_DIR, exist_ok=True)
+    filepath = _unique_upload_path(config.INPUT_DIR, filename)
     file.save(filepath)
 
     try:
@@ -1520,7 +2178,7 @@ def upload_excel():
 
         return jsonify({
             'success': True,
-            'filename': filename,
+            'filename': os.path.basename(filepath),
             'filepath': filepath,
             'total_rows': len(data),
             'file_type': ext.lstrip('.'),
@@ -1539,7 +2197,7 @@ def upload_excel():
 @app.route('/api/process', methods=['POST'])
 def start_processing():
     """启动处理任务"""
-    if task_status['running']:
+    if get_task_status().get('running'):
         return jsonify({'error': '已有任务在运行'}), 400
 
     data = request.json or {}
@@ -1563,16 +2221,22 @@ def start_processing():
         options.setdefault('process_images', True)
         options.setdefault('image_scope', scope or 'main')
         options.setdefault('image_style', data.get('bg_style') or data.get('image_style') or 'white')
+        if data.get('image_custom_prompt'):
+            options.setdefault('image_custom_prompt', data['image_custom_prompt'])
+        if data.get('image_reference_url'):
+            options.setdefault('image_reference_url', data['image_reference_url'])
         stage = 1
 
     # Support top-level params in addition to nested options
     for key in ('text_fields', 'overwrite_existing', 'selected_skus',
-                'process_text', 'process_images', 'image_scope', 'image_style'):
+                'process_text', 'process_images', 'image_scope', 'image_style',
+                'image_custom_prompt', 'image_reference_url'):
         if key in data and key not in options:
             options[key] = data[key]
 
-    if not input_file or not os.path.exists(input_file):
-        return jsonify({'error': '输入文件不存在'}), 400
+    validated = _validate_file_path(input_file)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '输入文件不存在或路径非法'}), 400
 
     task_record = _start_task_record(
         kind='batch_process',
@@ -1633,15 +2297,16 @@ def cancel_processing():
 def process_single():
     """单行处理端点 — 对单个SKU执行仿写或改图，同步返回结果"""
     try:
-        data = request.json
+        data = request.json or {}
         input_file = data.get('file', '') or data.get('input_file', '')
         sku = data.get('sku', '')
         action = data.get('action', 'rewrite')  # rewrite | image
         requested_field = data.get('field', '')
         text_fields = data.get('text_fields') or _map_regenerate_field(requested_field)
 
-        if not input_file or not os.path.exists(input_file):
-            return jsonify({'error': '输入文件不存在'}), 400
+        validated = _validate_file_path(input_file)
+        if not validated or not os.path.exists(validated):
+            return jsonify({'error': '输入文件不存在或路径非法'}), 400
         if not sku:
             return jsonify({'error': '请指定SKU'}), 400
         if action not in ('rewrite', 'image'):
@@ -1676,57 +2341,25 @@ def process_single():
             # 构建产品信息
             product_info = pipeline._build_product_info(target_item, col_map)
             product_type = pipeline._detect_product_type(target_item, col_map, product_info)
+            pipeline._generate_text_v2(
+                target_item,
+                product_info,
+                product_type,
+                col_map,
+                text_fields=text_fields,
+                overwrite_existing=True,
+            )
 
-            # 选择性仿写
-            if 'title' in text_fields:
-                from core.prompts.amazon_prompts import TITLE_PROMPT
-                title = pipeline._ai_text(TITLE_PROMPT.format(
-                    product_info=product_info, product_type=product_type))
-                if len(title) > 200:
-                    title = title[:197] + "..."
-                target_item['AI标题'] = title
-                result_data['ai_title'] = title
-
-            if 'bullets' in text_fields:
-                from core.prompts.amazon_prompts import BULLET_POINTS_PROMPT
-                bullets_raw = pipeline._ai_text(BULLET_POINTS_PROMPT.format(
-                    product_info=product_info, product_type=product_type))
-                bullets = pipeline._parse_bullets(bullets_raw)
-                for i, bp in enumerate(bullets, 1):
-                    if len(bp) > 500:
-                        bp = bp[:497] + "..."
-                    target_item[f'AI卖点{i}'] = bp
-                    result_data[f'ai_bullet_{i}'] = bp
-
-            if 'description' in text_fields:
-                from core.prompts.amazon_prompts import DESCRIPTION_PROMPT
-                desc = pipeline._ai_text(DESCRIPTION_PROMPT.format(
-                    product_info=product_info, product_type=product_type))
-                if len(desc) > 2000:
-                    desc = desc[:1997] + "..."
-                target_item['AI商品描述'] = desc
-                result_data['ai_description'] = desc
-
-            if 'keywords' in text_fields:
-                from core.prompts.amazon_prompts import SEARCH_TERMS_PROMPT
-                existing_title = target_item.get('AI标题', '') or target_item.get(col_map.get('title', ''), '')
-                keywords = pipeline._ai_text(SEARCH_TERMS_PROMPT.format(
-                    product_info=product_info, product_type=product_type,
-                    title=existing_title))
-                kw_bytes = len(keywords.encode('utf-8'))
-                if kw_bytes > 250:
-                    words = keywords.split()
-                    trimmed = []
-                    total = 0
-                    for w in words:
-                        wb = len(w.encode('utf-8')) + 1
-                        if total + wb > 249:
-                            break
-                        trimmed.append(w)
-                        total += wb
-                    keywords = " ".join(trimmed)
-                target_item['AI搜索关键词'] = keywords
-                result_data['ai_keywords'] = keywords
+            result_data['ai_title'] = str(target_item.get('AI标题', '') or '').strip()
+            for i in range(1, 6):
+                result_data[f'ai_bullet_{i}'] = str(target_item.get(f'AI卖点{i}', '') or '').strip()
+            result_data['ai_description'] = str(target_item.get('AI商品描述', '') or '').strip()
+            result_data['ai_keywords'] = str(target_item.get('AI搜索关键词', '') or '').strip()
+            result_data['ai_text_model'] = str(target_item.get('AI文案模型', '') or '').strip()
+            result_data['ai_text_protocol'] = str(target_item.get('AI文案协议', '') or '').strip()
+            result_data['ai_text_attempts'] = target_item.get('AI文案尝试次数', '')
+            result_data['ai_text_generated_at'] = str(target_item.get('AI文案生成时间', '') or '').strip()
+            result_data['ai_text_error'] = str(target_item.get('AI文案最后错误', '') or '').strip()
 
             ai_status = _resolve_ai_status_from_result(result_data, 'rewrite')
             target_item['AI状态'] = ai_status
@@ -1743,6 +2376,7 @@ def process_single():
                 bullet_key = f'ai_bullet_{i}'
                 if bullet_key in result_data:
                     persist_updates[f'AI卖点{i}'] = result_data[bullet_key]
+            persist_updates.update(_collect_ai_trace_persist_updates(target_item))
             _persist_row_updates(input_file, sku, persist_updates)
 
         elif action == 'image':
@@ -1758,13 +2392,19 @@ def process_single():
             result_data.update(_build_ai_image_result_data(target_item))
             result_data['ai_status'] = _resolve_ai_status_from_result(result_data, 'image')
             target_item['AI状态'] = result_data['ai_status']
+            result_data['ai_image_model'] = str(target_item.get('AI图片模型', '') or '').strip()
+            result_data['ai_image_protocol'] = str(target_item.get('AI图片协议', '') or '').strip()
+            result_data['ai_image_attempts'] = target_item.get('AI图片尝试次数', '')
+            result_data['ai_image_generated_at'] = str(target_item.get('AI图片生成时间', '') or '').strip()
+            result_data['ai_image_error'] = str(target_item.get('AI图片最后错误', '') or '').strip()
             persist_updates = {'AI状态': result_data['ai_status']}
             persist_updates.update(_collect_ai_image_persist_updates(target_item))
+            persist_updates.update(_collect_ai_trace_persist_updates(target_item))
 
             if result_data['ai_status'] == 'completed':
                 _persist_row_updates(input_file, sku, persist_updates)
             else:
-                _persist_row_updates(input_file, sku, {'AI状态': 'failed'})
+                _persist_row_updates(input_file, sku, {**persist_updates, 'AI状态': 'failed'})
                 result_data['warning'] = '图片处理未产生结果'
 
         return jsonify({'success': True, 'result': result_data})
@@ -1803,7 +2443,7 @@ def _run_task(input_file, stage, options):
                     data = filtered
                     add_log(f'🔍 已过滤选中的 {len(filtered)} 个SKU')
                 else:
-                    add_log(f'⚠️ 未匹配到选中的SKU，处理全部数据')
+                    add_log('⚠️ 未匹配到选中的SKU，处理全部数据')
 
             update_status(total=len(data))
             add_log(f'📖 读取到 {len(data)} 条商品, {len(processor.headers)} 列')
@@ -1859,6 +2499,10 @@ def _run_task(input_file, stage, options):
                     run_kwargs['text_fields'] = options['text_fields']
                 if options.get('overwrite_existing') is not None:
                     run_kwargs['overwrite_existing'] = options['overwrite_existing']
+                if options.get('image_custom_prompt'):
+                    run_kwargs['image_custom_prompt'] = options['image_custom_prompt']
+                if options.get('image_reference_url'):
+                    run_kwargs['image_reference_url'] = options['image_reference_url']
                 try:
                     result = pipeline.run(**run_kwargs)
                 except TypeError as te:
@@ -1914,8 +2558,9 @@ def _run_task(input_file, stage, options):
 def auto_preview():
     """自动预览input目录中的文件"""
     filepath = request.args.get('file', '')
-    if not filepath or not os.path.exists(filepath):
-        return jsonify({'error': '文件不存在'}), 400
+    validated = _validate_file_path(filepath)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '文件不存在或路径非法'}), 400
 
     try:
         processor = ExcelProcessor()
@@ -1946,10 +2591,11 @@ def auto_preview():
 @app.route('/api/image-process', methods=['POST'])
 def image_process():
     """单张图片背景处理 — 使用 /v1/images/edits API"""
-    data = request.json
+    data = request.json or {}
     image_url = data.get('image_url', '')
     bg_style = data.get('bg_style', 'white')
     prompt = data.get('prompt', '')
+    reference_image_url = data.get('reference_image_url', '')
 
     cfg = get_config()
     if not cfg.AI_API_KEY:
@@ -1961,14 +2607,14 @@ def image_process():
         # 构建提示
         if not prompt:
             bg_prompts = {
-                'white': 'Remove the background and replace with a pure white background (#FFFFFF). Keep the product perfectly intact with clean edges. This is for an Amazon product listing.',
-                'lifestyle': 'Place the product in a natural lifestyle setting. Show it being used in a modern, well-lit home environment.',
-                'studio': 'Place the product on a clean surface with professional studio lighting. Soft shadows, neutral background.',
-                'gradient': 'Place the product on a smooth light gradient background (white to light gray). Professional product photography look.',
+                'white': 'Keep this product EXACTLY as it is — do NOT alter the product. Only replace the background with pure white (#FFFFFF). Add a subtle drop shadow. Professional e-commerce look.',
+                'lifestyle': 'Keep this product EXACTLY as it is — do NOT alter the product. Only replace the background with a realistic lifestyle scene. Natural lighting, authentic setting.',
+                'studio': 'Keep this product EXACTLY as it is — do NOT alter the product. Only replace the background with a clean studio surface. Professional lighting, soft shadows.',
+                'gradient': 'Keep this product EXACTLY as it is — do NOT alter the product. Only replace the background with a smooth white-to-gray gradient. Professional product photography look.',
             }
             prompt = bg_prompts.get(bg_style, bg_prompts['white'])
 
-        result = ai_image_edit_url(image_url, prompt)
+        result = ai_image_edit_url(image_url, prompt, reference_image_url=reference_image_url)
 
         if result:
             return jsonify({
@@ -1985,7 +2631,7 @@ def image_process():
 @app.route('/api/generate-copy', methods=['POST'])
 def generate_copy():
     """AI生成亚马逊文案"""
-    data = request.json
+    data = request.json or {}
     name = data.get('name', '')
     brand = data.get('brand', '')
     category = data.get('category', '')
@@ -2045,7 +2691,8 @@ Return ONLY the JSON, no markdown code blocks."""
         content = ai_text(prompt, temperature=0.7, max_tokens=2000)
         # 清理可能的markdown代码块
         if content.startswith('```'):
-            content = content.split('\n', 1)[1]
+            parts = content.split('\n', 1)
+            content = parts[1] if len(parts) > 1 else ''
         if content.endswith('```'):
             content = content.rsplit('```', 1)[0]
         content = content.strip()
@@ -2116,6 +2763,40 @@ def api_get_task_detail(task_id):
     return jsonify(record)
 
 
+@app.route('/api/listing-status')
+def api_listing_status():
+    """查询单个 SKU 的最终 listing 状态，供提交后前端继续追踪。"""
+    filepath = str(request.args.get('file', '') or '').strip()
+    sku = str(request.args.get('sku', '') or '').strip()
+    account_id = str(request.args.get('account_id', '') or '').strip()
+    validated = _validate_file_path(filepath)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '文件不存在或路径非法'}), 400
+    if not sku:
+        return jsonify({'error': '缺少 SKU'}), 400
+
+    try:
+        row, col_map = _find_row_by_sku(filepath, sku)
+        if not row:
+            return jsonify({'error': '未找到对应 SKU'}), 404
+
+        account, mapper, listings_api, context_message = _build_listing_api_context(account_id)
+        product = mapper.map_excel_row(row, col_map or {})
+        if not listings_api:
+            return jsonify({
+                'success': False,
+                'message': context_message or '当前不可查询 listing 状态',
+                'listing': _summarize_listing_status({}, product),
+            }), 200
+
+        payload = listings_api.get_listings_item(sku)
+        listing = _summarize_listing_status(payload or {}, product)
+        listing['account_name'] = account.get('name', account.get('seller_id', '')) if account else ''
+        return jsonify({'success': True, 'listing': listing})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
 @app.route('/api/download/<path:filename>')
 def download_file(filename):
     """下载结果文件"""
@@ -2184,10 +2865,10 @@ def manage_config():
             'ai_concurrency': config.AI_CONCURRENCY,
             'image_concurrency': config.IMAGE_CONCURRENCY,
             'concurrency': config.AI_CONCURRENCY,
-            'amazon_configured': bool(config.AMAZON_CLIENT_ID),
+            'amazon_configured': _amazon_credentials_configured(),
         })
     else:
-        data = request.json
+        data = request.json or {}
         updates = {}
         field_map = {
             'text_api_key': 'AI_TEXT_API_KEY',
@@ -2262,13 +2943,14 @@ def manage_config():
 @app.route('/api/sp-config', methods=['POST'])
 def save_sp_config():
     """保存SP-API配置"""
-    data = request.json
+    data = request.json or {}
     updates = {}
     for key in ['AMAZON_CLIENT_ID', 'AMAZON_CLIENT_SECRET', 'AMAZON_REFRESH_TOKEN', 'AMAZON_SELLER_ID']:
         web_key = key.replace('AMAZON_', '').lower()
         if web_key in data and data[web_key]:
             updates[key] = data[web_key]
     _write_env_updates(updates)
+    _sync_sp_config_to_accounts(data)
     reload_config()
     return jsonify({'success': True, 'message': 'SP-API配置已保存，已即时生效'})
 
@@ -2279,7 +2961,7 @@ def test_ai_config():
     try:
         from core.ai_client import ai_text
 
-        result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8)
+        result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8, raise_on_error=True)
         if result:
             return jsonify({'success': True, 'message': f'AI连接成功: {result[:60]}'})
         return jsonify({'success': False, 'message': 'AI请求已发送，但未返回有效文本'})
@@ -2316,7 +2998,7 @@ def run_self_check():
     # 文本AI
     try:
         from core.ai_client import ai_text, ai_image_generate
-        text_result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8)
+        text_result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8, raise_on_error=True)
         if text_result:
             append_check('text_ai', 'pass', '文本 AI 接口可用', text_result[:60])
         else:
@@ -2410,7 +3092,7 @@ def add_account():
     try:
         from amazon.accounts import AccountManager
         mgr = AccountManager()
-        data = request.json
+        data = request.json or {}
         success = mgr.add_account(data)
         if success:
             return jsonify({'success': True, 'message': '账号添加成功'})
@@ -2452,8 +3134,9 @@ def set_default_account():
 def get_comparison():
     """获取AI处理前后的对比数据"""
     filepath = request.args.get('file', '')
-    if not filepath or not os.path.exists(filepath):
-        return jsonify({'error': '文件不存在'}), 400
+    validated = _validate_file_path(filepath)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '文件不存在或路径非法'}), 400
 
     try:
         processor = ExcelProcessor()
@@ -2542,8 +3225,9 @@ def get_comparison():
 def get_products():
     """读取Excel并按parent_sku分组，返回商品→SKU两层结构"""
     filepath = request.args.get('file', '')
-    if not filepath or not os.path.exists(filepath):
-        return jsonify({'error': '文件不存在'}), 400
+    validated = _validate_file_path(filepath)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '文件不存在或路径非法'}), 400
     try:
         cached = read_excel_cached(filepath)
         data = cached['data']
@@ -2667,6 +3351,11 @@ def get_products():
                 'ai_bullet_5': str(item.get('AI卖点5', '') or item.get('→ AI卖点5', '') or '').strip(),
                 'ai_description': str(item.get('AI商品描述', '') or item.get('→ AI描述(英文)', '') or '').strip(),
                 'ai_keywords': str(item.get('AI搜索关键词', '') or '').strip(),
+                'ai_text_model': str(item.get('AI文案模型', '') or '').strip(),
+                'ai_text_protocol': str(item.get('AI文案协议', '') or '').strip(),
+                'ai_text_attempts': str(item.get('AI文案尝试次数', '') or '').strip(),
+                'ai_text_generated_at': str(item.get('AI文案生成时间', '') or '').strip(),
+                'ai_text_error': str(item.get('AI文案最后错误', '') or '').strip(),
                 'color': str(item.get(col_map.get('color', ''), '') or '').strip(),
                 'size': str(item.get(col_map.get('size', ''), '') or '').strip(),
                 'item_weight': cell_text(item, col_map.get('weight', '')),
@@ -2685,11 +3374,22 @@ def get_products():
                 'preview_message': str(item.get('preview_message', '') or item.get('预览信息', '') or '').strip(),
                 'preview_time': str(item.get('preview_time', '') or item.get('预览时间', '') or '').strip(),
                 'preview_account': str(item.get('preview_account', '') or item.get('预览账号', '') or '').strip(),
+                'preview_issue_payload': str(item.get('preview_issue_payload', '') or '').strip(),
                 'submit_status': str(item.get('submit_status', '') or item.get('提交状态', '') or 'PENDING'),
                 'asin': str(item.get('asin', '') or item.get('ASIN', '') or '').strip(),
+                'submission_route': (
+                    'existing_asin'
+                    if str(item.get('asin', '') or item.get('ASIN', '') or '').strip()
+                    else ('existing_asin' if cell_text(item, col_map.get('asin', '')) else 'unknown')
+                ),
                 'submission_id': str(item.get('submission_id', '') or item.get('提交ID', '') or '').strip(),
                 'submit_time': str(item.get('submit_time', '') or item.get('提交时间', '') or '').strip(),
                 'submit_message': str(item.get('submit_message', '') or item.get('提交信息', '') or item.get('问题详情', '') or '').strip(),
+                'final_listing_status': '',
+                'discoverable': False,
+                'listing_issue_count': 0,
+                'offer_count': 0,
+                'fulfillment_count': 0,
                 'validation_status': str(item.get('validation_status', '') or '').strip(),
                 'validation_errors': str(item.get('validation_errors', '') or '').strip(),
                 'validation_warnings': str(item.get('validation_warnings', '') or '').strip(),
@@ -2699,6 +3399,7 @@ def get_products():
                 'listing_check_issues': str(item.get('listing_check_issues', '') or item.get('缺项诊断问题', '') or '').strip(),
                 'listing_check_time': str(item.get('listing_check_time', '') or item.get('缺项诊断时间', '') or '').strip(),
                 'listing_check_account': str(item.get('listing_check_account', '') or item.get('缺项诊断账号', '') or '').strip(),
+                'listing_check_payload': str(item.get('listing_check_payload', '') or '').strip(),
                 'template_id': str(item.get('template_id', '') or item.get('模板ID', '') or template_meta.get('template_id', '') or '').strip(),
                 'template_product_type': str(item.get('template_product_type', '') or item.get('模板产品类型', '') or template_summary.get('product_type', '') or '').strip(),
                 'template_variation_mode': str(item.get('template_variation_mode', '') or item.get('模板变体模式', '') or template_summary.get('variation_mode', '') or '').strip(),
@@ -2709,6 +3410,11 @@ def get_products():
                 'template_recommended_missing_fields': str(item.get('template_recommended_missing_fields', '') or item.get('模板建议补充字段', '') or '').strip(),
                 'template_blocking_issues': str(item.get('template_blocking_issues', '') or item.get('模板阻断问题', '') or '').strip(),
                 'template_ready_to_submit': str(item.get('template_ready_to_submit', '') or item.get('模板提交就绪', '') or '').strip(),
+                'ai_image_model': str(item.get('AI图片模型', '') or '').strip(),
+                'ai_image_protocol': str(item.get('AI图片协议', '') or '').strip(),
+                'ai_image_attempts': str(item.get('AI图片尝试次数', '') or '').strip(),
+                'ai_image_generated_at': str(item.get('AI图片生成时间', '') or '').strip(),
+                'ai_image_error': str(item.get('AI图片最后错误', '') or '').strip(),
                 '_raw': raw,
                 **{f'ai_image_{slot}': ai_image_result.get(f'ai_image_{slot}', '') for slot in range(2, 10)},
                 **{f'ai_image_{slot}_preview': ai_image_result.get(f'ai_image_{slot}_preview', '') for slot in range(2, 10)},
@@ -2748,7 +3454,7 @@ def serve_output_image(filename):
     if not filepath.startswith(allowed_dir + os.sep) and filepath != allowed_dir:
         return jsonify({'error': '非法文件路径'}), 400
     if os.path.exists(filepath):
-        return send_file(filepath, mimetype='image/jpeg')
+        return send_file(filepath)
     return jsonify({'error': '图片不存在'}), 404
 
 
@@ -2799,7 +3505,7 @@ def _apply_preview_results_to_file(input_file: str, headers: list, results: list
 def validate_fields():
     """上架前校验端点 — 检查必填字段、长度限制、格式等"""
     try:
-        data = request.json
+        data = request.json or {}
         input_file = data.get('input_file', '')
         selected_skus = data.get('skus', [])
         product_type_override = data.get('product_type', '')
@@ -2891,8 +3597,9 @@ def listing_check():
         selected_skus = [str(sku or '').strip() for sku in (data.get('skus', []) or []) if str(sku or '').strip()]
         account_id = str(data.get('account_id', '') or '').strip()
 
-        if not input_file or not os.path.exists(input_file):
-            return jsonify({'error': '文件不存在'}), 400
+        validated = _validate_file_path(input_file)
+        if not validated or not os.path.exists(validated):
+            return jsonify({'error': '文件不存在或路径非法'}), 400
         if not selected_skus:
             return jsonify({'error': '没有选中的SKU'}), 400
 
@@ -2966,7 +3673,7 @@ def listing_check():
 
 
 def _unique_upload_path(target_dir: str, original_name: str) -> str:
-    base_name = secure_filename(original_name or '') or f'upload_{uuid4().hex[:8]}.xlsx'
+    base_name = _sanitize_filename(original_name, fallback=f'upload_{uuid4().hex[:8]}.xlsx')
     stem, ext = os.path.splitext(base_name)
     ext = ext or '.xlsx'
     candidate = os.path.join(target_dir, base_name)
@@ -3047,6 +3754,7 @@ def _apply_template_results_to_file(input_file: str, headers: list, results: lis
             {
                 'status': result.get('preview', {}).get('status', ''),
                 'valid': str(result.get('preview', {}).get('status', '') or '').strip().upper() == 'VALID',
+                'issues': result.get('preview', {}).get('issues', []) or [],
                 'errors': [
                     issue.get('message', '')
                     for issue in (result.get('preview', {}).get('issues', []) or [])
@@ -3112,6 +3820,7 @@ def _execute_template_diagnosis(task_id: str, input_file: str, account_id: str =
         meta, template_definition = _load_template_definition_for_file(input_file)
         column_issues = _template_column_issues(headers, template_definition)
         template_column_lookup = _build_template_column_lookup(template_definition)
+        family_issues = evaluate_template_families(rows, template_definition, col_map=col_map)
 
         sku_col = col_map.get('sku', '')
         sku_set = {str(sku or '').strip() for sku in (selected_skus or []) if str(sku or '').strip()}
@@ -3140,6 +3849,15 @@ def _execute_template_diagnosis(task_id: str, input_file: str, account_id: str =
                 product['product_type'] = template_definition.get('product_type', '')
 
             template_eval = evaluate_template_row(row, template_definition, col_map=col_map)
+            family_messages = family_issues.get(sku, []) or []
+            if family_messages:
+                template_eval.setdefault('variation_issues', [])
+                template_eval.setdefault('blocking_issues', [])
+                for message in family_messages:
+                    if message not in template_eval['variation_issues']:
+                        template_eval['variation_issues'].append(message)
+                    if message not in template_eval['blocking_issues']:
+                        template_eval['blocking_issues'].append(message)
 
             _set_task_stage(task_id, stages[3], 4, stages, progress=idx - 1, total=len(rows), current_item=current_item)
             result = _run_listing_check_for_product(product, mapper=mapper, listings_api=listings_api)
@@ -3233,18 +3951,91 @@ def _execute_template_generation(task_id: str, product_type: str, variation_mode
         _fail_task_record(task_id, str(exc))
 
 
+def _normalize_parentage_level(value) -> str:
+    return str(value or '').strip().lower()
+
+
+def _prepare_submission_products(all_data: list, col_map: dict, skus: list, mapper,
+                                 template_definition: dict | None = None) -> tuple[list, list]:
+    rows_by_sku = {}
+    products_by_sku = {}
+    duplicate_skus = set()
+    for item in all_data:
+        product = mapper.map_excel_row(item, col_map)
+        sku = str(product.get('sku', '') or '').strip()
+        if not sku:
+            continue
+        if sku in products_by_sku:
+            duplicate_skus.add(sku)
+            continue
+        rows_by_sku[sku] = item
+        products_by_sku[sku] = product
+
+    ordered_products = []
+    blockers = []
+    for dup_sku in sorted(duplicate_skus):
+        blockers.append({
+            'sku': dup_sku,
+            'message': f'Excel 中存在重复 SKU "{dup_sku}"，仅保留第一行，请检查是否为误操作',
+        })
+    seen = set()
+    family_issues = evaluate_template_families(all_data, template_definition, col_map=col_map)
+
+    def add_blocker(sku: str, message: str):
+        message = str(message or '').strip()
+        sku = str(sku or '').strip() or 'N/A'
+        if not message:
+            return
+        entry = {'sku': sku, 'message': message}
+        if entry not in blockers:
+            blockers.append(entry)
+
+    def add_product(sku: str, requested_by: str = ''):
+        sku = str(sku or '').strip()
+        if not sku or sku in seen:
+            return
+
+        product = products_by_sku.get(sku)
+        if not product:
+            add_blocker(requested_by or sku, f'未在文件中找到 SKU {sku}')
+            return
+
+        for issue in family_issues.get(sku, []) or []:
+            add_blocker(requested_by or sku, issue)
+        if family_issues.get(sku):
+            return
+
+        parentage_level = _normalize_parentage_level(product.get('parentage_level'))
+        if parentage_level == 'child':
+            parent_sku = str(product.get('parent_sku', '') or '').strip()
+            if not parent_sku:
+                add_blocker(sku, '子体缺少 parent_sku，无法进行父子变体提交')
+                return
+            parent_product = products_by_sku.get(parent_sku)
+            if not parent_product:
+                add_blocker(sku, f'缺少父体行 {parent_sku}，无法进行父子变体提交')
+                return
+            if _normalize_parentage_level(parent_product.get('parentage_level')) != 'parent':
+                add_blocker(sku, f'父体 SKU {parent_sku} 未标记为 parent，无法进行父子变体提交')
+                return
+            add_product(parent_sku, requested_by=sku)
+
+        seen.add(sku)
+        ordered_products.append(product)
+
+    for sku in skus or []:
+        add_product(sku)
+
+    return ordered_products, blockers
+
+
 def _run_submit_operation(input_file: str, skus: list, preview: bool = True, account_id: str = '',
                           progress_callback=None) -> dict:
     processor = ExcelProcessor()
     all_data = processor.read_input(input_file)
     col_map = processor.detect_columns()
     headers = list(processor.headers)
-
-    sku_col = col_map.get('sku', '')
-    sku_set = set(skus or [])
-    matched = [item for item in all_data if str(item.get(sku_col, '') or item.get('SKU', '')).strip() in sku_set]
-    if not matched:
-        raise ValueError(f'未匹配到{len(skus)}个SKU')
+    _template_meta, template_definition = _load_template_definition_for_file(input_file)
 
     def emit(stage_name: str, done: int, total: int, current_item: str):
         if progress_callback:
@@ -3253,7 +4044,7 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
     results = []
 
     if preview:
-        emit('读取商品文件', 0, len(matched), '准备预览验证')
+        emit('读取商品文件', 0, len(skus or []), '准备预览验证')
         from amazon.accounts import AccountManager
         from amazon.auth import AmazonAuth
         from amazon.listings import ListingsAPI
@@ -3276,11 +4067,22 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
                 marketplace_id=acc.get('marketplace_id', 'ATVPDKIKX0DER'),
             )
 
-        total = len(matched)
-        for idx, item in enumerate(matched, start=1):
-            product = mapper.map_excel_row(item, col_map)
+        prepared_products, blockers = _prepare_submission_products(all_data, col_map, skus, mapper, template_definition=template_definition)
+        if not prepared_products and not blockers:
+            raise ValueError(f'未匹配到{len(skus)}个SKU')
+        for blocker in blockers:
+            results.append({
+                'sku': blocker.get('sku', 'N/A'),
+                'valid': False,
+                'errors': [blocker.get('message', '变体提交流程检查未通过')],
+                'warnings': [],
+                'source': 'local',
+            })
+
+        total = len(prepared_products) + len(blockers)
+        for idx, product in enumerate(prepared_products, start=1):
             sku = product.get('sku', '')
-            emit('本地字段校验', idx - 1, total, sku)
+            emit('本地字段校验', idx - 1 + len(blockers), total, sku)
             validation = mapper.validate_required_fields(product)
 
             if not validation['valid'] or listings_api is None:
@@ -3296,10 +4098,11 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
             emit('调用 Amazon 预览', idx - 1, total, sku)
             preview_result = listings_api.put_listings_item(sku, product, preview=True)
             issues = preview_result.get('issues', []) or []
+            normalized_issues = [_normalize_diagnostic_issue(issue, 'amazon_preview') for issue in issues]
             errors = list(validation['errors'])
             warnings = list(validation['warnings'])
 
-            for issue in issues:
+            for issue in normalized_issues:
                 message = issue.get('message', '')
                 severity = str(issue.get('severity', '')).upper()
                 if severity == 'ERROR':
@@ -3317,6 +4120,7 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
                 'warnings': warnings,
                 'source': 'amazon_preview',
                 'status': preview_status or 'UNKNOWN',
+                'issues': normalized_issues,
             })
             time.sleep(1.0)
 
@@ -3338,7 +4142,7 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
             'message': f'预校验完成: {valid_count}/{len(results)} 个商品可提交',
         }
 
-    emit('读取商品文件', 0, len(matched), '准备正式提交')
+    emit('读取商品文件', 0, len(skus or []), '准备正式提交')
     from amazon.accounts import AccountManager
     from amazon.auth import AmazonAuth
     from amazon.listings import ListingsAPI
@@ -3361,14 +4165,27 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
         marketplace_id=acc.get('marketplace_id', 'ATVPDKIKX0DER'),
     )
 
-    total = len(matched)
+    prepared_products, blockers = _prepare_submission_products(all_data, col_map, skus, mapper, template_definition=template_definition)
+    if not prepared_products and not blockers:
+        raise ValueError(f'未匹配到{len(skus)}个SKU')
+
+    for blocker in blockers:
+        result_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        results.append({
+            'sku': blocker.get('sku', 'N/A'),
+            'status': 'PREVIEW_BLOCKED',
+            'submit_time': result_time,
+            'message': blocker.get('message', '变体提交流程检查未通过'),
+            'issues': [{'severity': 'ERROR', 'message': blocker.get('message', '变体提交流程检查未通过')}],
+        })
+
+    total = len(prepared_products) + len(blockers)
     precheck_results = []
-    for idx, item in enumerate(matched, start=1):
-        product = mapper.map_excel_row(item, col_map)
+    for idx, product in enumerate(prepared_products, start=1):
         sku = product.get('sku', '')
         result_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        emit('提交门禁检查', idx - 1, total, sku)
+        emit('提交门禁检查', idx - 1 + len(blockers), total, sku)
         precheck_result = _run_listing_check_for_product(
             product,
             mapper=mapper,
@@ -3391,17 +4208,19 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
         try:
             submit_result = listings_api.put_listings_item(sku, product, preview=False)
             status = submit_result.get('status', 'UNKNOWN')
+            asin = str(submit_result.get('asin', '') or '').strip()
+            if not asin:
+                asin = listings_api.resolve_submission_asin(sku, submit_result)
             result_entry = {
                 'sku': sku,
                 'status': status,
+                'submission_route': _infer_submission_route(product, submit_result),
                 'submit_time': result_time,
                 'submission_id': submit_result.get('submissionId', ''),
                 'issues': submit_result.get('issues', []),
             }
-            for ident in submit_result.get('identifiers', []):
-                if ident.get('asin'):
-                    result_entry['asin'] = ident['asin']
-                    break
+            if asin:
+                result_entry['asin'] = asin
             results.append(result_entry)
             time.sleep(0.5)
         except Exception as submit_err:
@@ -3426,6 +4245,7 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
     submission_record = {
         'timestamp': datetime.now().isoformat(),
         'account': acc.get('name', acc.get('seller_id', '')),
+        'marketplace': acc.get('marketplace_name', acc.get('marketplace_id', '')),
         'total': len(results),
         'accepted': accepted,
         'failed': failed,
@@ -3456,6 +4276,8 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
     return {
         'success': True,
         'mode': 'submit',
+        'account': acc.get('name', acc.get('seller_id', '')),
+        'marketplace': acc.get('marketplace_name', acc.get('marketplace_id', '')),
         'total': len(results),
         'accepted': accepted,
         'failed': failed,
@@ -3512,6 +4334,35 @@ def api_template_recommend():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/templates/manual-search', methods=['POST'])
+def api_template_manual_search():
+    """按官方类目关键词搜索 Amazon product type。"""
+    data = request.json or {}
+    try:
+        result = manual_search_product_types(
+            keyword=str(data.get('keyword', '') or '').strip(),
+            marketplace=DEFAULT_MARKETPLACE,
+        )
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/templates/validate', methods=['POST'])
+def api_template_validate():
+    """验证当前选择的官方模板是否可用。"""
+    data = request.json or {}
+    try:
+        result = validate_product_type_candidate(
+            product_type=str(data.get('product_type', '') or '').strip(),
+            marketplace=str(data.get('marketplace', DEFAULT_MARKETPLACE) or DEFAULT_MARKETPLACE).strip().upper(),
+            variation_mode=str(data.get('variation_mode', 'single') or 'single').strip().lower(),
+        )
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/templates/generate', methods=['POST'])
 def api_templates_generate():
     """异步生成美国站官方模板。"""
@@ -3521,6 +4372,14 @@ def api_templates_generate():
     variation_mode = 'variation' if variation_mode == 'variation' else 'single'
     if not product_type:
         return jsonify({'error': '请先选择 product_type'}), 400
+
+    validation = validate_product_type_candidate(
+        product_type=product_type,
+        marketplace=DEFAULT_MARKETPLACE,
+        variation_mode=variation_mode,
+    )
+    if not validation.get('usable'):
+        return jsonify({'error': validation.get('message', '当前模板不可用')}), 400
 
     task = _start_task_record(
         kind='template_generate',
@@ -3572,7 +4431,7 @@ def api_template_upload():
         return jsonify({'error': '仅支持 .xlsx 或 .xls 文件'}), 400
 
     os.makedirs(config.INPUT_DIR, exist_ok=True)
-    filepath = _unique_upload_path(config.INPUT_DIR, original_filename)
+    filepath = _unique_upload_path(config.INPUT_DIR, _sanitize_filename(original_filename))
     upload.save(filepath)
 
     try:
@@ -3621,8 +4480,9 @@ def api_template_diagnose():
     input_file = str(data.get('input_file', '') or data.get('file', '') or '').strip()
     account_id = str(data.get('account_id', '') or '').strip()
     skus = [str(sku or '').strip() for sku in (data.get('skus', []) or []) if str(sku or '').strip()]
-    if not input_file or not os.path.exists(input_file):
-        return jsonify({'error': '输入文件不存在'}), 400
+    validated = _validate_file_path(input_file)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '输入文件不存在或路径非法'}), 400
 
     task = _start_task_record(
         kind='template_diagnose',
@@ -3709,7 +4569,7 @@ def api_generate_template():
 def export_excel():
     """导出处理后的Excel — 支持SP-API格式和对比格式"""
     try:
-        data = request.json
+        data = request.json or {}
         input_file = data.get('input_file', '') or data.get('file', '')
         export_format = str(data.get('format', 'comparison') or 'comparison').strip()
         export_format = {
@@ -3719,8 +4579,9 @@ def export_excel():
         }.get(export_format, export_format)
         selected_skus = data.get('selected_skus', [])
 
-        if not input_file or not os.path.exists(input_file):
-            return jsonify({'error': '输入文件不存在'}), 400
+        validated = _validate_file_path(input_file)
+        if not validated or not os.path.exists(validated):
+            return jsonify({'error': '输入文件不存在或路径非法'}), 400
 
         if export_format not in ('sp-api', 'comparison'):
             return jsonify({'error': f'无效的导出格式: {export_format}，支持 sp-api 或 comparison'}), 400
@@ -3900,17 +4761,19 @@ def delete_account():
 @app.route('/api/submit', methods=['POST'])
 def submit_to_amazon():
     """提交商品到亚马逊 (预览验证或正式提交)"""
-    try:
-        data = request.json
-        skus = data.get('skus', [])
-        input_file = data.get('file', '')
-        preview = data.get('preview', True)
-        account_id = data.get('account_id', '')
+    data = request.json or {}
+    skus = data.get('skus', [])
+    input_file = data.get('file', '')
+    preview = data.get('preview', True)
+    account_id = data.get('account_id', '')
 
-        if not skus:
-            return jsonify({'error': '没有选中的SKU'}), 400
-        if not input_file or not os.path.exists(input_file):
-            return jsonify({'error': '文件不存在'}), 400
+    if not skus:
+        return jsonify({'error': '没有选中的SKU'}), 400
+    validated = _validate_file_path(input_file)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '文件不存在或路径非法'}), 400
+
+    try:
         payload = _run_submit_operation(
             input_file=input_file,
             skus=skus,
@@ -3969,8 +4832,9 @@ def submit_to_amazon_task():
 
     if not skus:
         return jsonify({'error': '没有选中的SKU'}), 400
-    if not input_file or not os.path.exists(input_file):
-        return jsonify({'error': '文件不存在'}), 400
+    validated = _validate_file_path(input_file)
+    if not validated or not os.path.exists(validated):
+        return jsonify({'error': '文件不存在或路径非法'}), 400
 
     title = 'Amazon 预览验证' if preview else '正式提交到亚马逊'
     stages = ['解析文件', '本地校验', 'Amazon 预览'] if preview else ['解析文件', '提交门禁检查', '正式提交']
@@ -4028,7 +4892,7 @@ def submission_history():
 def update_field():
     """更新单个商品字段 (内联编辑)"""
     try:
-        data = request.json
+        data = request.json or {}
         input_file = data.get('file', '')
         sku = data.get('sku', '')
         field = data.get('field', '')
@@ -4036,8 +4900,9 @@ def update_field():
 
         if not all([input_file, sku, field]):
             return jsonify({'error': '参数不完整'}), 400
-        if not os.path.exists(input_file):
-            return jsonify({'error': '文件不存在'}), 400
+        validated = _validate_file_path(input_file)
+        if not validated or not os.path.exists(validated):
+            return jsonify({'error': '文件不存在或路径非法'}), 400
 
         processor = ExcelProcessor()
         processor.read_input(input_file)
@@ -4054,26 +4919,22 @@ def update_field():
 def update_product():
     """批量更新单个商品的多个字段。"""
     try:
-        data = request.json
+        data = request.json or {}
         input_file = data.get('file', '')
         sku = data.get('sku', '')
         updates = dict(data.get('updates') or {})
 
         if not input_file or not sku or not updates:
             return jsonify({'error': '参数不完整'}), 400
-        if not os.path.exists(input_file):
-            return jsonify({'error': '文件不存在'}), 400
+        validated = _validate_file_path(input_file)
+        if not validated or not os.path.exists(validated):
+            return jsonify({'error': '文件不存在或路径非法'}), 400
 
         processor = ExcelProcessor()
         processor.read_input(input_file)
         col_map = processor.detect_columns()
 
-        mapped_updates = {}
-        for field, value in updates.items():
-            if field is None or str(field).strip() == '':
-                continue
-            header_name = _logical_field_to_excel_header(str(field), col_map)
-            mapped_updates[header_name] = value
+        mapped_updates = _map_logical_updates(col_map, updates)
 
         if not mapped_updates:
             return jsonify({'error': '没有可更新的字段'}), 400
@@ -4085,9 +4946,316 @@ def update_product():
         return jsonify({'error': str(e)}), 500
 
 
+def _map_logical_updates(col_map: dict, updates: dict) -> dict:
+    mapped_updates = {}
+    for field, value in dict(updates or {}).items():
+        if field is None or str(field).strip() == '':
+            continue
+        header_name = _logical_field_to_excel_header(str(field), col_map)
+        mapped_updates[header_name] = value
+    return mapped_updates
+
+
+def _map_logical_row(col_map: dict, row_data: dict) -> dict:
+    mapped = {}
+    for field, value in dict(row_data or {}).items():
+        if field is None or str(field).strip() == '':
+            continue
+        header_name = _logical_field_to_excel_header(str(field), col_map)
+        mapped[header_name] = value
+    return mapped
+
+
+@app.route('/api/update-family', methods=['POST'])
+def update_family():
+    """批量更新同一家族中的多个 SKU。"""
+    try:
+        data = request.json or {}
+        input_file = data.get('file', '')
+        updates_by_sku = dict(data.get('updates_by_sku') or {})
+
+        if not input_file or not updates_by_sku:
+            return jsonify({'error': '参数不完整'}), 400
+        validated = _validate_file_path(input_file)
+        if not validated or not os.path.exists(validated):
+            return jsonify({'error': '文件不存在或路径非法'}), 400
+
+        processor = ExcelProcessor()
+        processor.read_input(input_file)
+        col_map = processor.detect_columns()
+
+        mapped_by_sku = {}
+        for sku, updates in updates_by_sku.items():
+            sku_text = str(sku or '').strip()
+            if not sku_text:
+                continue
+            mapped_updates = _map_logical_updates(col_map, updates)
+            if mapped_updates:
+                mapped_by_sku[sku_text] = mapped_updates
+
+        if not mapped_by_sku:
+            return jsonify({'error': '没有可更新的字段'}), 400
+
+        _persist_bulk_row_updates(input_file, mapped_by_sku)
+        return jsonify({'success': True, 'updated_skus': list(mapped_by_sku.keys())})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/append-family-rows', methods=['POST'])
+def append_family_rows():
+    """向当前 Excel 追加多个变体家族行。"""
+    try:
+        data = request.json or {}
+        input_file = data.get('file', '')
+        rows = list(data.get('rows') or [])
+
+        if not input_file or not rows:
+            return jsonify({'error': '参数不完整'}), 400
+        validated = _validate_file_path(input_file)
+        if not validated or not os.path.exists(validated):
+            return jsonify({'error': '文件不存在或路径非法'}), 400
+
+        processor = ExcelProcessor()
+        existing_rows = processor.read_input(input_file)
+        col_map = processor.detect_columns()
+
+        existing_skus = set()
+        sku_header = col_map.get('sku', '')
+        for row in existing_rows:
+            sku = str(row.get(sku_header, '') or row.get('SKU', '') or '').strip()
+            if sku:
+                existing_skus.add(sku)
+
+        mapped_rows = []
+        new_skus = set()
+        for row in rows:
+            logical_row = dict(row or {})
+            sku = str(logical_row.get('sku', '') or '').strip()
+            if not sku:
+                return jsonify({'error': '新增子体缺少 SKU'}), 400
+            if sku in existing_skus or sku in new_skus:
+                return jsonify({'error': f'SKU 已存在: {sku}'}), 400
+            new_skus.add(sku)
+            mapped_rows.append(_map_logical_row(col_map, logical_row))
+
+        _append_rows(input_file, mapped_rows)
+        return jsonify({'success': True, 'added': len(mapped_rows), 'skus': sorted(new_skus)})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # ===== SP-API 品类字段注册表 =====
 
 _field_registry = None
+
+FORM_SECTION_META = {
+    'meta': {'title_zh': '基础信息', 'title_en': 'Core Info', 'icon': '🧩'},
+    'identity': {'title_zh': '商品身份', 'title_en': 'Identity', 'icon': '🏷️'},
+    'variation': {'title_zh': '变体信息', 'title_en': 'Variation', 'icon': '🔀'},
+    'offer': {'title_zh': '销售与库存', 'title_en': 'Offer', 'icon': '💵'},
+    'content': {'title_zh': '文案内容', 'title_en': 'Content', 'icon': '📝'},
+    'images': {'title_zh': '图片与媒体', 'title_en': 'Images', 'icon': '🖼️'},
+    'shipping': {'title_zh': '尺寸包装', 'title_en': 'Shipping', 'icon': '📦'},
+    'compliance': {'title_zh': '合规信息', 'title_en': 'Compliance', 'icon': '🛡️'},
+    'other': {'title_zh': '其他属性', 'title_en': 'Other', 'icon': '📚'},
+}
+
+FORM_SECTION_ORDER = ['meta', 'identity', 'variation', 'offer', 'content', 'images', 'shipping', 'compliance', 'other']
+FORM_TEXTAREA_FIELDS = {'product_description', 'generic_keywords', 'bullet_point_1', 'bullet_point_2', 'bullet_point_3', 'bullet_point_4', 'bullet_point_5', 'special_feature', 'included_components', 'assembly_instructions', 'warranty_description', 'recommended_uses_for_product'}
+FORM_NUMERIC_FIELDS = {'standard_price', 'list_price', 'quantity', 'max_order_quantity', 'item_weight', 'package_weight', 'item_length', 'item_width', 'item_height', 'package_length', 'package_width', 'package_height', 'number_of_items', 'number_of_shelves', 'item_package_quantity', 'unit_count'}
+FORM_IMAGE_LOCATOR_FIELDS = {'main_image_url', 'other_image_url_1', 'other_image_url_2', 'other_image_url_3', 'other_image_url_4', 'other_image_url_5', 'other_image_url_6', 'other_image_url_7', 'other_image_url_8'}
+FORM_MEASUREMENT_GROUPS = {
+    'item_weight': ['item_weight', 'item_weight_unit'],
+    'package_weight': ['package_weight', 'package_weight_unit'],
+}
+FORM_DIMENSION_GROUPS = {
+    'item_dimensions': ['item_length', 'item_width', 'item_height', 'dimension_unit'],
+    'package_dimensions': ['package_length', 'package_width', 'package_height', 'dimension_unit'],
+}
+FORM_HIDDEN_KEYS = {
+    'main_offer_image_locator',
+    'other_offer_image_locator_1',
+    'other_offer_image_locator_2',
+    'other_offer_image_locator_3',
+    'other_offer_image_locator_4',
+    'other_offer_image_locator_5',
+    'item_dimensions',
+    'item_width_height',
+    'item_depth_width_height',
+    'item_package_dimensions',
+    'item_package_weight',
+    'item_weight',
+    'item_display_dimensions',
+    'item_display_weight',
+    'merchant_suggested_asin',
+    'submission_id',
+}
+
+
+def _infer_form_field_type(column: dict) -> str:
+    key = str(column.get('key', '') or '').strip()
+    enum_values = list(column.get('enum_values') or [])
+    if enum_values:
+        normalized = {str(item).lower() for item in enum_values}
+        if normalized == {'true', 'false'}:
+            return 'boolean'
+        return 'select'
+    if key in FORM_IMAGE_LOCATOR_FIELDS:
+        return 'image_locator'
+    if key in FORM_TEXTAREA_FIELDS:
+        return 'textarea'
+    if key in FORM_NUMERIC_FIELDS:
+        return 'number'
+    if key.endswith('_date') or key in {'merchant_release_date', 'street_date', 'product_site_launch_date'}:
+        return 'date'
+    return 'text'
+
+
+def _build_form_schema(definition: dict) -> dict:
+    sections = []
+    columns = list(definition.get('columns', []) or [])
+    all_by_key = {
+        str(column.get('key', '') or '').strip(): column
+        for column in columns
+        if str(column.get('key', '') or '').strip()
+    }
+    grouped = {key: [] for key in FORM_SECTION_ORDER}
+    for column in columns:
+        key = str(column.get('key', '') or '').strip()
+        if not key or key in FORM_HIDDEN_KEYS:
+            continue
+        group = str(column.get('group', 'other') or 'other').strip() or 'other'
+        if group not in grouped:
+            grouped[group] = []
+        grouped[group].append({
+            'key': key,
+            'label_zh': str(column.get('label_zh', '') or column.get('key', '') or '').strip(),
+            'label_en': str(column.get('label_en', '') or column.get('key', '') or '').strip(),
+            'group': group,
+            'level': str(column.get('level', 'optional') or 'optional').strip(),
+            'description': str(column.get('description', '') or '').strip(),
+            'example': str(column.get('example', '') or '').strip(),
+            'default': column.get('default', ''),
+            'enum_values': list(column.get('enum_values') or []),
+            'requirement_note': str(column.get('requirement_note', '') or '').strip(),
+            'field_type': _infer_form_field_type(column),
+            'source_attribute': str(column.get('source_attribute', '') or column.get('key', '') or '').strip(),
+        })
+
+    for group in FORM_SECTION_ORDER + [key for key in grouped.keys() if key not in FORM_SECTION_ORDER]:
+        fields = grouped.get(group) or []
+        if not fields:
+            continue
+        meta = FORM_SECTION_META.get(group, {'title_zh': group, 'title_en': group.title(), 'icon': '📄'})
+        sections.append({
+            'key': group,
+            'title_zh': meta['title_zh'],
+            'title_en': meta['title_en'],
+            'icon': meta['icon'],
+            'fields': fields,
+        })
+
+    for section in sections:
+        raw_fields = section['fields']
+        grouped_fields = []
+        consumed = set()
+        by_key = {field['key']: field for field in raw_fields}
+
+        for group_key, members in {**FORM_MEASUREMENT_GROUPS, **FORM_DIMENSION_GROUPS}.items():
+            present = [by_key.get(member) for member in members if by_key.get(member)]
+            if len(present) != len(members):
+                continue
+            if any(member in consumed for member in members):
+                continue
+            base_field = present[0]
+            grouped_fields.append({
+                'key': group_key,
+                'label_zh': '商品重量' if group_key == 'item_weight' else (
+                    '包装重量' if group_key == 'package_weight' else (
+                        '商品尺寸' if group_key == 'item_dimensions' else '包装尺寸'
+                    )
+                ),
+                'label_en': 'Item Weight' if group_key == 'item_weight' else (
+                    'Package Weight' if group_key == 'package_weight' else (
+                        'Item Dimensions' if group_key == 'item_dimensions' else 'Package Dimensions'
+                    )
+                ),
+                'group': section['key'],
+                'level': base_field['level'],
+                'description': base_field['description'],
+                'example': base_field['example'],
+                'default': '',
+                'enum_values': [],
+                'requirement_note': base_field['requirement_note'],
+                'field_type': 'measurement' if group_key in FORM_MEASUREMENT_GROUPS else 'dimension_3d',
+                'source_attribute': group_key,
+                'children': present,
+            })
+            consumed.update(members)
+
+        for field in raw_fields:
+            if field['key'] in consumed:
+                continue
+            grouped_fields.append(field)
+
+        if section['key'] == 'shipping':
+            if 'item_depth_width_height' in all_by_key and 'item_dimensions' not in {field['key'] for field in grouped_fields}:
+                base_field = all_by_key['item_depth_width_height']
+                grouped_fields.append({
+                    'key': 'item_dimensions',
+                    'label_zh': '商品尺寸',
+                    'label_en': 'Item Dimensions',
+                    'group': section['key'],
+                    'level': str(base_field.get('level', 'optional') or 'optional').strip(),
+                    'description': str(base_field.get('description', '') or '').strip(),
+                    'example': str(base_field.get('example', '') or '').strip(),
+                    'default': '',
+                    'enum_values': [],
+                    'requirement_note': str(base_field.get('requirement_note', '') or '').strip(),
+                    'field_type': 'dimension_3d',
+                    'source_attribute': 'item_depth_width_height',
+                    'children': [
+                        {'key': 'item_length', 'label_zh': '长度', 'label_en': 'Length', 'field_type': 'number', 'example': ''},
+                        {'key': 'item_width', 'label_zh': '宽度', 'label_en': 'Width', 'field_type': 'number', 'example': ''},
+                        {'key': 'item_height', 'label_zh': '高度', 'label_en': 'Height', 'field_type': 'number', 'example': ''},
+                        {'key': 'dimension_unit', 'label_zh': '尺寸单位', 'label_en': 'Unit', 'field_type': 'text', 'example': 'inches'},
+                    ],
+                })
+            if 'item_weight' in all_by_key and 'item_weight' not in {field['key'] for field in grouped_fields}:
+                base_field = all_by_key['item_weight']
+                grouped_fields.append({
+                    'key': 'item_weight',
+                    'label_zh': '商品重量',
+                    'label_en': 'Item Weight',
+                    'group': section['key'],
+                    'level': str(base_field.get('level', 'optional') or 'optional').strip(),
+                    'description': str(base_field.get('description', '') or '').strip(),
+                    'example': str(base_field.get('example', '') or '').strip(),
+                    'default': '',
+                    'enum_values': [],
+                    'requirement_note': str(base_field.get('requirement_note', '') or '').strip(),
+                    'field_type': 'measurement',
+                    'source_attribute': 'item_weight',
+                    'children': [
+                        {'key': 'item_weight', 'label_zh': '数值', 'label_en': 'Value', 'field_type': 'number', 'example': ''},
+                        {'key': 'item_weight_unit', 'label_zh': '单位', 'label_en': 'Unit', 'field_type': 'text', 'example': 'pounds'},
+                    ],
+                })
+        section['fields'] = grouped_fields
+
+    return {
+        'template_id': str(definition.get('template_id', '') or '').strip(),
+        'product_type': str(definition.get('product_type', '') or '').strip(),
+        'marketplace': str(definition.get('marketplace', DEFAULT_MARKETPLACE) or DEFAULT_MARKETPLACE).strip(),
+        'variation_mode': str(definition.get('variation_mode', 'single') or 'single').strip(),
+        'required_total': int(definition.get('required_total', 0) or 0),
+        'recommended_total': int(definition.get('recommended_total', 0) or 0),
+        'column_count': len(columns),
+        'sections': sections,
+    }
 
 def _load_field_registry():
     """加载品类字段注册表"""
@@ -4142,11 +5310,36 @@ def selected_fields():
                 return jsonify({'success': True, 'config': json.load(f)})
         return jsonify({'success': True, 'config': {'category': '', 'fields': []}})
     # POST - 保存
-    data = request.json
+    data = request.json or {}
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     return jsonify({'success': True, 'message': '品类字段配置已保存'})
+
+
+@app.route('/api/form-schema')
+def api_form_schema():
+    """返回当前 product_type 的动态表单定义，来源于官方模板定义。"""
+    template_id = str(request.args.get('template_id', '') or '').strip()
+    product_type = str(request.args.get('product_type', '') or '').strip()
+    marketplace = str(request.args.get('marketplace', DEFAULT_MARKETPLACE) or DEFAULT_MARKETPLACE).strip()
+    variation_mode = str(request.args.get('variation_mode', 'single') or 'single').strip()
+
+    if not template_id and not product_type:
+        return jsonify({'error': '请提供 template_id 或 product_type'}), 400
+
+    try:
+        if template_id:
+            definition = load_template_definition(template_id)
+        else:
+            definition = ensure_template_definition(
+                product_type=product_type,
+                marketplace=marketplace,
+                variation_mode=variation_mode,
+            )
+        return jsonify({'success': True, 'schema': _build_form_schema(definition)})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
 
 
 if __name__ == '__main__':

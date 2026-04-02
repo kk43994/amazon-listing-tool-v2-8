@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 
 from config import get_config
 from core.excel.processor import ExcelProcessor
+from core.utils import filter_rows
 from amazon.auth import AmazonAuth
 from amazon.listings import ListingsAPI
 from amazon.feeds import FeedsAPI
@@ -49,7 +50,8 @@ class Stage2Pipeline:
 
     def run(self, input_file: str, output_file: str = None,
             mode: str = 'individual', preview: bool = False,
-            rows: Optional[str] = None):
+            rows: Optional[str] = None,
+            preview_before_submit: bool = True):
         """
         运行第二阶段提交
 
@@ -59,6 +61,7 @@ class Stage2Pipeline:
             mode: 提交模式 ('individual' 逐条 | 'batch' 批量Feed)
             preview: 预览模式（不实际提交）
             rows: 行范围 (如 "1-10")
+            preview_before_submit: 正式提交前是否先做 Amazon 预览门禁
         """
         if not output_file:
             timestamp = time.strftime('%Y%m%d_%H%M%S')
@@ -69,6 +72,8 @@ class Stage2Pipeline:
         logger.info(f"🚀 第二阶段启动 {'[预览模式]' if preview else ''}")
         logger.info(f"  输入: {input_file}")
         logger.info(f"  模式: {mode}")
+        if not preview:
+            logger.info(f"  提交前预览门禁: {'✅' if preview_before_submit else '❌'}")
 
         # 检查SP-API凭证
         if not preview:
@@ -79,7 +84,7 @@ class Stage2Pipeline:
 
         # 2. 行范围过滤
         if rows:
-            data = self._filter_rows(data, rows)
+            data = filter_rows(data, rows)
 
         self.stats['total'] = len(data)
 
@@ -128,16 +133,16 @@ class Stage2Pipeline:
         # 4. 提交
         results = []
         if mode == 'individual':
-            results = self._submit_individual(products)
+            results = self._submit_individual(products, preview_before_submit=preview_before_submit)
         elif mode == 'batch':
-            results = self._submit_batch(products)
+            results = self._submit_batch(products, preview_before_submit=preview_before_submit)
 
         # 5. 生成报告
         self._generate_report(data, results, output_file)
 
         # 6. 统计
         logger.info(f"\n{'='*50}")
-        logger.info(f"🎉 第二阶段完成!")
+        logger.info("🎉 第二阶段完成!")
         logger.info(f"  总计: {self.stats['total']}")
         logger.info(f"  成功: {self.stats['success']}")
         logger.info(f"  失败: {self.stats['failed']}")
@@ -164,21 +169,49 @@ class Stage2Pipeline:
                 f"请在 .env 文件中配置"
             )
 
-    def _filter_rows(self, data: List[Dict], rows: str) -> List[Dict]:
-        """根据行范围过滤数据"""
-        try:
-            if '-' in rows:
-                start, end = rows.split('-')
-                start, end = int(start) - 1, int(end)
-                return data[start:end]
-            else:
-                idx = int(rows) - 1
-                return [data[idx]]
-        except (ValueError, IndexError) as e:
-            logger.error(f"行范围解析错误: {rows} → {e}")
-            return data
+    def _build_validation_failure(self, sku: str, validation: Dict) -> Dict:
+        return {
+            'sku': sku,
+            'status': 'VALIDATION_ERROR',
+            'issues': [{'severity': 'ERROR', 'message': message} for message in validation.get('errors', [])],
+            'warnings': validation.get('warnings', []),
+        }
 
-    def _submit_individual(self, products: List[Dict]) -> List[Dict]:
+    def _build_preview_failure(self, sku: str, preview_result: Dict) -> Dict:
+        issues = preview_result.get('issues', []) or []
+        normalized_issues = []
+        has_error = False
+        for issue in issues:
+            message = str(issue.get('message', '') or '').strip()
+            severity = str(issue.get('severity', '') or 'INFO').upper()
+            normalized_issues.append({
+                'severity': severity,
+                'code': str(issue.get('code', '') or '').strip(),
+                'message': message,
+            })
+            if severity == 'ERROR':
+                has_error = True
+
+        preview_status = str(preview_result.get('status', '') or '').strip().upper()
+        if not normalized_issues:
+            normalized_issues = [{
+                'severity': 'ERROR',
+                'code': '',
+                'message': f'Amazon 预览未通过: {preview_status or "UNKNOWN"}',
+            }]
+            has_error = True
+
+        status = 'PREVIEW_INVALID' if preview_status == 'INVALID' else f'PREVIEW_{preview_status or "ERROR"}'
+        if preview_status == 'VALID' and not has_error:
+            status = 'VALID'
+
+        return {
+            'sku': sku,
+            'status': status,
+            'issues': normalized_issues,
+        }
+
+    def _submit_individual(self, products: List[Dict], preview_before_submit: bool = True) -> List[Dict]:
         """逐条提交 (使用Listings API)"""
         results = []
         for idx, product in enumerate(products):
@@ -190,12 +223,34 @@ class Stage2Pipeline:
             logger.info(f"\n📦 提交 {idx+1}/{len(products)}: SKU={sku}")
 
             try:
+                validation = self.mapper.validate_required_fields(product)
+                if not validation['valid']:
+                    self.stats['failed'] += 1
+                    logger.warning(f"  ⚠️ 跳过提交，本地校验未通过: {validation['errors']}")
+                    results.append(self._build_validation_failure(sku, validation))
+                    continue
+
+                if preview_before_submit:
+                    preview_result = self.listings.put_listings_item(sku, product, preview=True)
+                    preview_status = str(preview_result.get('status', '') or '').strip().upper()
+                    preview_issues = preview_result.get('issues', []) or []
+                    preview_has_error = any(
+                        str(issue.get('severity', '') or '').upper() == 'ERROR'
+                        for issue in preview_issues
+                    )
+                    if preview_status != 'VALID' or preview_has_error:
+                        self.stats['failed'] += 1
+                        logger.warning(f"  ⚠️ 跳过正式提交，Amazon 预览未通过: {preview_status or 'UNKNOWN'}")
+                        results.append(self._build_preview_failure(sku, preview_result))
+                        continue
+                    time.sleep(0.3)
+
                 result = self.listings.put_listings_item(sku, product)
                 status = result.get('status', 'UNKNOWN')
 
                 if status == 'ACCEPTED':
                     self.stats['success'] += 1
-                    logger.info(f"  ✅ 已接收")
+                    logger.info("  ✅ 已接收")
                 else:
                     self.stats['failed'] += 1
                     logger.warning(f"  ⚠️ 状态: {status}")
@@ -222,24 +277,50 @@ class Stage2Pipeline:
 
         return results
 
-    def _submit_batch(self, products: List[Dict]) -> List[Dict]:
+    def _submit_batch(self, products: List[Dict], preview_before_submit: bool = True) -> List[Dict]:
         """批量提交 (使用Feeds API)"""
         # 构建Feed items
+        preflight_results = []
         feed_items = []
         for product in products:
-            if not product.get('sku'):
+            sku = product.get('sku')
+            if not sku:
                 self.stats['skipped'] += 1
                 continue
 
+            validation = self.mapper.validate_required_fields(product)
+            if not validation['valid']:
+                logger.warning(f"⚠️ 跳过批量提交 SKU={sku}，本地校验未通过")
+                preflight_results.append(self._build_validation_failure(sku, validation))
+                continue
+
+            if preview_before_submit:
+                preview_result = self.listings.put_listings_item(sku, product, preview=True)
+                preview_status = str(preview_result.get('status', '') or '').strip().upper()
+                preview_issues = preview_result.get('issues', []) or []
+                preview_has_error = any(
+                    str(issue.get('severity', '') or '').upper() == 'ERROR'
+                    for issue in preview_issues
+                )
+                if preview_status != 'VALID' or preview_has_error:
+                    logger.warning(f"⚠️ 跳过批量提交 SKU={sku}，Amazon 预览未通过: {preview_status or 'UNKNOWN'}")
+                    preflight_results.append(self._build_preview_failure(sku, preview_result))
+                    continue
+                time.sleep(0.3)
+
+            body = self.mapper.build_put_body(product)
             feed_items.append({
-                'sku': product['sku'],
-                'product_type': product.get('product_type', 'PRODUCT'),
-                'attributes': self.mapper.build_listing_attributes(product),
+                'sku': sku,
+                'product_type': body.get('productType', product.get('product_type', 'PRODUCT')),
+                'requirements': body.get('requirements', 'LISTING'),
+                'attributes': body.get('attributes', {}),
             })
 
         if not feed_items:
-            logger.warning("⚠️ 没有有效商品可提交")
-            return []
+            self.stats['success'] = 0
+            self.stats['failed'] = len(preflight_results) + self.stats['skipped']
+            logger.warning("⚠️ 没有通过门禁的商品可提交")
+            return preflight_results
 
         # 提交Feed
         result = self.feeds.submit_and_wait(
@@ -251,32 +332,34 @@ class Stage2Pipeline:
         item_results = result.get('item_results') or []
         status = result.get('status', 'UNKNOWN')
         self.stats['submitted'] = len(feed_items)
+        preflight_failed = len(preflight_results)
 
         if item_results:
             success_statuses = {'ACCEPTED', 'ACCEPTED_WITH_WARNINGS'}
-            self.stats['success'] = sum(
+            feed_success = sum(
                 1 for item in item_results
                 if str(item.get('status', '')).upper() in success_statuses
             )
-            self.stats['failed'] = len(item_results) - self.stats['success']
+            self.stats['success'] = feed_success
+            self.stats['failed'] = preflight_failed + len(item_results) - feed_success
             logger.info(
                 f"📋 批量结果: 成功 {self.stats['success']} 条, 失败 {self.stats['failed']} 条"
             )
-            return item_results
+            return preflight_results + item_results
 
         if status == 'DONE':
-            self.stats['failed'] = len(feed_items)
+            self.stats['failed'] = preflight_failed + len(feed_items)
             logger.warning("⚠️ Feed 已完成，但未返回逐条结果，按逐条状态未知处理")
-            return [{
+            return preflight_results + [{
                 'sku': item['sku'],
                 'status': 'UNKNOWN',
                 'issues': [{'message': 'Feed 已完成，但处理报告缺少逐条结果，请到提交记录中核对最终状态'}],
                 'feed_id': result.get('feed_id', ''),
             } for item in feed_items]
 
-        self.stats['failed'] = len(feed_items)
+        self.stats['failed'] = preflight_failed + len(feed_items)
         logger.warning(f"⚠️ 批量提交状态: {status}")
-        return [{
+        return preflight_results + [{
             'sku': item['sku'],
             'status': status,
             'issues': [{'message': f'Feed 状态: {status}'}],

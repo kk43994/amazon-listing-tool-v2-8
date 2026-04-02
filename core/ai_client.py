@@ -102,7 +102,12 @@ def _gemini_generate_content(
         return response.json()
 
 
-def ai_text(prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+def ai_text(
+    prompt: str,
+    temperature: float = 0.7,
+    max_tokens: int = 2000,
+    raise_on_error: bool = False,
+) -> str:
     """
     AI 文本生成。
 
@@ -134,6 +139,8 @@ def ai_text(prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> st
         return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"AI文本生成失败: {e}")
+        if raise_on_error:
+            raise
         return ""
 
 
@@ -143,6 +150,12 @@ def ai_image_edit(image_data: bytes, prompt: str, size: str = "auto") -> Optiona
 
     对 Gemini generateContent 而言，这里会发送「文字提示 + 原图 inline_data」。
     """
+    return _ai_image_edit(image_data, prompt, size=size, raise_on_error=False)
+
+
+def _ai_image_edit(image_data: bytes, prompt: str, size: str = "auto",
+                   reference_image_data: Optional[bytes] = None,
+                   raise_on_error: bool = False) -> Optional[str]:
     cfg = get_config()
 
     if cfg.AI_IMAGE_PROTOCOL == GEMINI_PROTOCOL:
@@ -153,27 +166,40 @@ def ai_image_edit(image_data: bytes, prompt: str, size: str = "auto") -> Optiona
             if aspect_ratio:
                 generation_config["imageConfig"] = {"aspectRatio": aspect_ratio}
 
+        parts = [
+            {"text": prompt},
+            {"inline_data": {"mime_type": "image/png", "data": encoded}},
+        ]
+        # 附带参考图（用于风格/背景参考）
+        if reference_image_data:
+            ref_encoded = base64.b64encode(reference_image_data).decode("utf-8")
+            parts.insert(1, {"text": "Reference image for the desired background/style:"})
+            parts.insert(2, {"inline_data": {"mime_type": "image/png", "data": ref_encoded}})
+            parts.insert(3, {"text": "Now edit the product image above to match this reference style. Keep the product itself unchanged."})
+
         try:
             result = _gemini_generate_content(
                 api_key=cfg.AI_IMAGE_API_KEY,
                 base_url=cfg.AI_IMAGE_API_BASE,
                 endpoint_template=cfg.AI_IMAGE_ENDPOINT_TEMPLATE,
                 model=cfg.AI_IMAGE_MODEL,
-                contents=[{
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": "image/png", "data": encoded}},
-                    ]
-                }],
+                contents=[{"parts": parts}],
                 generation_config=generation_config,
             )
-            return _extract_image_base64(result)
+            extracted = _extract_image_base64(result)
+            if not extracted and raise_on_error:
+                raise ValueError("AI图片编辑未返回图片数据")
+            return extracted
         except httpx.HTTPStatusError as e:
             body = e.response.text[:500] if e.response else ""
             logger.error(f"AI图片编辑HTTP错误 {e.response.status_code}: {body}")
+            if raise_on_error:
+                raise
             return None
         except Exception as e:
             logger.error(f"AI图片编辑失败: {e}")
+            if raise_on_error:
+                raise
             return None
 
     base_url = cfg.AI_IMAGE_API_BASE.rstrip("/")
@@ -182,9 +208,14 @@ def ai_image_edit(image_data: bytes, prompt: str, size: str = "auto") -> Optiona
         "Authorization": f"Bearer {cfg.AI_IMAGE_API_KEY}",
         "Accept": "application/json",
     }
-    files = {
-        "image": ("image.png", image_data, "image/png"),
-    }
+    # 构建 multipart files — 支持多张图片输入
+    files_list = [
+        ("image[]", ("product.png", image_data, "image/png")),
+    ]
+    if reference_image_data:
+        files_list.append(("image[]", ("reference.png", reference_image_data, "image/png")))
+        prompt = f"{prompt}\nUse the second image as a style/background reference. Keep the product from the first image unchanged."
+
     form_data = {
         "prompt": prompt,
         "model": cfg.AI_IMAGE_MODEL,
@@ -194,21 +225,30 @@ def ai_image_edit(image_data: bytes, prompt: str, size: str = "auto") -> Optiona
 
     try:
         with httpx.Client(timeout=cfg.OPENAI_TIMEOUT) as client:
-            response = client.post(url, headers=headers, files=files, data=form_data)
+            response = client.post(url, headers=headers, files=files_list, data=form_data)
             response.raise_for_status()
             result = response.json()
-            return _extract_image_base64(result)
+            extracted = _extract_image_base64(result)
+            if not extracted and raise_on_error:
+                raise ValueError("AI图片编辑未返回图片数据")
+            return extracted
     except httpx.HTTPStatusError as e:
         body = e.response.text[:500] if e.response else ""
         logger.error(f"AI图片编辑HTTP错误 {e.response.status_code}: {body}")
+        if raise_on_error:
+            raise
         return None
     except Exception as e:
         logger.error(f"AI图片编辑失败: {e}")
+        if raise_on_error:
+            raise
         return None
 
 
-def ai_image_edit_url(image_url: str, prompt: str, size: str = "auto") -> Optional[str]:
-    """先下载图片，再走图片编辑。"""
+def ai_image_edit_url(image_url: str, prompt: str, size: str = "auto",
+                      reference_image_url: str = '',
+                      raise_on_error: bool = False) -> Optional[str]:
+    """先下载图片（和可选的参考图），再走图片编辑。"""
     try:
         headers = {
             "User-Agent": (
@@ -221,14 +261,40 @@ def ai_image_edit_url(image_url: str, prompt: str, size: str = "auto") -> Option
             resp.raise_for_status()
             if len(resp.content) < 1000:
                 logger.warning(f"下载的图片数据过小 ({len(resp.content)} bytes)")
+                if raise_on_error:
+                    raise ValueError(f"下载的图片数据过小 ({len(resp.content)} bytes)")
                 return None
-            return ai_image_edit(resp.content, prompt, size)
+
+            # 下载参考图（如有）
+            reference_data = None
+            if reference_image_url and reference_image_url.strip().startswith('http'):
+                try:
+                    ref_resp = client.get(reference_image_url.strip(), headers=headers)
+                    ref_resp.raise_for_status()
+                    if len(ref_resp.content) >= 1000:
+                        reference_data = ref_resp.content
+                        logger.info(f"  📎 已下载参考图 ({len(reference_data)} bytes)")
+                    else:
+                        logger.warning(f"参考图数据过小，已忽略 ({len(ref_resp.content)} bytes)")
+                except Exception as ref_err:
+                    logger.warning(f"参考图下载失败，继续不使用参考图: {ref_err}")
+
+            return _ai_image_edit(resp.content, prompt, size=size,
+                                  reference_image_data=reference_data,
+                                  raise_on_error=raise_on_error)
     except Exception as e:
         logger.error(f"AI图片编辑(URL模式)失败: {e}")
+        if raise_on_error:
+            raise
         return None
 
 
 def ai_image_generate(prompt: str, size: str = "1024x1024") -> Optional[str]:
+    """纯文本生成图片。"""
+    return _ai_image_generate(prompt, size=size, raise_on_error=False)
+
+
+def _ai_image_generate(prompt: str, size: str = "1024x1024", raise_on_error: bool = False) -> Optional[str]:
     """纯文本生成图片。"""
     cfg = get_config()
 
@@ -247,13 +313,20 @@ def ai_image_generate(prompt: str, size: str = "1024x1024") -> Optional[str]:
                 contents=[{"parts": [{"text": prompt}]}],
                 generation_config=generation_config,
             )
-            return _extract_image_base64(result)
+            extracted = _extract_image_base64(result)
+            if not extracted and raise_on_error:
+                raise ValueError("AI图片生成未返回图片数据")
+            return extracted
         except httpx.HTTPStatusError as e:
             body = e.response.text[:500] if e.response else ""
             logger.error(f"AI图片生成HTTP错误 {e.response.status_code}: {body}")
+            if raise_on_error:
+                raise
             return None
         except Exception as e:
             logger.error(f"AI图片生成失败: {e}")
+            if raise_on_error:
+                raise
             return None
 
     base_url = cfg.AI_IMAGE_API_BASE.rstrip("/")
@@ -275,13 +348,20 @@ def ai_image_generate(prompt: str, size: str = "1024x1024") -> Optional[str]:
             response = client.post(url, headers=headers, json=body)
             response.raise_for_status()
             result = response.json()
-            return _extract_image_base64(result)
+            extracted = _extract_image_base64(result)
+            if not extracted and raise_on_error:
+                raise ValueError("AI图片生成未返回图片数据")
+            return extracted
     except httpx.HTTPStatusError as e:
         body_text = e.response.text[:500] if e.response else ""
         logger.error(f"AI图片生成HTTP错误 {e.response.status_code}: {body_text}")
+        if raise_on_error:
+            raise
         return None
     except Exception as e:
         logger.error(f"AI图片生成失败: {e}")
+        if raise_on_error:
+            raise
         return None
 
 

@@ -31,6 +31,17 @@ FALLBACK_TYPE_HINTS = [
 ]
 
 
+def _looks_like_product_id(text: str) -> bool:
+    compact = re.sub(r'[\s_-]+', '', str(text or '').strip())
+    if not compact:
+        return False
+    if re.fullmatch(r'\d{6,}', compact):
+        return True
+    if re.fullmatch(r'[A-Za-z]{0,3}\d{6,}[A-Za-z]{0,3}', compact):
+        return True
+    return False
+
+
 def _base_output_dir() -> str:
     return str(get_config().OUTPUT_DIR)
 
@@ -74,19 +85,21 @@ def extract_source_keyword(source_url: str = "", title: str = "", keyword: str =
     source_url = str(source_url or "").strip()
 
     if explicit_keyword:
-        return {"query": explicit_keyword, "title": explicit_title or explicit_keyword, "source": "keyword"}
+        return {"query": explicit_keyword, "title": explicit_title or explicit_keyword, "source": "keyword", "warning": ""}
     if explicit_title:
-        return {"query": explicit_title, "title": explicit_title, "source": "title"}
+        return {"query": explicit_title, "title": explicit_title, "source": "title", "warning": ""}
 
     fetched_title = _extract_title_from_url(source_url)
     if fetched_title:
-        return {"query": fetched_title, "title": fetched_title, "source": "url_title"}
+        return {"query": fetched_title, "title": fetched_title, "source": "url_title", "warning": ""}
 
     url_title = _guess_title_from_url(source_url)
     if url_title:
-        return {"query": url_title, "title": url_title, "source": "url_slug"}
+        warning = "链接页面标题抓取失败，当前仅使用 URL 关键词进行推荐，建议人工确认类目。"
+        return {"query": url_title, "title": url_title, "source": "url_slug", "warning": warning}
 
-    return {"query": "", "title": "", "source": ""}
+    warning = "未能从链接中提取稳定商品标题，请手动搜索或直接选择官方类目模板。"
+    return {"query": "", "title": "", "source": "", "warning": warning}
 
 
 def recommend_product_types(
@@ -100,8 +113,10 @@ def recommend_product_types(
     query = str(info.get("query", "") or "").strip()
     candidates: List[Dict] = []
     source = str(info.get("source", "") or "").strip()
+    warning = str(info.get("warning", "") or "").strip()
+    confidence = "low"
 
-    if query:
+    if query and not _looks_like_product_id(query):
         try:
             from amazon.sp_client import SPClient
             from amazon.schema_manager import search_product_types
@@ -110,19 +125,114 @@ def recommend_product_types(
             raw_candidates = search_product_types(query, sp_client=client) or []
             candidates.extend(_normalize_product_type_candidates(raw_candidates))
             source = source or "amazon_api"
+            if candidates:
+                confidence = "high" if source == "url_title" or source == "title" or source == "keyword" else "medium"
         except Exception:
             pass
+    elif _looks_like_product_id(query):
+        warning = warning or "当前识别到的内容更像商品ID，不是可靠的类目关键词，请手动确认模板。"
+        query = ""
 
     if not candidates and query:
         candidates.extend(_fallback_product_type_candidates(query))
         source = source or "heuristic"
+        if candidates:
+            confidence = "low"
 
     return {
         "query": query,
         "title": str(info.get("title", "") or "").strip(),
         "source": source or "empty",
         "marketplace": marketplace,
+        "warning": warning,
+        "confidence": confidence,
+        "needs_manual_selection": not bool(candidates),
         "candidates": candidates[:8],
+    }
+
+
+def manual_search_product_types(*, keyword: str, marketplace: str = DEFAULT_MARKETPLACE) -> Dict[str, object]:
+    query = str(keyword or "").strip()
+    candidates: List[Dict] = []
+    warning = ""
+    if not query:
+        return {
+            "query": "",
+            "source": "manual_empty",
+            "marketplace": marketplace,
+            "warning": "请输入官方类目关键词后再搜索。",
+            "confidence": "low",
+            "needs_manual_selection": True,
+            "candidates": [],
+        }
+    try:
+        from amazon.sp_client import SPClient
+        from amazon.schema_manager import search_product_types
+
+        client = SPClient(marketplace_id="ATVPDKIKX0DER")
+        raw_candidates = search_product_types(query, sp_client=client) or []
+        candidates.extend(_normalize_product_type_candidates(raw_candidates))
+    except Exception as exc:
+        warning = f"官方类目搜索失败: {exc}"
+
+    return {
+        "query": query,
+        "title": query,
+        "source": "manual_search",
+        "marketplace": marketplace,
+        "warning": warning,
+        "confidence": "medium" if candidates else "low",
+        "needs_manual_selection": not bool(candidates),
+        "candidates": candidates[:12],
+    }
+
+
+def validate_product_type_candidate(
+    *,
+    product_type: str,
+    marketplace: str = DEFAULT_MARKETPLACE,
+    variation_mode: str = DEFAULT_VARIATION_MODE,
+) -> Dict[str, object]:
+    product_type = str(product_type or "").strip()
+    marketplace = str(marketplace or DEFAULT_MARKETPLACE).strip().upper() or DEFAULT_MARKETPLACE
+    variation_mode = "variation" if str(variation_mode or "").strip().lower() == "variation" else "single"
+    if not product_type:
+        return {
+            "usable": False,
+            "message": "请先选择 Amazon 官方类目模板。",
+            "product_type": "",
+            "marketplace": marketplace,
+            "variation_mode": variation_mode,
+        }
+    if _looks_like_product_id(product_type):
+        return {
+            "usable": False,
+            "message": "当前值看起来像商品ID，不是 Amazon 官方 product_type。",
+            "product_type": product_type,
+            "marketplace": marketplace,
+            "variation_mode": variation_mode,
+        }
+
+    try:
+        definition = ensure_template_definition(
+            product_type=product_type,
+            marketplace=marketplace,
+            variation_mode=variation_mode,
+        )
+    except Exception as exc:
+        return {
+            "usable": False,
+            "message": f"无法拉取该官方类目模板: {exc}",
+            "product_type": product_type,
+            "marketplace": marketplace,
+            "variation_mode": variation_mode,
+        }
+
+    summary = template_definition_summary(definition)
+    return {
+        "usable": True,
+        "message": "已通过 Amazon 官方模板检查，可以直接生成模板。",
+        **summary,
     }
 
 
@@ -291,6 +401,140 @@ def summarize_template_issues(result: Dict) -> str:
     if variation_issues:
         parts.append(f"变体问题 {len(variation_issues)} 项")
     return "；".join(parts)
+
+
+def evaluate_template_families(
+    rows: List[Dict],
+    template_definition: Optional[Dict],
+    *,
+    col_map: Optional[Dict] = None,
+) -> Dict[str, List[str]]:
+    """校验父子变体家族的一致性，返回每个 SKU 的阻断问题。"""
+    col_map = col_map or {}
+    variation_mode = str((template_definition or {}).get("variation_mode", "") or "").strip().lower()
+
+    def read_value(row: Dict, key: str) -> str:
+        return _pick_row_value(row, key, col_map)
+
+    normalized_rows = []
+    has_variation_data = False
+    for index, row in enumerate(rows or []):
+        sku = read_value(row, "sku")
+        if not sku:
+            sku = str(row.get(col_map.get("sku", ""), "") or row.get("SKU", "") or f"ROW-{index + 1}").strip()
+        parentage = read_value(row, "parentage_level").lower()
+        parent_sku = read_value(row, "parent_sku")
+        variation_theme = read_value(row, "variation_theme")
+        color = read_value(row, "color")
+        size = _pick_variation_size(row, col_map)
+        product_type = read_value(row, "product_type")
+        if parentage or parent_sku or variation_theme:
+            has_variation_data = True
+        normalized_rows.append({
+            "sku": sku,
+            "parentage_level": parentage,
+            "parent_sku": parent_sku,
+            "variation_theme": variation_theme,
+            "color": color,
+            "size": size,
+            "product_type": product_type,
+        })
+
+    if variation_mode != "variation" and not has_variation_data:
+        return {}
+
+    issues_by_sku: Dict[str, List[str]] = {}
+
+    def add_issue(sku: str, message: str):
+        sku = str(sku or "").strip()
+        message = str(message or "").strip()
+        if not sku or not message:
+            return
+        issues_by_sku.setdefault(sku, [])
+        if message not in issues_by_sku[sku]:
+            issues_by_sku[sku].append(message)
+
+    family_map: Dict[str, Dict[str, object]] = {}
+
+    for item in normalized_rows:
+        sku = item["sku"]
+        parentage = item["parentage_level"]
+        parent_sku = item["parent_sku"]
+        if parentage == "parent":
+            family_map.setdefault(sku, {"parent": item, "children": []})
+            family_map[sku]["parent"] = item
+        elif parentage == "child" and parent_sku:
+            family_map.setdefault(parent_sku, {"parent": None, "children": []})
+            family_map[parent_sku]["children"].append(item)
+
+    for item in normalized_rows:
+        sku = item["sku"]
+        parentage = item["parentage_level"]
+        if parentage not in ("parent", "child"):
+            add_issue(sku, "变体家族要求填写 parentage_level，且值必须是 parent 或 child")
+            continue
+        if not item["variation_theme"]:
+            add_issue(sku, "变体家族要求填写 variation_theme")
+        if parentage == "child" and not item["parent_sku"]:
+            add_issue(sku, "子体缺少 parent_sku")
+
+    for parent_sku, family in family_map.items():
+        parent = family.get("parent")
+        children = list(family.get("children") or [])
+
+        if parent is None:
+            for child in children:
+                add_issue(child["sku"], f"父体 {parent_sku} 不存在于当前文件中")
+            continue
+
+        if not children:
+            add_issue(parent_sku, "父体至少需要一个子体 SKU")
+            continue
+
+        parent_theme = parent.get("variation_theme", "")
+        parent_type = parent.get("product_type", "")
+        child_themes = {child.get("variation_theme", "") for child in children if child.get("variation_theme", "")}
+        if parent_theme and child_themes and any(theme != parent_theme for theme in child_themes):
+            add_issue(parent_sku, "父体与子体的 variation_theme 必须保持一致")
+            for child in children:
+                if child.get("variation_theme", "") != parent_theme:
+                    add_issue(child["sku"], f"子体 variation_theme 与父体 {parent_sku} 不一致")
+
+        if parent_type:
+            for child in children:
+                child_type = child.get("product_type", "")
+                if child_type and child_type != parent_type:
+                    add_issue(parent_sku, f"父体与子体 {child['sku']} 的 product_type 不一致")
+                    add_issue(child["sku"], f"子体 product_type 与父体 {parent_sku} 不一致")
+
+        required_dims = []
+        theme_text = str(parent_theme or next(iter(child_themes), "") or "").upper()
+        if "COLOR" in theme_text:
+            required_dims.append("color")
+        if "SIZE" in theme_text:
+            required_dims.append("size")
+
+        seen_variants: Dict[Tuple[str, ...], List[str]] = {}
+        for child in children:
+            sku = child["sku"]
+            missing_dims = [dim for dim in required_dims if not child.get(dim)]
+            if missing_dims:
+                labels = " / ".join("颜色" if dim == "color" else "尺寸" for dim in missing_dims)
+                add_issue(sku, f"子体缺少变体维度: {labels}")
+
+            if required_dims:
+                key = tuple(str(child.get(dim, "") or "").strip().lower() for dim in required_dims)
+                if all(part for part in key):
+                    seen_variants.setdefault(key, []).append(sku)
+
+        for combo, sku_list in seen_variants.items():
+            if len(sku_list) <= 1:
+                continue
+            combo_text = " / ".join(combo)
+            for sku in sku_list:
+                add_issue(sku, f"变体组合重复: {combo_text}")
+
+    return issues_by_sku
 
 
 def update_template_overlay(product_type: str, marketplace: str, missing_fields: List[Dict]):
@@ -484,7 +728,7 @@ def _guess_title_from_url(source_url: str) -> str:
     for key in ("title", "name", "keyword", "itemName"):
         if query.get(key):
             value = _clean_title(query[key][0])
-            if value:
+            if value and not _looks_like_product_id(value):
                 return value
 
     path = unquote(parsed.path or "")
@@ -495,7 +739,10 @@ def _guess_title_from_url(source_url: str) -> str:
     candidate = re.sub(r"\.[A-Za-z0-9]{1,6}$", "", candidate)
     candidate = re.sub(r"[-_]+", " ", candidate)
     candidate = re.sub(r"\s+", " ", candidate)
-    return _clean_title(candidate)
+    cleaned = _clean_title(candidate)
+    if _looks_like_product_id(cleaned):
+        return ""
+    return cleaned
 
 
 def _clean_title(value: str) -> str:
@@ -515,6 +762,10 @@ def _pick_row_value(row: Dict, key: str, col_map: Dict) -> str:
     return ""
 
 
+def _pick_variation_size(row: Dict, col_map: Dict) -> str:
+    return _pick_row_value(row, "size", col_map) or _pick_row_value(row, "bottoms_size", col_map)
+
+
 def _evaluate_variation_row(row: Dict, template_definition: Dict, col_map: Dict) -> List[str]:
     if str(template_definition.get("variation_mode", "single") or "single").strip() != "variation":
         return []
@@ -523,7 +774,7 @@ def _evaluate_variation_row(row: Dict, template_definition: Dict, col_map: Dict)
     parent_sku = _pick_row_value(row, "parent_sku", col_map)
     variation_theme = _pick_row_value(row, "variation_theme", col_map)
     color = _pick_row_value(row, "color", col_map)
-    size = _pick_row_value(row, "size", col_map)
+    size = _pick_variation_size(row, col_map)
     issues = []
 
     if parentage not in ("parent", "child"):

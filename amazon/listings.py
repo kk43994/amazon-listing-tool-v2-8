@@ -12,6 +12,35 @@ from amazon.mapper import FieldMapper, ENDPOINTS, MARKETPLACE_REGION
 logger = logging.getLogger(__name__)
 
 
+# 常见 Amazon issue code → 中文说明 + 修复建议
+_ISSUE_HINTS = {
+    # 通用错误
+    'MISSING_REQUIRED_ATTRIBUTE': ('缺少必填属性', '请在 Excel 中补充该字段的值'),
+    'INVALID_ATTRIBUTE_VALUE': ('属性值无效', '请检查该字段的值是否符合亚马逊要求的格式'),
+    'ATTRIBUTE_VALUE_TOO_LONG': ('属性值超长', '请缩短该字段的内容'),
+    'ATTRIBUTE_VALUE_TOO_SHORT': ('属性值过短', '请补充更多内容'),
+    'DUPLICATE_VALUE': ('重复值', '该字段的值与已有商品重复，请修改'),
+    # 产品标识
+    'INVALID_UPC': ('UPC 条码无效', '请核实 UPC 是否为有效的 12 位数字'),
+    'INVALID_EAN': ('EAN 条码无效', '请核实 EAN 是否为有效的 13 位数字'),
+    'INVALID_GTIN': ('GTIN 无效', '请检查产品标识码是否正确'),
+    'PRODUCT_IDENTIFIER_NOT_FOUND': ('产品标识未找到', 'UPC/EAN 在 GS1 数据库中未找到，请确认条码正确或申请豁免'),
+    # 图片
+    'INVALID_IMAGE_URL': ('图片 URL 无效', '请确保图片链接可访问且为 JPEG/PNG 格式'),
+    'IMAGE_TOO_SMALL': ('图片尺寸过小', '主图最小 1000x1000 像素，建议 2000x2000'),
+    # 价格
+    'INVALID_PRICE': ('价格无效', '请检查价格格式（数字，无货币符号）'),
+    'PRICE_TOO_LOW': ('价格过低', '该价格低于亚马逊允许的最低价格'),
+    'PRICE_TOO_HIGH': ('价格过高', '该价格高于亚马逊允许的最高价格'),
+    # 变体
+    'MISSING_PARENT_SKU': ('缺少父体 SKU', '子体商品必须填写 parent_sku'),
+    'INVALID_VARIATION_THEME': ('变体主题无效', '请检查 variation_theme 是否为该类目支持的值'),
+    # 权限
+    'UNAUTHORIZED': ('无权操作', '请检查账号是否有该类目的销售权限'),
+    'BRAND_NOT_APPROVED': ('品牌未授权', '请先在 Brand Registry 中注册或获得品牌授权'),
+}
+
+
 class ListingsAPI:
     """Amazon SP-API Listings + Catalog + Product Type Definitions"""
 
@@ -54,7 +83,7 @@ class ListingsAPI:
         else:
             return None
 
-        logger.info(f"🔍 搜索亚马逊目录...")
+        logger.info("🔍 搜索亚马逊目录...")
         try:
             response = requests.get(
                 url, params=params,
@@ -174,58 +203,73 @@ class ListingsAPI:
         action = "预览验证" if preview else "提交上架"
         logger.info(f"📤 {action}: SKU={sku}, 类型={body['productType']}")
 
-        try:
-            response = requests.put(
-                url, params=params,
-                headers=self.auth.get_headers(),
-                json=body,
-                timeout=30,
-            )
-
+        retried_auth = False
+        while True:
             try:
-                result = response.json()
-            except ValueError:
-                result = {}
-
-            result = self._normalize_put_response(response.status_code, result)
-            status = result.get('status', 'UNKNOWN')
-
-            if status == 'ACCEPTED':
-                logger.info(f"  ✅ 已接受 (submissionId: {result.get('submissionId', 'N/A')})")
-                # 提取ASIN
-                identifiers = result.get('identifiers', [])
-                if identifiers:
-                    for ident in identifiers:
-                        if ident.get('asin'):
-                            logger.info(f"  📌 ASIN: {ident['asin']}")
-            elif status == 'VALID':
-                logger.info(f"  ✅ 验证通过 (预览模式)")
-            elif status == 'INVALID':
-                logger.error(f"  ❌ 验证失败")
-            else:
-                logger.warning(f"  ⚠️ 状态: {status}")
-
-            # 输出issues
-            issues = result.get('issues', [])
-            for issue in issues:
-                severity = issue.get('severity', 'INFO')
-                code = issue.get('code', '')
-                msg = issue.get('message', '')
-                attrs = issue.get('attributeNames', [])
-                icon = {'ERROR': '❌', 'WARNING': '⚠️', 'INFO': 'ℹ️'}.get(severity, '?')
-                logger.log(
-                    logging.ERROR if severity == 'ERROR' else logging.WARNING,
-                    f"  {icon} [{code}] {msg} (字段: {', '.join(attrs)})"
+                response = requests.put(
+                    url, params=params,
+                    headers=self.auth.get_headers(),
+                    json=body,
+                    timeout=30,
                 )
 
-            return result
+                # Token 过期时自动刷新并重试一次
+                if response.status_code in (401, 403) and not retried_auth:
+                    logger.warning("  🔄 Token 可能过期，刷新后重试...")
+                    retried_auth = True
+                    self.auth.force_refresh()
+                    continue
 
-        except requests.exceptions.Timeout:
-            logger.error(f"  ❌ 请求超时")
-            return {'status': 'ERROR', 'issues': [{'message': 'Request timeout'}]}
-        except Exception as e:
-            logger.error(f"  ❌ 请求异常: {e}")
-            return {'status': 'ERROR', 'issues': [{'message': str(e)}]}
+                try:
+                    result = response.json()
+                except ValueError:
+                    result = {}
+
+                result = self._normalize_put_response(response.status_code, result)
+                status = result.get('status', 'UNKNOWN')
+
+                if status == 'ACCEPTED':
+                    asin = self.resolve_submission_asin(sku, result) if not preview else ''
+                    if asin:
+                        result['asin'] = asin
+                    logger.info(f"  ✅ 已接受 (submissionId: {result.get('submissionId', 'N/A')})")
+                    if result.get('asin'):
+                        logger.info(f"  📌 ASIN: {result['asin']}")
+                elif status == 'VALID':
+                    logger.info("  ✅ 验证通过 (预览模式)")
+                elif status == 'INVALID':
+                    logger.error("  ❌ 验证失败")
+                else:
+                    logger.warning(f"  ⚠️ 状态: {status}")
+
+                # 输出issues
+                issues = result.get('issues', [])
+                for issue in issues:
+                    severity = issue.get('severity', 'INFO')
+                    code = issue.get('code', '')
+                    msg = issue.get('message', '')
+                    attrs = issue.get('attributeNames', [])
+                    hint = issue.get('hint', '')
+                    fix = issue.get('fix', '')
+                    icon = {'ERROR': '❌', 'WARNING': '⚠️', 'INFO': 'ℹ️'}.get(severity, '?')
+                    line = f"  {icon} [{code}] {msg} (字段: {', '.join(attrs)})"
+                    if hint:
+                        line += f"\n       → {hint}"
+                    if fix:
+                        line += f"\n       💡 {fix}"
+                    logger.log(
+                        logging.ERROR if severity == 'ERROR' else logging.WARNING,
+                        line,
+                    )
+
+                return result
+
+            except requests.exceptions.Timeout:
+                logger.error("  ❌ 请求超时")
+                return {'status': 'ERROR', 'issues': [{'message': '请求超时，请稍后重试'}]}
+            except Exception as e:
+                logger.error(f"  ❌ 请求异常: {e}")
+                return {'status': 'ERROR', 'issues': [{'message': str(e)}]}
 
     def _normalize_put_response(self, status_code: int, result: Dict) -> Dict:
         """把 Amazon 顶层 errors 统一折叠成 issues，便于前后端复用。"""
@@ -246,7 +290,53 @@ class ListingsAPI:
                 payload['status'] = 'ERROR'
 
         payload.setdefault('http_status', status_code)
+
+        # 为每个 issue 追加中文说明和修复建议
+        for issue in payload.get('issues', []):
+            code = str(issue.get('code', '')).strip()
+            hint = _ISSUE_HINTS.get(code)
+            if hint:
+                issue.setdefault('hint', hint[0])
+                issue.setdefault('fix', hint[1])
+            attrs = issue.get('attributeNames', [])
+            if attrs and 'hint' not in issue:
+                issue['hint'] = f"相关字段: {', '.join(attrs)}"
+
         return payload
+
+    def _extract_asin(self, payload: Optional[Dict]) -> str:
+        payload = payload or {}
+        for ident in payload.get('identifiers', []) or []:
+            asin = str(ident.get('asin', '') or '').strip()
+            if asin:
+                return asin
+        for summary in payload.get('summaries', []) or []:
+            asin = str(summary.get('asin', '') or '').strip()
+            if asin:
+                return asin
+        return str(payload.get('asin', '') or '').strip()
+
+    def resolve_submission_asin(self, sku: str, submit_result: Optional[Dict] = None,
+                                max_attempts: int = 2, delay: float = 0.5) -> str:
+        """优先读取提交响应中的 ASIN，缺失时补查 Listings API。"""
+        asin = self._extract_asin(submit_result)
+        if asin:
+            return asin
+
+        status = str((submit_result or {}).get('status', '') or '').strip().upper()
+        if status != 'ACCEPTED':
+            return ''
+
+        attempts = max(1, int(max_attempts or 1))
+        wait_seconds = max(0.0, float(delay or 0.0))
+        for attempt in range(attempts):
+            listing_payload = self.get_listings_item(sku)
+            asin = self._extract_asin(listing_payload)
+            if asin:
+                return asin
+            if attempt < attempts - 1 and wait_seconds > 0:
+                time.sleep(wait_seconds)
+        return ''
 
     def patch_listings_item(self, sku: str, patches: List[Dict]) -> Dict:
         """部分更新Listing"""
@@ -381,6 +471,15 @@ class ListingsAPI:
         results = []
         total = len(products)
 
+        # 重复 SKU 检测
+        seen_skus = set()
+        for product in products:
+            sku = str(product.get('sku', '') or '').strip()
+            if sku and sku in seen_skus:
+                logger.warning(f"  ⚠️ 检测到重复 SKU: {sku}，跳过重复项")
+            if sku:
+                seen_skus.add(sku)
+
         for idx, product in enumerate(products):
             sku = product.get('sku')
             if not sku:
@@ -408,11 +507,17 @@ class ListingsAPI:
             # 预览验证
             if preview_first:
                 preview_result = self.put_listings_item(sku, product, preview=True)
-                if preview_result.get('status') == 'INVALID':
+                preview_status = str(preview_result.get('status', '') or '').strip().upper()
+                preview_issues = preview_result.get('issues', []) or []
+                preview_has_error = any(
+                    str(issue.get('severity', '') or '').strip().upper() == 'ERROR'
+                    for issue in preview_issues
+                )
+                if preview_status != 'VALID' or preview_has_error:
                     results.append({
                         'sku': sku,
-                        'status': 'PREVIEW_INVALID',
-                        'issues': preview_result.get('issues', []),
+                        'status': 'PREVIEW_INVALID' if preview_status == 'INVALID' else f'PREVIEW_{preview_status or "ERROR"}',
+                        'issues': preview_issues or [{'message': f'Amazon 预览未通过: {preview_status or "UNKNOWN"}'}],
                     })
                     continue
                 time.sleep(delay)
@@ -422,11 +527,9 @@ class ListingsAPI:
             submit_result['sku'] = sku
             submit_result['submit_time'] = time.strftime('%Y-%m-%d %H:%M:%S')
 
-            # 提取ASIN
-            identifiers = submit_result.get('identifiers', [])
-            for ident in identifiers:
-                if ident.get('asin'):
-                    submit_result['asin'] = ident['asin']
+            asin = self.resolve_submission_asin(sku, submit_result, delay=delay)
+            if asin:
+                submit_result['asin'] = asin
 
             results.append(submit_result)
             time.sleep(delay)
@@ -437,7 +540,7 @@ class ListingsAPI:
         errors = sum(1 for r in results if r.get('status') == 'ERROR')
 
         logger.info(f"\n{'='*50}")
-        logger.info(f"📊 批量提交完成:")
+        logger.info("📊 批量提交完成:")
         logger.info(f"  ✅ 接受: {accepted}")
         logger.info(f"  ❌ 失败: {invalid + errors}")
         logger.info(f"  总计: {total}")

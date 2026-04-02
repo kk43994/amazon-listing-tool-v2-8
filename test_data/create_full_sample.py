@@ -143,8 +143,6 @@ def create_full_sample():
         top=Side(style='thin'), bottom=Side(style='thin')
     )
 
-    prev_group = None
-    merge_start = 1
     for col_idx, header in enumerate(headers, 1):
         group = field_groups.get(header, '其他')
         color = group_colors.get(group, 'FFD9E2F3')
@@ -420,8 +418,8 @@ def create_full_sample():
     output_path = os.path.join(output_dir, 'amazon_test_products.xlsx')
     wb.save(output_path)
     print(f"✅ 亚马逊完整测试数据已生成: {output_path}")
-    print(f"   - Sheet 1: 3条完整商品数据 (51个字段)")
-    print(f"   - Sheet 2: 字段说明文档")
+    print("   - Sheet 1: 3条完整商品数据 (51个字段)")
+    print("   - Sheet 2: 字段说明文档")
     return output_path
 
 

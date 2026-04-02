@@ -11,9 +11,11 @@
 ## 当前核心能力
 
 ### 1. AI 内容与图片处理
-- 标题、五点、描述、搜索词生成
-- 主图/副图 AI 处理
-- 单 SKU 与批量处理
+- 标题、五点、描述、搜索词、目标受众、主题关键词、特殊功能生成
+- 支持 OpenAI 兼容接口与 Gemini generateContent 双协议
+- 文本/图片 AI 配置完全独立，可分别使用不同模型和 endpoint
+- 主图/副图 AI 处理，支持白底/生活场景/渐变等多种背景风格
+- 单 SKU 与批量处理，并发模型支持文案/图片独立信号量
 - 处理结果回写 Excel
 - 单 SKU 改图使用唯一输出路径，避免覆盖旧图片
 
@@ -50,13 +52,17 @@
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
+# 1. 创建虚拟环境
+python3.11 -m venv .venv
+source .venv/bin/activate
+
+# 2. 安装依赖
 pip install -r requirements.txt
 
-# 2. 配置环境变量
-copy .env.example .env
+# 3. 配置环境变量
+cp .env.example .env
 
-# 3. 启动 Web 工作台
+# 4. 启动 Web 工作台
 python web/app.py
 ```
 
@@ -65,6 +71,32 @@ python web/app.py
 ```text
 http://127.0.0.1:5000
 ```
+
+### 新 Mac 初始化建议
+
+1. 使用 Python 3.10+，当前推荐 `python3.11`
+2. 首次拉仓后执行：
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+3. 准备两个敏感配置文件：
+   - `.env`：AI 配置、运行时参数、CLI 用的 Amazon 凭证
+   - `accounts.json`：Web 工作台默认使用的 Amazon 账号
+4. 确保以下目录存在：
+   - `input/`
+   - `output/`
+   - `logs/`
+
+### Amazon 凭证说明
+
+- Web 工作台的预览/提交链路默认读取 `accounts.json`
+- `stage2_pipeline.py` / `main.py` 这类 CLI 链路仍会读取 `.env` 里的 `AMAZON_*`
+- 如果你在设置页保存 SP-API 配置，系统会同时更新 `.env` 和 `accounts.json`
 
 ## 推荐使用方式
 
@@ -110,11 +142,63 @@ http://127.0.0.1:5000
 - boto3
 - python-amazon-sp-api
 
+## 端到端测试建议
+
+### 1. AI 文案 / AI 图片
+
+- 使用 1688 或竞品采集得到的原始商品 Excel
+- 先跑 Stage1，确认以下字段都已回写：
+  - 标题
+  - 五点
+  - 描述
+  - 搜索词
+  - AI 主图 / 副图路径
+
+### 2. 图片公网化
+
+当前仓库保留了测试用临时图床流程：
+
+```bash
+python upload_ai_images_temp.py --input output/处理结果_xxx.xlsx --in-place
+```
+
+用途：
+- 把 Stage1 生成的本地 AI 图片上传到 `x0.at`
+- 将公网 URL 回写到 Excel
+- 用于后续 Amazon preview / submit 读取图片
+
+说明：
+- 这是测试方案，不是正式生产媒体托管方案
+- 生产环境应切换到 S3 / CloudFront 一类稳定媒体存储
+
+### 3. Amazon preview / submit
+
+- 先跑 `/api/self-check`
+- 再跑 Amazon `VALIDATION_PREVIEW`
+- 修完 preview 暴露的问题后，再执行正式提交
+
+建议把测试结果分成三层看：
+- 本地字段校验是否通过
+- Amazon preview 是否通过
+- 正式提交是否返回 `submissionId` / `ASIN`
+
+### 4. 测试数据口径
+
+- 如果是“内部流程演练”，可以使用测试 UPC
+- 如果目标是“真实新建商品长期保留”，必须改用真实 GTIN 或 GTIN exemption
+- 使用测试 UPC 做正式提交时，允许通过系统链路验证，但后续可能因目录/品牌/条码一致性出问题
+
+## 安全与稳定性
+
+- 所有接受客户端文件路径的 API 端点均做目录白名单校验，防止路径穿越
+- Amazon SP-API Token 刷新线程安全（双重检查锁）
+- 敏感配置文件（`.env`、`accounts.json`）写入后自动收紧权限至 `0o600`
+- `.gitignore` 已排除所有凭证文件
+
 ## 当前已知限制
 
 - 第一版官方模板链路固定以美国站为主
-- 来源商品链接解析目前仍以“标题/关键词推荐 product_type”为主，不是完整 1688 抓取器
-- 任务中心已支持阶段进度，但长期历史沉淀和断点恢复还可以继续增强
+- 来源商品链接解析目前仍以”标题/关键词推荐 product_type”为主，不是完整 1688 抓取器
 - 临时匿名图床脚本仍保留，仅供测试，不建议作为正式生产方案
 
 ## 发布与版本规则
@@ -140,6 +224,7 @@ http://127.0.0.1:5000
 ```bash
 python -m pytest -q
 python -m pytest -q test_web.py test_web_flow.py
+ruff check .
 ```
 
 ## 临时匿名图床

@@ -3,7 +3,7 @@
 使用 python-amazon-sp-api 库替换手写 HTTP 调用
 """
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from sp_api.api import ProductTypeDefinitions, ListingsItemsV20210801, CatalogItemsV20220401
 from sp_api.base.marketplaces import Marketplaces

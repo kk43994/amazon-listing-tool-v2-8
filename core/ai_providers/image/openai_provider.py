@@ -12,7 +12,8 @@ from typing import Optional, List, Any, Dict
 from openai import OpenAI
 from PIL import Image
 from .base import ImageProvider
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 from config import get_config
 from core.url_utils import normalize_openai_api_base
@@ -305,7 +306,7 @@ class OpenAIImageProvider(ImageProvider):
                                 for url in urls:
                                     extracted_image = self._download_image_from_url(url)
                                     if extracted_image:
-                                        logger.info(f"Extracted image from URL in content[].text")
+                                        logger.info("Extracted image from URL in content[].text")
                                         return extracted_image
                                 # Try base64
                                 base64_data_list = self._extract_base64_from_text(text)
@@ -525,7 +526,7 @@ class OpenAIImageProvider(ImageProvider):
                 return extracted_image
 
             # Log detailed info for debugging if extraction failed
-            logger.error(f"Failed to extract image from response")
+            logger.error("Failed to extract image from response")
             logger.error(f"Message content type: {type(getattr(message, 'content', None))}")
             content_preview = str(getattr(message, 'content', 'N/A'))
             if len(content_preview) > 500:

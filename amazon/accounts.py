@@ -7,7 +7,7 @@ import os
 import logging
 from typing import Dict, List, Optional
 
-from amazon.auth import AmazonAuth
+from amazon.auth import AmazonAuth, AmazonAuthError, AmazonTokenError, AmazonNetworkError
 from amazon.listings import ListingsAPI
 from amazon.mapper import MARKETPLACE_IDS, ENDPOINTS, MARKETPLACE_REGION
 
@@ -16,6 +16,23 @@ logger = logging.getLogger(__name__)
 # 默认配置文件路径
 DEFAULT_ACCOUNTS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                                       'accounts.json')
+
+
+def _is_real_credential(value: str) -> bool:
+    text = str(value or '').strip()
+    return bool(text) and 'YOUR_' not in text.upper()
+
+
+def account_has_real_credentials(account: Optional[Dict], require_seller_id: bool = True) -> bool:
+    """判断账号是否已填入可用凭证，而不是仓库里的模板占位值。"""
+    if not isinstance(account, dict):
+        return False
+
+    required_fields = ['lwa_client_id', 'lwa_client_secret', 'refresh_token']
+    if require_seller_id:
+        required_fields.insert(0, 'seller_id')
+
+    return all(_is_real_credential(account.get(field)) for field in required_fields)
 
 
 class AccountManager:
@@ -30,6 +47,7 @@ class AccountManager:
         """加载账号配置"""
         if os.path.exists(self.accounts_file):
             try:
+                self._secure_file_permissions()
                 with open(self.accounts_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 self.accounts = data.get('accounts', [])
@@ -67,6 +85,8 @@ class AccountManager:
         }
         with open(self.accounts_file, 'w', encoding='utf-8') as f:
             json.dump(template, f, ensure_ascii=False, indent=2)
+        self.accounts = template['accounts']
+        self._secure_file_permissions()
         logger.info(f"  模板已创建: {self.accounts_file}")
 
     def save_accounts(self):
@@ -74,7 +94,17 @@ class AccountManager:
         data = {'accounts': self.accounts}
         with open(self.accounts_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        logger.info(f"💾 账号配置已保存")
+        self._secure_file_permissions()
+        logger.info("💾 账号配置已保存")
+
+    def _secure_file_permissions(self):
+        """尽量收紧账号配置权限，避免凭证被同机其他用户读取。"""
+        if os.name == 'nt' or not os.path.exists(self.accounts_file):
+            return
+        try:
+            os.chmod(self.accounts_file, 0o600)
+        except OSError as exc:
+            logger.warning("收紧账号配置文件权限失败: %s", exc)
 
     def list_accounts(self) -> List[Dict]:
         """列出所有账号(隐藏敏感信息)"""
@@ -87,9 +117,7 @@ class AccountManager:
                 'marketplace_name': acc.get('marketplace_name', ''),
                 'is_default': acc.get('is_default', False),
                 'enabled': acc.get('enabled', True),
-                'has_credentials': bool(acc.get('lwa_client_id') and
-                                       acc.get('lwa_client_secret') and
-                                       acc.get('refresh_token')),
+                'has_credentials': account_has_real_credentials(acc),
             }
             safe_list.append(safe)
         return safe_list
@@ -175,6 +203,8 @@ class AccountManager:
                     acc.get('lwa_client_secret'),
                     acc.get('refresh_token')]):
             return {'success': False, 'message': '凭证不完整(缺少client_id/secret/refresh_token)'}
+        if not account_has_real_credentials(acc):
+            return {'success': False, 'message': '凭证未配置完成，仍包含模板占位值'}
 
         try:
             auth = AmazonAuth(
@@ -209,8 +239,12 @@ class AccountManager:
                 'marketplace': acc.get('marketplace_name'),
                 'probe_status': probe.get('status_code'),
             }
+        except AmazonTokenError as e:
+            return {'success': False, 'message': f'凭证错误: {e}'}
+        except AmazonNetworkError as e:
+            return {'success': False, 'message': f'网络错误: {e}'}
         except Exception as e:
-            return {'success': False, 'message': f'连接失败: {str(e)}'}
+            return {'success': False, 'message': f'连接失败: {e}'}
 
     def get_auth(self, seller_id: str = None) -> Optional[AmazonAuth]:
         """获取Auth实例"""

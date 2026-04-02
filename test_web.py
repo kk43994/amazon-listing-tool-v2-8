@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import threading
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -175,6 +176,48 @@ def test_web_upload_endpoint_enforces_batch_limit(monkeypatch):
             uploaded_path.unlink()
 
 
+def test_web_upload_endpoint_avoids_overwriting_existing_file(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    output_dir = Path(web_config.OUTPUT_DIR).resolve()
+    filename = f'test_upload_collision_{uuid4().hex[:8]}.xlsx'
+    original_path = input_dir / filename
+    generated_path = None
+
+    try:
+        monkeypatch.setattr(web_config, 'INPUT_DIR', str(input_dir))
+        monkeypatch.setattr(web_config, 'OUTPUT_DIR', str(output_dir))
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append(['SKU', 'item_name'])
+        ws.append(['OLD-1', 'Original Workbook'])
+        wb.save(original_path)
+        wb.close()
+
+        client = app.test_client()
+        response = client.post(
+            '/api/upload',
+            data={'file': (_build_excel_bytes(), filename)},
+            content_type='multipart/form-data',
+        )
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        generated_path = Path(payload['filepath'])
+        assert generated_path != original_path
+        assert generated_path.exists()
+
+        wb_old = load_workbook(original_path)
+        ws_old = wb_old.active
+        assert ws_old['A2'].value == 'OLD-1'
+        wb_old.close()
+    finally:
+        if original_path.exists():
+            original_path.unlink()
+        if generated_path and generated_path.exists():
+            generated_path.unlink()
+
+
 def test_template_recommend_endpoint_returns_candidates(monkeypatch):
     monkeypatch.setattr(web_app, 'recommend_product_types', lambda **kwargs: {
         'query': 'wireless mouse',
@@ -194,6 +237,52 @@ def test_template_recommend_endpoint_returns_candidates(monkeypatch):
     payload = response.get_json()
     assert payload['success'] is True
     assert payload['candidates'][0]['product_type'] == 'COMPUTER_INPUT_DEVICE'
+
+
+def test_template_manual_search_endpoint_returns_candidates(monkeypatch):
+    monkeypatch.setattr(web_app, 'manual_search_product_types', lambda **kwargs: {
+        'query': 'storage rack',
+        'source': 'manual_search',
+        'marketplace': 'US',
+        'warning': '',
+        'confidence': 'medium',
+        'needs_manual_selection': False,
+        'candidates': [
+            {'product_type': 'STORAGE_RACK', 'display_name': 'Storage Rack', 'score': 0.88},
+            {'product_type': 'SHELF', 'display_name': 'Shelf', 'score': 0.44},
+        ],
+    })
+
+    client = app.test_client()
+    response = client.post('/api/templates/manual-search', json={'keyword': 'storage rack'})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['candidates'][0]['product_type'] == 'STORAGE_RACK'
+
+
+def test_template_validate_endpoint_returns_usable_status(monkeypatch):
+    monkeypatch.setattr(web_app, 'validate_product_type_candidate', lambda **kwargs: {
+        'usable': True,
+        'message': '已通过 Amazon 官方模板检查，可以直接生成模板。',
+        'template_id': 'us_storage_rack_single',
+        'product_type': 'STORAGE_RACK',
+        'marketplace': 'US',
+        'variation_mode': 'single',
+        'required_total': 12,
+        'recommended_total': 5,
+        'column_count': 148,
+    })
+
+    client = app.test_client()
+    response = client.post('/api/templates/validate', json={'product_type': 'STORAGE_RACK', 'variation_mode': 'single'})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['usable'] is True
+    assert payload['template_id'] == 'us_storage_rack_single'
 
 
 def test_templates_generate_route_creates_task_and_downloadable_workbook(monkeypatch):
@@ -500,11 +589,13 @@ def test_template_diagnose_persists_preview_status_fields(monkeypatch):
     header_map = {header: idx + 1 for idx, header in enumerate(headers)}
     assert ws2.cell(row=3, column=header_map['preview_status']).value == 'INVALID'
     assert 'Preview failed' in str(ws2.cell(row=3, column=header_map['preview_message']).value or '')
+    assert 'compatible_devices' in str(ws2.cell(row=3, column=header_map['preview_issue_payload']).value or '')
     wb2.close()
 
     products_response = client.get('/api/products', query_string={'file': str(input_path)})
     sku_entry = products_response.get_json()['products'][0]['skus'][0]
     assert sku_entry['preview_status'] == 'INVALID'
+    assert 'compatible_devices' in sku_entry['preview_issue_payload']
 
 
 def test_template_diagnose_uses_template_labels_for_preview_missing_fields(monkeypatch):
@@ -717,7 +808,11 @@ def test_process_single_rewrite_returns_ai_fields_and_persists(monkeypatch):
 
         from stage1_pipeline import Stage1Pipeline
         monkeypatch.setattr(Stage1Pipeline, '_detect_product_type', lambda *args, **kwargs: 'PRODUCT')
-        monkeypatch.setattr(Stage1Pipeline, '_ai_text', lambda *args, **kwargs: 'AI Title')
+        monkeypatch.setattr(Stage1Pipeline, '_ai_text_with_retry', lambda *args, **kwargs: {
+            'text': 'AI Title',
+            'attempts': 2,
+            'error': '',
+        })
 
         client = app.test_client()
         response = client.post(
@@ -736,15 +831,26 @@ def test_process_single_rewrite_returns_ai_fields_and_persists(monkeypatch):
         assert payload['success'] is True
         assert payload['result']['ai_title'] == 'AI Title'
         assert payload['result']['ai_status'] == 'completed'
+        assert payload['result']['ai_text_attempts'] == 2
+        assert payload['result']['ai_text_model']
+        assert payload['result']['ai_text_protocol']
 
         wb2 = load_workbook(input_path)
         ws2 = wb2.active
         headers = [str(cell.value) if cell.value is not None else '' for cell in ws2[1]]
         assert 'AI标题' in headers
         assert 'AI状态' in headers
+        assert 'AI文案模型' in headers
+        assert 'AI文案协议' in headers
+        assert 'AI文案尝试次数' in headers
+        assert 'AI文案生成时间' in headers
         header_map = {header: idx + 1 for idx, header in enumerate(headers)}
         assert ws2.cell(row=2, column=header_map['AI标题']).value == 'AI Title'
         assert ws2.cell(row=2, column=header_map['AI状态']).value == 'completed'
+        assert ws2.cell(row=2, column=header_map['AI文案尝试次数']).value == 2
+        assert ws2.cell(row=2, column=header_map['AI文案模型']).value
+        assert ws2.cell(row=2, column=header_map['AI文案协议']).value
+        assert ws2.cell(row=2, column=header_map['AI文案生成时间']).value
         wb2.close()
     finally:
         if input_path.exists():
@@ -995,6 +1101,9 @@ def test_process_single_image_persists_media_locator_fields(monkeypatch):
         assert payload['result']['ai_media_locator'] == 's3://demo-bucket/amazon28/SKU-1/main.jpg'
         assert payload['result']['ai_upload_status'] == 'uploaded'
         assert payload['result']['ai_main_image']
+        assert payload['result']['ai_image_model']
+        assert payload['result']['ai_image_protocol']
+        assert payload['result']['ai_image_attempts'] == 1
 
         wb2 = load_workbook(input_path)
         ws2 = wb2.active
@@ -1002,6 +1111,10 @@ def test_process_single_image_persists_media_locator_fields(monkeypatch):
         header_map = {header: idx + 1 for idx, header in enumerate(headers)}
         assert ws2.cell(row=2, column=header_map['AI主图URL']).value == 's3://demo-bucket/amazon28/SKU-1/main.jpg'
         assert ws2.cell(row=2, column=header_map['AI主图上传状态']).value == 'uploaded'
+        assert ws2.cell(row=2, column=header_map['AI图片尝试次数']).value == 1
+        assert ws2.cell(row=2, column=header_map['AI图片模型']).value
+        assert ws2.cell(row=2, column=header_map['AI图片协议']).value
+        assert ws2.cell(row=2, column=header_map['AI图片生成时间']).value
         generated_path = ws2.cell(row=2, column=header_map['AI主图路径']).value
         wb2.close()
         generated_paths.append(generated_path)
@@ -1017,6 +1130,27 @@ def test_process_single_image_persists_media_locator_fields(monkeypatch):
         for generated_path in generated_paths:
             if generated_path and Path(generated_path).exists():
                 Path(generated_path).unlink()
+
+
+def test_stage1_ai_text_with_retry_retries_until_success(monkeypatch):
+    from stage1_pipeline import Stage1Pipeline
+
+    pipeline = Stage1Pipeline()
+    calls = {'count': 0}
+
+    def fake_ai_text(prompt, temperature=0.7, max_tokens=2000, raise_on_error=False):
+        calls['count'] += 1
+        if calls['count'] < 2:
+            raise RuntimeError('temporary failure')
+        return 'Recovered text'
+
+    monkeypatch.setattr('stage1_pipeline.ai_text', fake_ai_text)
+
+    result = pipeline._ai_text_with_retry('hello')
+
+    assert result['text'] == 'Recovered text'
+    assert result['attempts'] == 2
+    assert result['error'] == ''
 
 
 def test_update_product_endpoint_persists_multiple_fields_xlsx(monkeypatch):
@@ -1061,6 +1195,67 @@ def test_update_product_endpoint_persists_multiple_fields_xlsx(monkeypatch):
         assert ws2.cell(row=2, column=header_map['UPC']).value == '222222222222'
         assert ws2.cell(row=2, column=header_map['item_weight']).value == '1.25'
         assert ws2.cell(row=2, column=header_map['color']).value == 'Blue'
+        wb2.close()
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_update_product_invalidates_stale_workflow_statuses(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_update_product_invalidation_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append([
+        'SKU', 'item_name',
+        'preview_status', 'preview_message',
+        'validation_status', 'validation_errors',
+        'listing_check_status', 'listing_check_summary',
+        'template_required_missing_fields', 'template_ready_to_submit',
+        'submit_status', 'submission_id',
+    ])
+    ws.append([
+        'SKU-1', 'Old Title',
+        'VALID', 'preview ok',
+        'pass', '',
+        'PASS', 'all good',
+        'bullet_point_1', 'yes',
+        'ACCEPTED', 'SUB-123',
+    ])
+    wb.save(input_path)
+    wb.close()
+
+    try:
+        monkeypatch.setattr(web_config, 'INPUT_DIR', str(input_dir))
+
+        client = app.test_client()
+        response = client.post(
+            '/api/update-product',
+            json={
+                'file': str(input_path),
+                'sku': 'SKU-1',
+                'updates': {'title': 'Changed Title'},
+            },
+        )
+
+        assert response.status_code == 200
+
+        wb2 = load_workbook(input_path)
+        ws2 = wb2.active
+        headers = [str(cell.value) if cell.value is not None else '' for cell in ws2[1]]
+        header_map = {header: idx + 1 for idx, header in enumerate(headers)}
+        assert ws2.cell(row=2, column=header_map['item_name']).value == 'Changed Title'
+        assert ws2.cell(row=2, column=header_map['preview_status']).value in ('', None)
+        assert ws2.cell(row=2, column=header_map['preview_message']).value in ('', None)
+        assert ws2.cell(row=2, column=header_map['validation_status']).value in ('', None)
+        assert ws2.cell(row=2, column=header_map['listing_check_status']).value in ('', None)
+        assert ws2.cell(row=2, column=header_map['listing_check_summary']).value in ('', None)
+        assert ws2.cell(row=2, column=header_map['template_required_missing_fields']).value in ('', None)
+        assert ws2.cell(row=2, column=header_map['template_ready_to_submit']).value in ('', None)
+        assert ws2.cell(row=2, column=header_map['submit_status']).value == 'ACCEPTED'
+        assert ws2.cell(row=2, column=header_map['submission_id']).value == 'SUB-123'
         wb2.close()
     finally:
         if input_path.exists():
@@ -1310,12 +1505,14 @@ def test_listing_check_endpoint_persists_diagnostics(monkeypatch):
         assert 'manufacturer' in str(ws2.cell(row=2, column=header_map['listing_check_missing_fields']).value or '')
         assert 'HTTP 404' in str(ws2.cell(row=2, column=header_map['listing_check_issues']).value or '')
         assert ws2.cell(row=2, column=header_map['listing_check_account']).value == 'US Check'
+        assert 'manufacturer' in str(ws2.cell(row=2, column=header_map['listing_check_payload']).value or '')
         wb2.close()
 
         products_response = client.get('/api/products', query_string={'file': str(input_path)})
         sku_entry = products_response.get_json()['products'][0]['skus'][0]
         assert sku_entry['listing_check_status'] == 'fail'
         assert 'manufacturer' in sku_entry['listing_check_missing_fields']
+        assert 'manufacturer' in sku_entry['listing_check_payload']
     finally:
         if input_path.exists():
             input_path.unlink()
@@ -1411,8 +1608,8 @@ def test_submit_endpoint_persists_results_to_excel(monkeypatch):
             'status': 'ACCEPTED',
             'submissionId': 'SUB-001',
             'issues': [{'severity': 'WARNING', 'code': 'W1', 'message': 'Need review'}],
-            'identifiers': [{'asin': 'B00TEST123'}],
         })
+        monkeypatch.setattr(ListingsAPI, 'resolve_submission_asin', lambda self, sku, submit_result=None, max_attempts=2, delay=0.5: 'B00TEST123')
 
         client = app.test_client()
         response = client.post(
@@ -1566,7 +1763,7 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
         })
         monkeypatch.setattr(ListingsAPI, 'put_listings_item', lambda self, sku, product, preview=False: {
             'status': 'VALID',
-            'issues': [{'severity': 'WARNING', 'message': 'Review title formatting'}],
+            'issues': [{'severity': 'WARNING', 'message': 'Review title formatting', 'attributeNames': ['item_name']}],
         })
 
         client = app.test_client()
@@ -1590,6 +1787,7 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
         header_map = {header: idx + 1 for idx, header in enumerate(headers)}
         assert ws2.cell(row=2, column=header_map['preview_status']).value == 'VALID'
         assert 'Review title formatting' in str(ws2.cell(row=2, column=header_map['preview_message']).value or '')
+        assert 'item_name' in str(ws2.cell(row=2, column=header_map['preview_issue_payload']).value or '')
         assert ws2.cell(row=2, column=header_map['preview_account']).value == 'US Preview'
         assert ws2.cell(row=2, column=header_map['preview_time']).value
         wb2.close()
@@ -1598,9 +1796,213 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
         sku_entry = products_response.get_json()['products'][0]['skus'][0]
         assert sku_entry['preview_status'] == 'VALID'
         assert sku_entry['preview_account'] == 'US Preview'
+        assert 'item_name' in sku_entry['preview_issue_payload']
     finally:
         if input_path.exists():
             input_path.unlink()
+
+
+def test_update_family_endpoint_persists_multiple_variant_rows(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_update_family_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'parentage_level', 'parent_sku', 'variation_theme', 'color', 'size'])
+    ws.append(['PARENT-1', 'parent', '', 'COLOR_SIZE', '', ''])
+    ws.append(['CHILD-RED-S', 'child', 'PARENT-1', 'COLOR_SIZE', 'Red', 'S'])
+    ws.append(['CHILD-BLUE-M', 'child', 'PARENT-1', 'COLOR_SIZE', 'Blue', 'M'])
+    wb.save(input_path)
+    wb.close()
+
+    try:
+        client = app.test_client()
+        response = client.post('/api/update-family', json={
+            'file': str(input_path),
+            'updates_by_sku': {
+                'CHILD-RED-S': {'color': 'Crimson', 'size': 'Small'},
+                'CHILD-BLUE-M': {'color': 'Navy', 'size': 'Medium'},
+            },
+        })
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+        assert set(payload['updated_skus']) == {'CHILD-RED-S', 'CHILD-BLUE-M'}
+
+        wb2 = load_workbook(input_path)
+        ws2 = wb2.active
+        assert ws2.cell(row=3, column=5).value == 'Crimson'
+        assert ws2.cell(row=3, column=6).value == 'Small'
+        assert ws2.cell(row=4, column=5).value == 'Navy'
+        assert ws2.cell(row=4, column=6).value == 'Medium'
+        wb2.close()
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_append_family_rows_endpoint_adds_variant_children(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_append_family_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name', 'product_type', 'parentage_level', 'parent_sku', 'variation_theme', 'color', 'size'])
+    ws.append(['PARENT-10', 'Demo Family', 'SHIRT', 'parent', '', 'COLOR_SIZE', '', ''])
+    wb.save(input_path)
+    wb.close()
+
+    try:
+        client = app.test_client()
+        response = client.post('/api/append-family-rows', json={
+            'file': str(input_path),
+            'rows': [
+                {
+                    'sku': 'PARENT-10-RED-S',
+                    'item_name': 'Demo Family',
+                    'product_type': 'SHIRT',
+                    'parentage_level': 'child',
+                    'parent_sku': 'PARENT-10',
+                    'variation_theme': 'COLOR_SIZE',
+                    'color': 'Red',
+                    'size': 'S',
+                },
+                {
+                    'sku': 'PARENT-10-BLUE-M',
+                    'item_name': 'Demo Family',
+                    'product_type': 'SHIRT',
+                    'parentage_level': 'child',
+                    'parent_sku': 'PARENT-10',
+                    'variation_theme': 'COLOR_SIZE',
+                    'color': 'Blue',
+                    'size': 'M',
+                },
+            ],
+        })
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+        assert payload['added'] == 2
+
+        wb2 = load_workbook(input_path)
+        ws2 = wb2.active
+        assert ws2.max_row == 4
+        assert ws2.cell(row=3, column=1).value == 'PARENT-10-RED-S'
+        assert ws2.cell(row=4, column=7).value == 'Blue'
+        assert ws2.cell(row=4, column=8).value == 'M'
+        wb2.close()
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_persist_bulk_row_updates_serializes_same_file_writes(monkeypatch, tmp_path):
+    input_path = tmp_path / f'test_write_lock_{uuid4().hex[:8]}.xlsx'
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name', 'price'])
+    ws.append(['SKU-1', 'Old Name', '10'])
+    wb.save(input_path)
+    wb.close()
+
+    def slow_impl(input_file, updates_by_sku):
+        from openpyxl import load_workbook
+
+        wb_local = load_workbook(input_file)
+        ws_local = wb_local.active
+        header_row = web_app._detect_header_row(ws_local)
+        headers = web_app._build_header_index(ws_local, header_row)
+        sku_col_idx = headers['SKU']
+        row_map = {
+            str(ws_local.cell(row=row_idx, column=sku_col_idx).value or '').strip(): row_idx
+            for row_idx in range(header_row + 1, ws_local.max_row + 1)
+        }
+        time.sleep(0.1)
+        for sku, updates in updates_by_sku.items():
+            target_row_idx = row_map[sku]
+            for header_name, value in updates.items():
+                col_idx = web_app._ensure_header(ws_local, header_row, headers, header_name)
+                ws_local.cell(row=target_row_idx, column=col_idx, value=value)
+        wb_local.save(input_file)
+        wb_local.close()
+
+    monkeypatch.setattr(web_app, '_persist_bulk_row_updates_xlsx', slow_impl)
+
+    t1 = threading.Thread(
+        target=web_app._persist_bulk_row_updates,
+        args=(str(input_path), {'SKU-1': {'item_name': 'Name A'}}),
+    )
+    t2 = threading.Thread(
+        target=web_app._persist_bulk_row_updates,
+        args=(str(input_path), {'SKU-1': {'price': '99'}}),
+    )
+
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    wb2 = load_workbook(input_path)
+    ws2 = wb2.active
+    assert ws2['B2'].value == 'Name A'
+    assert ws2['C2'].value == '99'
+    wb2.close()
+
+
+def test_output_image_route_returns_real_png_mimetype(monkeypatch):
+    output_dir = Path(web_config.OUTPUT_DIR).resolve()
+    images_dir = output_dir / 'images'
+    image_path = images_dir / f'test_output_image_{uuid4().hex[:8]}.png'
+
+    try:
+        monkeypatch.setattr(web_config, 'OUTPUT_DIR', str(output_dir))
+        images_dir.mkdir(parents=True, exist_ok=True)
+        Image.new('RGBA', (2, 2), color=(255, 0, 0, 255)).save(image_path)
+
+        client = app.test_client()
+        response = client.get(f'/api/output-image/{image_path.name}')
+
+        assert response.status_code == 200
+        assert response.mimetype == 'image/png'
+    finally:
+        if image_path.exists():
+            image_path.unlink()
+
+
+def test_task_history_is_persisted_to_disk(monkeypatch, tmp_path):
+    original_history = []
+    with web_app._task_lock:
+        original_history[:] = [dict(record) for record in web_app.task_history]
+        web_app.task_history.clear()
+
+    original_output_dir = web_app.config.OUTPUT_DIR
+    monkeypatch.setattr(web_app.config, 'OUTPUT_DIR', str(tmp_path))
+
+    try:
+        record = web_app._start_task_record(kind='unit_test', title='持久化测试', input_file='demo.xlsx')
+        web_app._update_task_record(record['id'], status='completed', message='done')
+
+        history_file = tmp_path / 'task_history.json'
+        assert history_file.exists()
+
+        with web_app._task_lock:
+            web_app.task_history.clear()
+
+        web_app._load_task_history_from_disk()
+        restored = web_app._get_task_record(record['id'])
+        assert restored is not None
+        assert restored['title'] == '持久化测试'
+        assert restored['status'] == 'completed'
+    finally:
+        monkeypatch.setattr(web_app.config, 'OUTPUT_DIR', original_output_dir)
+        with web_app._task_lock:
+            web_app.task_history.clear()
+            web_app.task_history.extend(original_history)
 
 
 def test_submit_task_endpoint_returns_task_and_result(monkeypatch):
@@ -1646,6 +2048,123 @@ def test_submit_task_endpoint_returns_task_and_result(monkeypatch):
             input_path.unlink()
 
 
+def test_infer_submission_route_prefers_existing_asin_hint():
+    route = web_app._infer_submission_route({'asin': 'B0TEST123'}, {})
+    assert route == 'existing_asin'
+
+
+def test_listing_status_endpoint_summarizes_listing_payload(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filepath = input_dir / f'test_listing_status_{uuid4().hex[:8]}.xlsx'
+    filepath.write_text('placeholder', encoding='utf-8')
+
+    class FakeMapper:
+        def map_excel_row(self, row, col_map):
+            return {'sku': 'SKU-1', 'asin': 'B0TEST123'}
+
+    class FakeListingsAPI:
+        def get_listings_item(self, sku):
+            return {
+                'sku': sku,
+                'summaries': [{
+                    'asin': 'B0TEST123',
+                    'productType': 'STORAGE_RACK',
+                    'status': ['DISCOVERABLE'],
+                    'itemName': 'Demo Item',
+                    'lastUpdatedDate': '2026-03-29T00:00:00Z',
+                }],
+                'offers': [{'price': {'amount': '29.99'}}],
+                'fulfillmentAvailability': [{'fulfillmentChannelCode': 'DEFAULT', 'quantity': 120}],
+                'issues': [],
+            }
+
+    try:
+        monkeypatch.setattr(web_app, '_find_row_by_sku', lambda file, sku: ({'SKU': 'SKU-1', 'asin': 'B0TEST123'}, {'sku': 'SKU'}))
+        monkeypatch.setattr(web_app, '_build_listing_api_context', lambda account_id='': ({'name': 'US Account', 'seller_id': 'SELLER-1'}, FakeMapper(), FakeListingsAPI(), ''))
+
+        client = app.test_client()
+        response = client.get('/api/listing-status', query_string={'file': str(filepath), 'sku': 'SKU-1'})
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+        listing = payload['listing']
+        assert listing['asin'] == 'B0TEST123'
+        assert listing['route'] == 'existing_asin'
+        assert listing['final_status'] == 'discoverable'
+        assert listing['discoverable'] is True
+        assert listing['offer_count'] == 1
+        assert listing['fulfillment_count'] == 1
+        assert listing['account_name'] == 'US Account'
+    finally:
+        if filepath.exists():
+            filepath.unlink()
+
+
+def test_form_schema_endpoint_builds_sections_from_template_definition(monkeypatch):
+    definition = {
+        'template_id': 'us_storage_rack_single',
+        'product_type': 'STORAGE_RACK',
+        'marketplace': 'US',
+        'variation_mode': 'single',
+        'required_total': 2,
+        'recommended_total': 1,
+        'columns': [
+            {'key': 'sku', 'label_zh': 'SKU', 'label_en': 'Seller SKU', 'group': 'meta', 'level': 'required', 'description': '', 'example': 'SKU-1', 'default': '', 'enum_values': []},
+            {'key': 'condition_type', 'label_zh': '商品状况', 'label_en': 'Condition Type', 'group': 'offer', 'level': 'optional', 'description': '', 'example': '', 'default': 'new_new', 'enum_values': ['new_new', 'used_good']},
+            {'key': 'product_description', 'label_zh': '商品描述', 'label_en': 'Product Description', 'group': 'content', 'level': 'required', 'description': 'Long text', 'example': '', 'default': '', 'enum_values': []},
+            {'key': 'merchant_release_date', 'label_zh': '上架日期', 'label_en': 'Merchant Release Date', 'group': 'offer', 'level': 'optional', 'description': '', 'example': '', 'default': '', 'enum_values': []},
+        ],
+    }
+
+    monkeypatch.setattr(web_app, 'load_template_definition', lambda template_id: definition)
+
+    client = app.test_client()
+    response = client.get('/api/form-schema', query_string={'template_id': 'us_storage_rack_single'})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    schema = payload['schema']
+    assert schema['template_id'] == 'us_storage_rack_single'
+    section_keys = [section['key'] for section in schema['sections']]
+    assert section_keys == ['meta', 'offer', 'content']
+    offer_fields = {field['key']: field for field in schema['sections'][1]['fields']}
+    content_fields = {field['key']: field for field in schema['sections'][2]['fields']}
+    assert offer_fields['condition_type']['field_type'] == 'select'
+    assert offer_fields['merchant_release_date']['field_type'] == 'date'
+    assert content_fields['product_description']['field_type'] == 'textarea'
+
+
+def test_form_schema_endpoint_groups_dimension_and_measurement_fields(monkeypatch):
+    definition = {
+        'template_id': 'us_storage_rack_single',
+        'product_type': 'STORAGE_RACK',
+        'marketplace': 'US',
+        'variation_mode': 'single',
+        'required_total': 1,
+        'recommended_total': 1,
+        'columns': [
+            {'key': 'item_length', 'label_zh': '长度', 'label_en': 'Length', 'group': 'shipping', 'level': 'optional', 'description': '', 'example': '', 'default': '', 'enum_values': []},
+            {'key': 'item_width', 'label_zh': '宽度', 'label_en': 'Width', 'group': 'shipping', 'level': 'optional', 'description': '', 'example': '', 'default': '', 'enum_values': []},
+            {'key': 'item_height', 'label_zh': '高度', 'label_en': 'Height', 'group': 'shipping', 'level': 'optional', 'description': '', 'example': '', 'default': '', 'enum_values': []},
+            {'key': 'dimension_unit', 'label_zh': '尺寸单位', 'label_en': 'Dimension Unit', 'group': 'shipping', 'level': 'recommended', 'description': '', 'example': '', 'default': '', 'enum_values': []},
+            {'key': 'item_weight', 'label_zh': '商品重量', 'label_en': 'Item Weight', 'group': 'shipping', 'level': 'optional', 'description': '', 'example': '', 'default': '', 'enum_values': []},
+            {'key': 'item_weight_unit', 'label_zh': '重量单位', 'label_en': 'Weight Unit', 'group': 'shipping', 'level': 'optional', 'description': '', 'example': '', 'default': '', 'enum_values': []},
+        ],
+    }
+
+    monkeypatch.setattr(web_app, 'load_template_definition', lambda template_id: definition)
+
+    client = app.test_client()
+    response = client.get('/api/form-schema', query_string={'template_id': 'us_storage_rack_single'})
+    assert response.status_code == 200
+    fields = next(section['fields'] for section in response.get_json()['schema']['sections'] if section['key'] == 'shipping')
+    by_key = {field['key']: field for field in fields}
+    assert by_key['item_dimensions']['field_type'] == 'dimension_3d'
+    assert [child['key'] for child in by_key['item_dimensions']['children']] == ['item_length', 'item_width', 'item_height', 'dimension_unit']
+    assert by_key['item_weight']['field_type'] == 'measurement'
+    assert [child['key'] for child in by_key['item_weight']['children']] == ['item_weight', 'item_weight_unit']
+
+
 def test_account_manager_test_connection_uses_listings_probe(monkeypatch):
     output_dir = Path(web_config.OUTPUT_DIR).resolve()
     accounts_path = output_dir / f'test_accounts_{uuid4().hex[:8]}.json'
@@ -1689,6 +2208,161 @@ def test_account_manager_test_connection_uses_listings_probe(monkeypatch):
     finally:
         if accounts_path.exists():
             accounts_path.unlink()
+
+
+def test_account_manager_test_connection_rejects_placeholder_credentials():
+    output_dir = Path(web_config.OUTPUT_DIR).resolve()
+    accounts_path = output_dir / f'test_accounts_placeholder_{uuid4().hex[:8]}.json'
+    accounts_path.write_text(json.dumps({
+        'accounts': [{
+            'name': 'Placeholder',
+            'seller_id': 'YOUR_SELLER_ID',
+            'marketplace_id': 'ATVPDKIKX0DER',
+            'marketplace_name': 'Amazon US',
+            'lwa_client_id': 'amzn1.application-oa2-client.YOUR_CLIENT_ID',
+            'lwa_client_secret': 'YOUR_CLIENT_SECRET',
+            'refresh_token': 'Atzr|YOUR_REFRESH_TOKEN',
+            'is_default': True,
+            'enabled': True,
+        }]
+    }), encoding='utf-8')
+
+    try:
+        from amazon.accounts import AccountManager
+
+        manager = AccountManager(str(accounts_path))
+        result = manager.test_connection('YOUR_SELLER_ID')
+
+        assert result['success'] is False
+        assert '模板占位值' in result['message']
+    finally:
+        if accounts_path.exists():
+            accounts_path.unlink()
+
+
+def test_build_listing_api_context_skips_placeholder_credentials(monkeypatch):
+    from amazon.accounts import AccountManager
+
+    placeholder = {
+        'name': 'Placeholder',
+        'seller_id': 'YOUR_SELLER_ID',
+        'marketplace_id': 'ATVPDKIKX0DER',
+        'lwa_client_id': 'amzn1.application-oa2-client.YOUR_CLIENT_ID',
+        'lwa_client_secret': 'YOUR_CLIENT_SECRET',
+        'refresh_token': 'Atzr|YOUR_REFRESH_TOKEN',
+    }
+    monkeypatch.setattr(AccountManager, 'get_default_account', lambda self: dict(placeholder))
+
+    account, mapper, listings_api, message = web_app._build_listing_api_context('')
+
+    assert account['seller_id'] == 'YOUR_SELLER_ID'
+    assert mapper.marketplace_id == 'ATVPDKIKX0DER'
+    assert listings_api is None
+    assert '模板占位值' in message
+
+
+def test_account_manager_template_restricts_permissions():
+    output_dir = Path(web_config.OUTPUT_DIR).resolve()
+    accounts_path = output_dir / f'test_accounts_perm_{uuid4().hex[:8]}.json'
+
+    try:
+        from amazon.accounts import AccountManager
+
+        manager = AccountManager(str(accounts_path))
+        assert manager.accounts
+        if os.name != 'nt':
+            assert oct(accounts_path.stat().st_mode & 0o777) == '0o600'
+    finally:
+        if accounts_path.exists():
+            accounts_path.unlink()
+
+
+def test_amazon_auth_token_refresh_uses_timeout(monkeypatch):
+    import pytest
+    import requests
+    from amazon.auth import AmazonAuth, LWA_TIMEOUT_SECONDS
+
+    captured = {}
+
+    def fake_post(url, data, timeout):
+        captured['url'] = url
+        captured['timeout'] = timeout
+        raise requests.exceptions.Timeout('slow')
+
+    monkeypatch.setattr(requests, 'post', fake_post)
+
+    auth = AmazonAuth('client-id', 'client-secret', 'refresh-token')
+
+    with pytest.raises(Exception) as exc_info:
+        auth.get_access_token()
+
+    assert captured['timeout'] == LWA_TIMEOUT_SECONDS
+    assert '超时' in str(exc_info.value)
+
+
+def test_save_sp_config_updates_accounts_json_and_config_status(monkeypatch):
+    temp_dir = Path(web_config.OUTPUT_DIR).resolve() / f'tmp_sp_config_{uuid4().hex[:8]}'
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    env_path = temp_dir / '.env'
+    accounts_path = temp_dir / 'accounts.json'
+    env_path.write_text('', encoding='utf-8')
+
+    tracked_keys = ['AMAZON_CLIENT_ID', 'AMAZON_CLIENT_SECRET', 'AMAZON_REFRESH_TOKEN', 'AMAZON_SELLER_ID']
+    original_env = {key: os.environ.get(key) for key in tracked_keys}
+
+    try:
+        monkeypatch.setattr(web_app, '_env_file_path', lambda: str(env_path))
+        monkeypatch.setattr(web_app, '_accounts_file_path', lambda: str(accounts_path))
+        for key in tracked_keys:
+            monkeypatch.delenv(key, raising=False)
+
+        client = app.test_client()
+        response = client.post('/api/sp-config', json={
+            'client_id': 'client-id',
+            'client_secret': 'client-secret',
+            'refresh_token': 'refresh-token',
+            'seller_id': 'SELLER-123',
+        })
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+
+        accounts_payload = json.loads(accounts_path.read_text(encoding='utf-8'))
+        account = accounts_payload['accounts'][0]
+        assert account['seller_id'] == 'SELLER-123'
+        assert account['lwa_client_id'] == 'client-id'
+        assert account['lwa_client_secret'] == 'client-secret'
+        assert account['refresh_token'] == 'refresh-token'
+        assert account['is_default'] is True
+
+        if os.name != 'nt':
+            assert oct(accounts_path.stat().st_mode & 0o777) == '0o600'
+
+        response = client.get('/api/config')
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['amazon_configured'] is True
+
+        env_text = env_path.read_text(encoding='utf-8')
+        assert 'AMAZON_CLIENT_ID=client-id' in env_text
+        assert 'AMAZON_CLIENT_SECRET=client-secret' in env_text
+        assert 'AMAZON_REFRESH_TOKEN=refresh-token' in env_text
+        assert 'AMAZON_SELLER_ID=SELLER-123' in env_text
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        from config import reload_config
+        reload_config()
+        if accounts_path.exists():
+            accounts_path.unlink()
+        if env_path.exists():
+            env_path.unlink()
+        if temp_dir.exists():
+            temp_dir.rmdir()
 
 
 def test_self_check_endpoint_reports_core_checks(monkeypatch):

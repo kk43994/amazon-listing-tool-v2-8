@@ -135,7 +135,7 @@ class FeedsAPI:
             result_response = requests.get(result_url, timeout=30)
             try:
                 return result_response.json()
-            except:
+            except ValueError:
                 return {'raw': result_response.text}
         return doc
 
@@ -232,6 +232,7 @@ class FeedsAPI:
                 "sku": item['sku'],
                 "operationType": "PARTIAL_UPDATE" if item.get('update') else "UPDATE",
                 "productType": item.get('product_type', 'PRODUCT'),
+                "requirements": item.get('requirements', 'LISTING'),
                 "attributes": item.get('attributes', {}),
             })
 

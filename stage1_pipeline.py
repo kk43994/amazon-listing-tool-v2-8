@@ -3,7 +3,6 @@
 读取Excel → AI图片处理 + 文案生成(含前后对比) → 输出对比Excel
 """
 import os
-import sys
 import json
 import logging
 import base64
@@ -19,16 +18,17 @@ from uuid import uuid4
 
 from PIL import Image
 
-from amazon.mapper import MARKETPLACE_CODE_BY_ID
+from amazon.mapper import MARKETPLACE_CODE_BY_ID, MARKETPLACE_LANGUAGE, MARKETPLACE_IDS
 from config import get_config
 from core.excel.processor import ExcelProcessor
-from core.ai_client import ai_text, ai_image_edit, ai_image_edit_url
+from core.ai_client import ai_text, ai_image_edit_url
 from core.media_store import get_media_store
+from core.utils import filter_rows
 from core.prompts.amazon_prompts import (
     TITLE_PROMPT, BULLET_POINTS_PROMPT, DESCRIPTION_PROMPT,
-    SEARCH_TERMS_PROMPT, IMAGE_BG_GRADIENT_PROMPT, IMAGE_BG_LIFESTYLE_PROMPT,
-    IMAGE_BG_WHITE_PROMPT, PRODUCT_TYPE_SUGGEST_PROMPT,
-    PRODUCT_ANALYSIS_PROMPT
+    SEARCH_TERMS_PROMPT, SPECIAL_FEATURE_PROMPT, TARGET_AUDIENCE_PROMPT,
+    SUBJECT_KEYWORDS_PROMPT, IMAGE_BG_GRADIENT_PROMPT, IMAGE_BG_LIFESTYLE_PROMPT,
+    IMAGE_BG_WHITE_PROMPT, PRODUCT_TYPE_SUGGEST_PROMPT
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,8 @@ class Stage1Pipeline:
             text_fields: List[str] = None, overwrite_existing: bool = True,
             progress_callback: Optional[Callable[[int, int, str], None]] = None,
             image_scope: str = 'main', image_style: str = 'white',
+            image_custom_prompt: str = '',
+            image_reference_url: str = '',
             cancel_event: Optional[threading.Event] = None):
         """
         运行第一阶段处理
@@ -73,7 +75,7 @@ class Stage1Pipeline:
             output_file = os.path.join(self.config.OUTPUT_DIR,
                                        f'对比结果_{timestamp}.xlsx')
 
-        logger.info(f"🚀 第一阶段启动 (V2 前后对比模式)")
+        logger.info("🚀 第一阶段启动 (V2 前后对比模式)")
         logger.info(f"  输入: {input_file}")
         logger.info(f"  输出: {output_file}")
         logger.info(f"  图片处理: {'✅' if process_images else '❌'}")
@@ -88,15 +90,8 @@ class Stage1Pipeline:
 
         # 行范围过滤
         if rows:
-            try:
-                if '-' in rows:
-                    start, end = rows.split('-')
-                    data = data[int(start)-1:int(end)]
-                else:
-                    data = [data[int(rows)-1]]
-                logger.info(f"📏 行范围过滤: {rows} → {len(data)} 条")
-            except (ValueError, IndexError) as e:
-                logger.warning(f"行范围解析失败: {rows}, 使用全部数据")
+            data = filter_rows(data, rows)
+            logger.info(f"📏 行范围过滤: {rows} → {len(data)} 条")
 
         # 断点续传
         progress_file = os.path.join(self.config.OUTPUT_DIR, '.progress.json')
@@ -167,6 +162,7 @@ class Stage1Pipeline:
                         image_semaphore=image_semaphore,
                         image_scope=image_scope,
                         image_style=image_style,
+                        image_custom_prompt=image_custom_prompt,
                         cancel_event=cancel_event,
                     )
                     if not submitted:
@@ -225,6 +221,8 @@ class Stage1Pipeline:
                             image_semaphore=image_semaphore,
                             image_scope=image_scope,
                             image_style=image_style,
+                            image_custom_prompt=image_custom_prompt,
+                            image_reference_url=image_reference_url,
                             cancel_event=cancel_event,
                         )
                         if not submitted:
@@ -268,7 +266,9 @@ class Stage1Pipeline:
                             text_fields: Optional[List[str]], overwrite_existing: bool,
                             text_semaphore, image_semaphore,
                             image_scope: str, image_style: str,
-                            cancel_event: threading.Event) -> bool:
+                            image_custom_prompt: str = '',
+                            image_reference_url: str = '',
+                            cancel_event: threading.Event = None) -> bool:
         try:
             idx, item = next(pending_iter)
         except StopIteration:
@@ -288,6 +288,8 @@ class Stage1Pipeline:
             image_semaphore=image_semaphore,
             image_scope=image_scope,
             image_style=image_style,
+            image_custom_prompt=image_custom_prompt,
+            image_reference_url=image_reference_url,
             cancel_event=cancel_event,
         )
         future_map[future] = idx
@@ -321,6 +323,8 @@ class Stage1Pipeline:
                              text_fields: Optional[List[str]], overwrite_existing: bool,
                              text_semaphore, image_semaphore,
                              image_scope: str, image_style: str,
+                             image_custom_prompt: str = '',
+                             image_reference_url: str = '',
                              cancel_event: Optional[threading.Event] = None) -> Dict:
         sku = str(item.get(col_map.get('sku', ''), '') or item.get('SKU', '') or f'ROW-{idx+1}')
         logger.info(f"\n{'='*50}")
@@ -381,6 +385,8 @@ class Stage1Pipeline:
                         idx,
                         scope=image_scope,
                         bg_style=image_style,
+                        custom_prompt=image_custom_prompt,
+                        reference_image_url=image_reference_url,
                         cancel_event=cancel_event,
                     ) or generated_any
 
@@ -473,6 +479,10 @@ class Stage1Pipeline:
         cancel_event = cancel_event or threading.Event()
         selected_fields = set(text_fields or ['title', 'bullets', 'description', 'keywords'])
         generated_any = False
+        text_attempts = 0
+        text_errors = []
+        marketplace_language = self._resolve_marketplace_language()
+        text_generated_at = ''
 
         # === 标题 ===
         title = item.get('AI标题', '')
@@ -480,18 +490,25 @@ class Stage1Pipeline:
             if cancel_event.is_set():
                 return generated_any
             logger.info("  📝 生成标题...")
-            title = self._ai_text(
+            title_result = self._ai_text_with_retry(
                 TITLE_PROMPT.format(
                     product_info=product_info,
                     product_type=product_type,
+                    language=marketplace_language,
                 )
             )
+            text_attempts += title_result['attempts']
+            if title_result['error']:
+                text_errors.append(f"标题: {title_result['error']}")
+            title = title_result['text']
             if len(title) > 200:
                 title = title[:197] + "..."
-                logger.warning(f"  ⚠️ 标题超长，已截断至200字符")
+                logger.warning("  ⚠️ 标题超长，已截断至200字符")
             item['AI标题'] = title
             logger.info(f"     → [{len(title)}字符] {title[:80]}...")
             generated_any = generated_any or bool(str(title).strip())
+            if title:
+                text_generated_at = self._now_text()
 
         # === Bullet Points(分5条) ===
         bullets = [item.get(f'AI卖点{i}', '') for i in range(1, 6)]
@@ -499,12 +516,17 @@ class Stage1Pipeline:
             if cancel_event.is_set():
                 return generated_any
             logger.info("  📝 生成Bullet Points...")
-            bullets_raw = self._ai_text(
+            bullets_result = self._ai_text_with_retry(
                 BULLET_POINTS_PROMPT.format(
                     product_info=product_info,
                     product_type=product_type,
+                    language=marketplace_language,
                 )
             )
+            text_attempts += bullets_result['attempts']
+            if bullets_result['error']:
+                text_errors.append(f"卖点: {bullets_result['error']}")
+            bullets_raw = bullets_result['text']
             bullets = self._parse_bullets(bullets_raw)
             for i, bp in enumerate(bullets, 1):
                 if len(bp) > 500:
@@ -514,6 +536,8 @@ class Stage1Pipeline:
                 logger.info(f"     卖点{i} [{len(bp)}字符]: {bp[:60]}...")
                 generated_any = generated_any or bool(str(bp).strip())
             item['AI五点描述'] = "\n".join(f"• {bp}" for bp in bullets)
+            if any(str(bp).strip() for bp in bullets):
+                text_generated_at = self._now_text()
 
         # === 描述 ===
         desc = item.get('AI商品描述', '')
@@ -521,18 +545,25 @@ class Stage1Pipeline:
             if cancel_event.is_set():
                 return generated_any
             logger.info("  📝 生成商品描述...")
-            desc = self._ai_text(
+            desc_result = self._ai_text_with_retry(
                 DESCRIPTION_PROMPT.format(
                     product_info=product_info,
                     product_type=product_type,
+                    language=marketplace_language,
                 )
             )
+            text_attempts += desc_result['attempts']
+            if desc_result['error']:
+                text_errors.append(f"描述: {desc_result['error']}")
+            desc = desc_result['text']
             if len(desc) > 2000:
                 desc = desc[:1997] + "..."
-                logger.warning(f"  ⚠️ 描述超长，已截断至2000字符")
+                logger.warning("  ⚠️ 描述超长，已截断至2000字符")
             item['AI商品描述'] = desc
             logger.info(f"     [{len(desc)}字符]")
             generated_any = generated_any or bool(str(desc).strip())
+            if desc:
+                text_generated_at = self._now_text()
 
         # === 搜索关键词 ===
         keywords = item.get('AI搜索关键词', '')
@@ -541,13 +572,18 @@ class Stage1Pipeline:
                 return generated_any
             logger.info("  📝 生成搜索关键词...")
             existing_title = title or item.get(col_map.get('title', ''), '')
-            keywords = self._ai_text(
+            keywords_result = self._ai_text_with_retry(
                 SEARCH_TERMS_PROMPT.format(
                     product_info=product_info,
                     product_type=product_type,
                     title=existing_title,
+                    language=marketplace_language,
                 )
             )
+            text_attempts += keywords_result['attempts']
+            if keywords_result['error']:
+                text_errors.append(f"搜索词: {keywords_result['error']}")
+            keywords = keywords_result['text']
             kw_bytes = len(keywords.encode('utf-8'))
             if kw_bytes > 250:
                 words = keywords.split()
@@ -560,11 +596,91 @@ class Stage1Pipeline:
                     result.append(w)
                     total += wb
                 keywords = " ".join(result)
-                logger.warning(f"  ⚠️ 搜索词超过250字节，已截断")
+                logger.warning("  ⚠️ 搜索词超过250字节，已截断")
             item['AI搜索关键词'] = keywords
             logger.info(f"     [{len(keywords.encode('utf-8'))}字节] {keywords[:60]}...")
 
             generated_any = generated_any or bool(str(keywords).strip())
+            if keywords:
+                text_generated_at = self._now_text()
+
+        # === 特殊功能/亮点 ===
+        special_feature = item.get('AI特殊功能', '')
+        if 'special_feature' in selected_fields and (overwrite_existing or not special_feature):
+            if not cancel_event.is_set():
+                logger.info("  📝 生成特殊功能亮点...")
+                sf_result = self._ai_text_with_retry(
+                    SPECIAL_FEATURE_PROMPT.format(
+                        product_info=product_info,
+                        product_type=product_type,
+                        language=marketplace_language,
+                    )
+                )
+                text_attempts += sf_result['attempts']
+                if sf_result['error']:
+                    text_errors.append(f"特殊功能: {sf_result['error']}")
+                special_feature = sf_result['text'].strip()
+                item['AI特殊功能'] = special_feature
+                if special_feature:
+                    logger.info(f"     → {special_feature[:80]}...")
+                    generated_any = True
+                    text_generated_at = self._now_text()
+
+        # === 目标受众 ===
+        target_audience = item.get('AI目标受众', '')
+        if 'target_audience' in selected_fields and (overwrite_existing or not target_audience):
+            if not cancel_event.is_set():
+                logger.info("  📝 生成目标受众关键词...")
+                ta_result = self._ai_text_with_retry(
+                    TARGET_AUDIENCE_PROMPT.format(
+                        product_info=product_info,
+                        product_type=product_type,
+                        language=marketplace_language,
+                    )
+                )
+                text_attempts += ta_result['attempts']
+                if ta_result['error']:
+                    text_errors.append(f"目标受众: {ta_result['error']}")
+                target_audience = ta_result['text'].strip()
+                item['AI目标受众'] = target_audience
+                if target_audience:
+                    logger.info(f"     → {target_audience[:80]}...")
+                    generated_any = True
+                    text_generated_at = self._now_text()
+
+        # === 主题关键词 ===
+        subject_kw = item.get('AI主题关键词', '')
+        if 'subject_keywords' in selected_fields and (overwrite_existing or not subject_kw):
+            if not cancel_event.is_set():
+                logger.info("  📝 生成主题关键词...")
+                existing_title = title or item.get(col_map.get('title', ''), '')
+                sk_result = self._ai_text_with_retry(
+                    SUBJECT_KEYWORDS_PROMPT.format(
+                        product_info=product_info,
+                        product_type=product_type,
+                        title=existing_title,
+                        language=marketplace_language,
+                    )
+                )
+                text_attempts += sk_result['attempts']
+                if sk_result['error']:
+                    text_errors.append(f"主题关键词: {sk_result['error']}")
+                subject_kw = sk_result['text'].strip()
+                item['AI主题关键词'] = subject_kw
+                if subject_kw:
+                    logger.info(f"     → {subject_kw[:80]}...")
+                    generated_any = True
+                    text_generated_at = self._now_text()
+
+        if text_attempts:
+            self._apply_ai_trace(
+                item,
+                kind='text',
+                attempts=text_attempts,
+                success=generated_any,
+                error=' | '.join(text_errors),
+                generated_at=text_generated_at,
+            )
 
         return generated_any
 
@@ -651,8 +767,10 @@ class Stage1Pipeline:
 
     def _process_images(self, item: Dict, col_map: Dict, idx: int,
                         scope: str = 'main', bg_style: str = 'white',
+                        custom_prompt: str = '',
+                        reference_image_url: str = '',
                         cancel_event: Optional[threading.Event] = None):
-        """AI图片处理，支持主图或全图生成。"""
+        """AI图片处理，支持主图或全图生成。支持自定义提示词。"""
         cancel_event = cancel_event or threading.Event()
         scope = self._normalize_image_scope(scope)
         bg_style = self._normalize_bg_style(bg_style)
@@ -663,7 +781,13 @@ class Stage1Pipeline:
             return False
 
         generated_any = False
-        prompt = self._build_image_prompt(bg_style, item, col_map)
+        # 自定义提示词优先，否则使用预设风格
+        prompt = custom_prompt.strip() if custom_prompt and custom_prompt.strip() else self._build_image_prompt(bg_style, item, col_map)
+        if custom_prompt and custom_prompt.strip():
+            logger.info(f"  🖼️ 使用自定义图片提示词: {prompt[:60]}...")
+        image_attempts = 0
+        image_errors = []
+        image_generated_at = ''
 
         for image_source in image_sources:
             if cancel_event.is_set():
@@ -681,7 +805,11 @@ class Stage1Pipeline:
                 logger.info(f"  🖼️ {label}URL: {image_url[:60]}...")
                 logger.info(f"  🖼️ 调用图片编辑API生成{label} ({bg_style})...")
 
-                result = ai_image_edit_url(image_url, prompt)
+                result_info = self._ai_image_edit_url_with_retry(image_url, prompt, reference_image_url=reference_image_url)
+                image_attempts += result_info['attempts']
+                if result_info['error']:
+                    image_errors.append(f"{label}: {result_info['error']}")
+                result = result_info['data']
                 if not result:
                     logger.warning(f"  ⚠️ {label}处理失败")
                     continue
@@ -695,8 +823,20 @@ class Stage1Pipeline:
                 elif upload_result.get('error'):
                     logger.warning(f"     → {label}上传未完成: {upload_result.get('error')}")
                 generated_any = True
+                image_generated_at = self._now_text()
             except Exception as e:
                 logger.error(f"  ❌ {label}处理失败: {e}")
+                image_errors.append(f"{label}: {e}")
+
+        if image_attempts:
+            self._apply_ai_trace(
+                item,
+                kind='image',
+                attempts=image_attempts,
+                success=generated_any,
+                error=' | '.join(image_errors),
+                generated_at=image_generated_at,
+            )
 
         return generated_any
 
@@ -844,9 +984,74 @@ class Stage1Pipeline:
         marketplace_id = str(getattr(self.config, 'AMAZON_MARKETPLACE', '') or '').strip()
         return MARKETPLACE_CODE_BY_ID.get(marketplace_id, 'US')
 
+    def _resolve_marketplace_language(self) -> str:
+        marketplace_id = str(getattr(self.config, 'AMAZON_MARKETPLACE', '') or '').strip()
+        return MARKETPLACE_LANGUAGE.get(marketplace_id, 'en_US')
+
     def _ai_text(self, prompt: str) -> str:
         """调用AI生成文本"""
         return ai_text(prompt, temperature=0.7, max_tokens=2000)
+
+    def _ai_text_with_retry(self, prompt: str) -> Dict:
+        attempts_allowed = max(1, int(getattr(self.config, 'OPENAI_MAX_RETRIES', 1) or 1))
+        last_error = ''
+        for attempt in range(1, attempts_allowed + 1):
+            try:
+                result = ai_text(
+                    prompt,
+                    temperature=0.7,
+                    max_tokens=2000,
+                    raise_on_error=True,
+                )
+                text = str(result or '').strip()
+                if not text:
+                    raise ValueError('AI返回空文本')
+                return {'text': text, 'attempts': attempt, 'error': ''}
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning(f"  ⚠️ 文本生成第 {attempt}/{attempts_allowed} 次失败: {last_error}")
+                if attempt < attempts_allowed:
+                    time.sleep(min(2 ** (attempt - 1), 3))
+        return {'text': '', 'attempts': attempts_allowed, 'error': last_error or 'AI返回空文本'}
+
+    def _ai_image_edit_url_with_retry(self, image_url: str, prompt: str,
+                                      reference_image_url: str = '') -> Dict:
+        attempts_allowed = max(1, int(getattr(self.config, 'OPENAI_MAX_RETRIES', 1) or 1))
+        last_error = ''
+        for attempt in range(1, attempts_allowed + 1):
+            try:
+                result = ai_image_edit_url(image_url, prompt,
+                                           reference_image_url=reference_image_url,
+                                           raise_on_error=True)
+                payload = str(result or '').strip()
+                if not payload:
+                    raise ValueError('AI图片接口未返回图片数据')
+                return {'data': payload, 'attempts': attempt, 'error': ''}
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning(f"  ⚠️ 图片生成第 {attempt}/{attempts_allowed} 次失败: {last_error}")
+                if attempt < attempts_allowed:
+                    time.sleep(min(2 ** (attempt - 1), 3))
+        return {'data': None, 'attempts': attempts_allowed, 'error': last_error or 'AI图片接口未返回图片数据'}
+
+    def _apply_ai_trace(self, item: Dict, kind: str, attempts: int, success: bool, error: str = '', generated_at: str = ''):
+        if kind == 'text':
+            item['AI文案模型'] = str(getattr(self.config, 'AI_TEXT_MODEL', '') or '').strip()
+            item['AI文案协议'] = str(getattr(self.config, 'AI_TEXT_PROTOCOL', '') or '').strip()
+            item['AI文案尝试次数'] = attempts
+            item['AI文案最后错误'] = '' if success else str(error or '').strip()
+            if generated_at:
+                item['AI文案生成时间'] = generated_at
+        elif kind == 'image':
+            item['AI图片模型'] = str(getattr(self.config, 'AI_IMAGE_MODEL', '') or '').strip()
+            item['AI图片协议'] = str(getattr(self.config, 'AI_IMAGE_PROTOCOL', '') or '').strip()
+            item['AI图片尝试次数'] = attempts
+            item['AI图片最后错误'] = '' if success else str(error or '').strip()
+            if generated_at:
+                item['AI图片生成时间'] = generated_at
+
+    def _now_text(self) -> str:
+        return time.strftime('%Y-%m-%d %H:%M:%S')
 
     def _image_to_base64(self, img: Image.Image) -> str:
         """PIL Image → base64 (缩小到合理尺寸以节省API费用)"""

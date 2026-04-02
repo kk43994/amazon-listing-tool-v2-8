@@ -8,7 +8,7 @@ import mimetypes
 import os
 import re
 import time
-from typing import Dict, Optional
+from typing import Dict
 from uuid import uuid4
 
 from core.media_store import MediaUploadResult

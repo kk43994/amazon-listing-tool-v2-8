@@ -39,13 +39,16 @@ def _resolve_dir_setting(value: str, default_name: str) -> str:
     return os.path.abspath(os.path.join(BASE_DIR, text))
 
 
-def _read_int_env(name: str, default: int, minimum: int = 1) -> int:
+def _read_int_env(name: str, default: int, minimum: int = 1, maximum: int = 0) -> int:
     raw = str(os.getenv(name, str(default)) or "").strip()
     try:
         value = int(raw)
     except (TypeError, ValueError):
         value = default
-    return max(minimum, value)
+    value = max(minimum, value)
+    if maximum > 0:
+        value = min(value, maximum)
+    return value
 
 
 def _read_bool_env(name: str, default: bool = False) -> bool:
@@ -117,9 +120,9 @@ class Config:
         self.DEFAULT_LANG = os.getenv('DEFAULT_LANG', 'zh').strip().lower() or 'zh'
         if self.DEFAULT_LANG not in ('zh', 'en'):
             self.DEFAULT_LANG = 'zh'
-        self.BATCH_LIMIT = _read_int_env('BATCH_LIMIT', 500, minimum=1)
-        self.AI_CONCURRENCY = _read_int_env('AI_CONCURRENCY', 3, minimum=1)
-        self.IMAGE_CONCURRENCY = _read_int_env('IMAGE_CONCURRENCY', 2, minimum=1)
+        self.BATCH_LIMIT = _read_int_env('BATCH_LIMIT', 500, minimum=1, maximum=10000)
+        self.AI_CONCURRENCY = _read_int_env('AI_CONCURRENCY', 3, minimum=1, maximum=20)
+        self.IMAGE_CONCURRENCY = _read_int_env('IMAGE_CONCURRENCY', 2, minimum=1, maximum=10)
 
         # 图片处理
         self.IMAGE_MAX_SIZE = 2000

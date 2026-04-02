@@ -34,6 +34,23 @@ def test_put_listings_item_uses_identifiers_only_in_preview(monkeypatch):
     assert captured['params']['includedData'] == 'issues'
 
 
+def test_put_listings_item_backfills_asin_from_listing_lookup(monkeypatch):
+    def fake_put(url, params=None, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, {'status': 'ACCEPTED', 'issues': [], 'submissionId': 'SUB-001'})
+
+    monkeypatch.setattr('amazon.listings.requests.put', fake_put)
+    monkeypatch.setattr(
+        ListingsAPI,
+        'get_listings_item',
+        lambda self, sku: {'summaries': [{'asin': 'B00BACKFILL123'}]},
+    )
+
+    api = ListingsAPI(auth=_FakeAuth(), seller_id='SELLER', marketplace_id='ATVPDKIKX0DER')
+    result = api.put_listings_item('SKU-1', {'sku': 'SKU-1', 'product_type': 'PRODUCT'}, preview=False)
+
+    assert result['asin'] == 'B00BACKFILL123'
+
+
 def test_put_listings_item_flattens_top_level_errors(monkeypatch):
     def fake_put(url, params=None, headers=None, json=None, timeout=None):
         return _FakeResponse(400, {
@@ -53,3 +70,56 @@ def test_put_listings_item_flattens_top_level_errors(monkeypatch):
     assert result['http_status'] == 400
     assert result['issues'][0]['code'] == 'InvalidInput'
     assert result['issues'][0]['severity'] == 'ERROR'
+
+
+def test_submit_listings_blocks_when_preview_returns_error_status(monkeypatch):
+    api = ListingsAPI(auth=_FakeAuth(), seller_id='SELLER', marketplace_id='ATVPDKIKX0DER')
+    calls = []
+
+    monkeypatch.setattr(
+        api.mapper,
+        'validate_required_fields',
+        lambda product: {'valid': True, 'errors': [], 'warnings': []},
+    )
+
+    def fake_put(sku, product, preview=False):
+        calls.append((sku, preview))
+        if preview:
+            return {'status': 'ERROR', 'issues': [{'severity': 'ERROR', 'message': 'timeout'}]}
+        return {'status': 'ACCEPTED', 'issues': []}
+
+    monkeypatch.setattr(api, 'put_listings_item', fake_put)
+
+    results = api.submit_listings([{'sku': 'SKU-1', 'title': 'Demo', 'product_type': 'PRODUCT'}], preview_first=True, delay=0)
+
+    assert calls == [('SKU-1', True)]
+    assert results[0]['status'] == 'PREVIEW_ERROR'
+
+
+def test_submit_listings_uses_resolved_asin_when_submit_response_has_none(monkeypatch):
+    api = ListingsAPI(auth=_FakeAuth(), seller_id='SELLER', marketplace_id='ATVPDKIKX0DER')
+
+    monkeypatch.setattr(
+        api.mapper,
+        'validate_required_fields',
+        lambda product: {'valid': True, 'errors': [], 'warnings': []},
+    )
+    monkeypatch.setattr(
+        api,
+        'put_listings_item',
+        lambda sku, product, preview=False: (
+            {'status': 'VALID', 'issues': []}
+            if preview
+            else {'status': 'ACCEPTED', 'issues': [], 'submissionId': 'SUB-001'}
+        ),
+    )
+    monkeypatch.setattr(
+        api,
+        'resolve_submission_asin',
+        lambda sku, submit_result=None, max_attempts=2, delay=0.5: 'B00RESOLVED123',
+    )
+
+    results = api.submit_listings([{'sku': 'SKU-1', 'title': 'Demo', 'product_type': 'PRODUCT'}], preview_first=True, delay=0)
+
+    assert results[0]['status'] == 'ACCEPTED'
+    assert results[0]['asin'] == 'B00RESOLVED123'

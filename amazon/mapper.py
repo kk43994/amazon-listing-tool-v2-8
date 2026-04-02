@@ -46,6 +46,34 @@ MARKETPLACE_REGION = {
 
 MARKETPLACE_CODE_BY_ID = {marketplace_id: code for code, marketplace_id in MARKETPLACE_IDS.items()}
 
+# 各站点默认币种
+MARKETPLACE_CURRENCY = {
+    'ATVPDKIKX0DER': 'USD',   # US
+    'A2EUQ1WTGCTBG2': 'CAD',  # CA
+    'A1AM78C64UM0Y8': 'MXN',  # MX
+    'A1F83G8C2ARO7P': 'GBP',  # UK
+    'A1PA6795UKMFR9': 'EUR',  # DE
+    'A13V1IB3VIYZZH': 'EUR',  # FR
+    'APJ6JRA9NG5V4': 'EUR',   # IT
+    'A1RKKUPIHCS9HS': 'EUR',  # ES
+    'A1VC38T7YXB528': 'JPY',  # JP
+    'A39IBJ37TRP1C6': 'AUD',  # AU
+}
+
+# 各站点主要语言（用于 AI 提示词语言选择和 language_tag）
+MARKETPLACE_LANGUAGE = {
+    'ATVPDKIKX0DER': 'en_US',
+    'A2EUQ1WTGCTBG2': 'en_CA',
+    'A1AM78C64UM0Y8': 'es_MX',
+    'A1F83G8C2ARO7P': 'en_GB',
+    'A1PA6795UKMFR9': 'de_DE',
+    'A13V1IB3VIYZZH': 'fr_FR',
+    'APJ6JRA9NG5V4': 'it_IT',
+    'A1RKKUPIHCS9HS': 'es_ES',
+    'A1VC38T7YXB528': 'ja_JP',
+    'A39IBJ37TRP1C6': 'en_AU',
+}
+
 GENERIC_ATTRIBUTE_EXCLUDE = {
     'sku', 'title', 'brand', 'description', 'keywords', 'price', 'list_price', 'currency',
     'quantity', 'condition_type', 'fulfillment_channel', 'product_type', 'item_type',
@@ -58,6 +86,7 @@ GENERIC_ATTRIBUTE_EXCLUDE = {
     'battery_cell_composition', 'lithium_battery_packaging',
     'lithium_battery_energy_content', 'lithium_battery_weight',
     'hazmat_declaration', 'supplier_declared_dg_hz_regulation',
+    'supplier_declared_has_product_identifier_exemption',
     'parent_sku', 'parentage_level', 'variation_theme',
     'capacity', 'special_feature', 'included_components', 'care_instructions',
     'unit_count', 'number_of_items', 'main_image_url', 'main_image_source',
@@ -66,6 +95,7 @@ GENERIC_ATTRIBUTE_EXCLUDE = {
     'item_name', 'product_description', 'item_type_keyword', 'product_id',
     'product_id_type', 'external_product_id_type', 'product_identity_mode',
     'standard_price', 'parent_child', 'relationship_type',
+    'submission_id', 'submission_route',
     'other_image_url_1', 'other_image_url_2', 'other_image_url_3', 'other_image_url_4',
     'other_image_url_5', 'other_image_url_6', 'other_image_url_7', 'other_image_url_8',
     'item_weight', 'item_weight_unit_of_measure', 'item_dimensions_unit_of_measure',
@@ -94,6 +124,8 @@ class FieldMapper:
         self.marketplace_id = marketplace_id
         self.region = MARKETPLACE_REGION.get(marketplace_id, 'NA')
         self.endpoint = ENDPOINTS.get(self.region, ENDPOINTS['NA'])
+        self.default_currency = MARKETPLACE_CURRENCY.get(marketplace_id, 'USD')
+        self.language_tag = MARKETPLACE_LANGUAGE.get(marketplace_id, 'en_US')
         self._schema_fields_cache = {}
 
     def build_listing_attributes(self, product: Dict) -> Dict:
@@ -105,6 +137,11 @@ class FieldMapper:
         """
         attrs = {}
         mp = self.marketplace_id
+        parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
+        variation_theme = self._clean_value(product.get('variation_theme'))
+        parent_sku = self._clean_value(product.get('parent_sku'))
+        is_parent = parentage_level == 'parent'
+        is_child = parentage_level == 'child'
 
         # === Product Identity ===
         self._set_text_attr(attrs, 'item_name', product.get('title'), mp)
@@ -116,19 +153,19 @@ class FieldMapper:
 
         # 产品标识(UPC/EAN/GTIN)
         identity_mode = self._resolve_product_identity_mode(product)
-        if identity_mode == 'real_gtin' and product.get('upc'):
+        if not is_parent and identity_mode == 'real_gtin' and product.get('upc'):
             attrs['externally_assigned_product_identifier'] = [{
                 'type': 'upc',
                 'value': str(product['upc']),
                 'marketplace_id': mp,
             }]
-        elif identity_mode == 'real_gtin' and product.get('ean'):
+        elif not is_parent and identity_mode == 'real_gtin' and product.get('ean'):
             attrs['externally_assigned_product_identifier'] = [{
                 'type': 'ean',
                 'value': str(product['ean']),
                 'marketplace_id': mp,
             }]
-        elif identity_mode == 'real_gtin' and product.get('gtin'):
+        elif not is_parent and identity_mode == 'real_gtin' and product.get('gtin'):
             attrs['externally_assigned_product_identifier'] = [{
                 'type': 'gtin',
                 'value': str(product['gtin']),
@@ -139,6 +176,23 @@ class FieldMapper:
         if product.get('asin'):
             attrs['merchant_suggested_asin'] = [{
                 'value': product['asin'],
+                'marketplace_id': mp,
+            }]
+
+        if parentage_level:
+            attrs['parentage_level'] = [{
+                'value': parentage_level,
+                'marketplace_id': mp,
+            }]
+            if is_child and parent_sku:
+                attrs['child_parent_sku_relationship'] = [{
+                    'child_relationship_type': 'variation',
+                    'parent_sku': parent_sku,
+                    'marketplace_id': mp,
+                }]
+        if variation_theme:
+            attrs['variation_theme'] = [{
+                'name': variation_theme,
                 'marketplace_id': mp,
             }]
 
@@ -160,14 +214,28 @@ class FieldMapper:
                 'marketplace_id': mp,
             }]
 
+        product_type = str(product.get('product_type', '') or '').strip().upper()
+
         # 属性
         self._set_text_attr(attrs, 'color', product.get('color'), mp, lang='en_US')
-        self._set_text_attr(attrs, 'size', product.get('size'), mp, lang='en_US')
+        if product_type == 'PANTS' and product.get('bottoms_size'):
+            size_text = str(product.get('bottoms_size') or product.get('size') or '').strip()
+            if size_text:
+                attrs['bottoms_size'] = [{
+                    'marketplace_id': mp,
+                    'size_system': 'as1',
+                    'size_class': 'alpha',
+                    'size': self._normalize_bottoms_size_value(size_text),
+                }]
+        else:
+            self._set_text_attr(attrs, 'size', product.get('size'), mp, lang='en_US')
         self._set_text_attr(attrs, 'material', product.get('material'), mp, lang='en_US')
         self._set_text_attr(attrs, 'department', product.get('department'), mp, lang='en_US')
         self._set_text_attr(attrs, 'target_gender', product.get('target_gender'), mp)
-        self._set_text_attr(attrs, 'age_range_description', product.get('age_range'), mp)
+        self._set_text_attr(attrs, 'age_range_description', product.get('age_range_description') or product.get('age_range'), mp)
         self._set_text_attr(attrs, 'special_feature', product.get('special_feature'), mp, lang='en_US')
+        self._set_text_attr(attrs, 'target_audience_keyword', product.get('target_audience'), mp)
+        self._set_text_attr(attrs, 'subject_keyword', product.get('subject_keywords'), mp)
         self._set_text_attr(attrs, 'care_instructions', product.get('care_instructions'), mp, lang='en_US')
         self._set_text_attr(attrs, 'included_components', product.get('included_components'), mp, lang='en_US')
 
@@ -212,10 +280,10 @@ class FieldMapper:
                 }]
 
         # === Offer ===
-        if product.get('price'):
+        if not is_parent and product.get('price'):
             try:
                 price_val = float(product['price'])
-                currency = product.get('currency', 'USD')
+                currency = product.get('currency') or self.default_currency
                 attrs['purchasable_offer'] = [{
                     'marketplace_id': mp,
                     'currency': currency,
@@ -228,18 +296,18 @@ class FieldMapper:
             except (ValueError, TypeError):
                 logger.warning(f"  ⚠️ 无效价格: {product.get('price')}")
 
-        if product.get('list_price'):
+        if not is_parent and product.get('list_price'):
             try:
                 attrs['list_price'] = [{
                     'value': float(product['list_price']),
-                    'currency': product.get('currency', 'USD'),
+                    'currency': product.get('currency') or self.default_currency,
                     'marketplace_id': mp,
                 }]
             except (ValueError, TypeError):
                 logger.warning(f"  ⚠️ 无效划线价: {product.get('list_price')}")
 
         # 库存
-        if product.get('quantity'):
+        if not is_parent and product.get('quantity'):
             try:
                 qty = int(product['quantity'])
                 channel = product.get('fulfillment_channel', 'DEFAULT')
@@ -252,19 +320,20 @@ class FieldMapper:
                 pass
 
         # 商品状态
-        condition = self._normalize_condition_type(product.get('condition_type', 'new_new'))
-        attrs['condition_type'] = [{
-            'value': condition,
-            'marketplace_id': mp,
-        }]
+        if not is_parent:
+            condition = self._normalize_condition_type(product.get('condition_type', 'new_new'))
+            attrs['condition_type'] = [{
+                'value': condition,
+                'marketplace_id': mp,
+            }]
 
         # === Shipping ===
         dims = self._build_dimensions(product)
         if dims:
             attrs['item_dimensions'] = [dims]
-        width_height = self._build_item_width_height(product)
-        if width_height:
-            attrs['item_width_height'] = [width_height]
+        depth_width_height = self._build_item_depth_width_height(product)
+        if depth_width_height:
+            attrs['item_depth_width_height'] = [depth_width_height]
 
         pkg_dims = self._build_package_dimensions(product)
         if pkg_dims:
@@ -309,6 +378,13 @@ class FieldMapper:
                 'marketplace_id': mp,
             }]
 
+        if product.get('supplier_declared_has_product_identifier_exemption') is not None:
+            val = self._coerce_bool(product['supplier_declared_has_product_identifier_exemption'])
+            attrs['supplier_declared_has_product_identifier_exemption'] = [{
+                'value': val,
+                'marketplace_id': mp,
+            }]
+
         declared_dg_regulation = (
             self._clean_value(product.get('supplier_declared_dg_hz_regulation'))
             or self._clean_value(product.get('hazmat_declaration'))
@@ -322,6 +398,26 @@ class FieldMapper:
             attrs['supplier_declared_dg_hz_regulation'] = [{
                 'value': 'not_applicable',
                 'marketplace_id': mp,
+            }]
+
+        closure_text = self._clean_value(product.get('closure'))
+        if closure_text:
+            attrs['closure'] = [{
+                'marketplace_id': mp,
+                'type': [{
+                    'language_tag': 'en_US',
+                    'value': self._humanize_enum_label(closure_text),
+                }],
+            }]
+
+        rise_text = self._clean_value(product.get('rise'))
+        if rise_text:
+            attrs['rise'] = [{
+                'marketplace_id': mp,
+                'style': [{
+                    'language_tag': 'en_US',
+                    'value': self._humanize_enum_label(rise_text),
+                }],
             }]
 
         self._apply_generic_attributes(attrs, product, mp)
@@ -340,9 +436,12 @@ class FieldMapper:
             }
         """
         product_type = product.get('product_type', 'PRODUCT')
+        parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
 
         # 决定requirements类型
-        if product.get('asin') and not product.get('title'):
+        if parentage_level == 'parent':
+            requirements = 'LISTING_PRODUCT_ONLY'
+        elif product.get('asin') and not product.get('title'):
             # 有ASIN没标题 = 跟卖(offer only)
             requirements = 'LISTING_OFFER_ONLY'
         else:
@@ -380,9 +479,12 @@ class FieldMapper:
             'sku': 'SKU(卖家商品编号)',
             'title': '商品标题(item_name)',
         }
+        parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
+        is_parent = parentage_level == 'parent'
+        is_child = parentage_level == 'child'
 
         # 上架必填(有offer时)
-        if product.get('price'):
+        if not is_parent and product.get('price'):
             required['price'] = '价格'
 
         for field, label in required.items():
@@ -400,17 +502,37 @@ class FieldMapper:
             if not product.get(field):
                 result['warnings'].append(f"建议填写: {label}")
 
-        identity_validation = self._validate_product_identity(product)
-        result['product_identity_mode'] = identity_validation['mode']
-        if identity_validation['mode_missing']:
-            result['warnings'].append(identity_validation['mode_missing'])
-        for message in identity_validation['errors']:
-            result['errors'].append(message)
+        if not is_parent:
+            identity_validation = self._validate_product_identity(product)
+            result['product_identity_mode'] = identity_validation['mode']
+            if identity_validation['mode_missing']:
+                result['warnings'].append(identity_validation['mode_missing'])
+            for message in identity_validation['errors']:
+                result['errors'].append(message)
+                result['valid'] = False
+            for message in identity_validation['warnings']:
+                result['warnings'].append(message)
+            for message in identity_validation['info']:
+                result['info'].append(message)
+
+        if parentage_level and parentage_level not in ('parent', 'child'):
+            result['errors'].append("变体商品的 parentage_level 必须是 parent 或 child")
             result['valid'] = False
-        for message in identity_validation['warnings']:
-            result['warnings'].append(message)
-        for message in identity_validation['info']:
-            result['info'].append(message)
+        if (product.get('parent_sku') or product.get('variation_theme')) and not parentage_level:
+            result['errors'].append("填写 parent_sku 或 variation_theme 时，必须同时声明 parentage_level")
+            result['valid'] = False
+        if parentage_level:
+            if not product.get('variation_theme'):
+                result['errors'].append("变体商品必须填写 variation_theme")
+                result['valid'] = False
+            if is_child and not product.get('parent_sku'):
+                result['errors'].append("子体商品必须填写 parent_sku")
+                result['valid'] = False
+            if is_child and not self._has_variation_dimension(product):
+                result['errors'].append("子体至少需要填写颜色或尺寸中的一个变体维度")
+                result['valid'] = False
+            if is_parent and product.get('parent_sku'):
+                result['warnings'].append("父体通常不需要填写 parent_sku，当前值会在提交时忽略")
 
         # 检查标题长度
         if product.get('title') and len(product['title']) > 200:
@@ -425,9 +547,18 @@ class FieldMapper:
 
         # 检查搜索词字节数
         if product.get('keywords'):
-            kw_bytes = len(product['keywords'].encode('utf-8'))
+            kw_bytes = len(str(product['keywords']).encode('utf-8'))
             if kw_bytes > 250:
                 result['warnings'].append(f"搜索词超过250字节({kw_bytes}字节)")
+
+        # 检查币种
+        user_currency = product.get('currency', '').strip()
+        if user_currency and user_currency != self.default_currency:
+            marketplace_code = MARKETPLACE_CODE_BY_ID.get(self.marketplace_id, self.marketplace_id)
+            result['warnings'].append(
+                f"当前站点({marketplace_code})默认币种为 {self.default_currency}，"
+                f"您填写的是 {user_currency}，请确认是否正确"
+            )
 
         # 检查图片
         main_image_url = product.get('main_image_url')
@@ -468,6 +599,18 @@ class FieldMapper:
                 result['valid'] = False
 
         return result
+
+    def _normalize_parentage_level(self, value) -> str:
+        text = self._clean_value(value).lower()
+        if text in ('parent', 'child'):
+            return text
+        return text
+
+    def _variation_size_value(self, product: Dict) -> str:
+        return self._clean_value(product.get('size') or product.get('bottoms_size'))
+
+    def _has_variation_dimension(self, product: Dict) -> bool:
+        return bool(self._clean_value(product.get('color')) or self._variation_size_value(product))
 
     def map_excel_row(self, row: Dict, col_map: Dict) -> Dict:
         """
@@ -510,7 +653,10 @@ class FieldMapper:
             'material': ['material'],
             'department': ['department'],
             'target_gender': ['target_gender'],
+            'target_audience': ['AI目标受众', 'target_audience_keywords', 'target_audience'],
+            'subject_keywords': ['AI主题关键词', 'subject_keywords'],
             'age_range': ['age_range'],
+            'age_range_description': ['age_range_description', 'age_range'],
             'manufacturer': ['manufacturer'],
             'model_number': ['model_number', 'part_number', 'model_name'],
             'model_name': ['model_name', 'model_number', 'part_number'],
@@ -536,11 +682,13 @@ class FieldMapper:
             'lithium_battery_weight': ['lithium_battery_weight'],
             'supplier_declared_dg_hz_regulation': ['supplier_declared_dg_hz_regulation', 'hazmat_declaration'],
             'hazmat_declaration': ['hazmat_declaration', 'supplier_declared_dg_hz_regulation'],
+            'supplier_declared_has_product_identifier_exemption': ['supplier_declared_has_product_identifier_exemption'],
             'parent_sku': ['parent_sku'],
             'parentage_level': ['parentage_level'],
             'variation_theme': ['variation_theme'],
+            'bottoms_size': ['bottoms_size', 'size'],
             'capacity': ['capacity'],
-            'special_feature': ['special_feature'],
+            'special_feature': ['AI特殊功能', 'special_feature'],
             'included_components': ['included_components'],
             'care_instructions': ['care_instructions'],
             'unit_count': ['unit_count'],
@@ -551,6 +699,10 @@ class FieldMapper:
             value = pick_value(*sources)
             if value:
                 product[standard_field] = value
+
+        if str(product.get('product_type', '') or '').strip().upper() == 'PANTS':
+            if not product.get('bottoms_size') and product.get('size'):
+                product['bottoms_size'] = product['size']
 
         main_image_url, main_image_source, ai_main_image_path = self._resolve_main_image(row, col_map)
         if main_image_url:
@@ -572,9 +724,9 @@ class FieldMapper:
 
         # 副图
         for i in range(2, 10):
-            col_name = col_map.get(f'image_{i}')
-            if col_name and row.get(col_name):
-                product[f'other_image_{i-1}'] = str(row[col_name]).strip()
+            image_url = self._resolve_additional_image(row, col_map, i)
+            if image_url:
+                product[f'other_image_{i-1}'] = image_url
 
         self._collect_dynamic_fields(row, product)
 
@@ -856,6 +1008,25 @@ class FieldMapper:
 
         return "", "missing", ai_main_image_path
 
+    def _resolve_additional_image(self, row: Dict, col_map: Dict, slot: int) -> str:
+        """优先使用 AI 副图公开地址，回退到原始副图列。"""
+        ai_public_url = self._clean_value(row.get(f'AI副图{slot}URL'))
+        if self._is_media_locator(ai_public_url):
+            return ai_public_url
+
+        ai_local_path = self._clean_value(row.get(f'AI副图{slot}路径'))
+        if ai_local_path:
+            public_url = self._local_image_to_public_url(ai_local_path)
+            if public_url:
+                return public_url
+
+        for source in (f'image_{slot}', f'other_image_url_{slot-1}'):
+            original_url = self._get_row_value(row, col_map, source)
+            if original_url:
+                return original_url
+
+        return ""
+
     def _local_image_to_public_url(self, local_path: str) -> str:
         """将本地输出图路径转换为公开URL。"""
         public_base = getattr(self.config, 'OUTPUT_IMAGE_PUBLIC_BASE', '') or ''
@@ -876,6 +1047,31 @@ class FieldMapper:
             return ""
         text = str(value).strip()
         return text
+
+    def _humanize_enum_label(self, value) -> str:
+        text = self._clean_value(value)
+        if not text:
+            return text
+        return re.sub(r'[\s_\-]+', ' ', text).title()
+
+    def _normalize_bottoms_size_value(self, value: str) -> str:
+        text = self._clean_value(value).lower()
+        mapping = {
+            's': 's',
+            'small': 's',
+            'm': 'm',
+            'medium': 'm',
+            'l': 'l',
+            'large': 'l',
+            'xl': 'x_l',
+            'x-large': 'x_l',
+            'x large': 'x_l',
+            'extra large': 'x_l',
+            'xxl': 'xx_l',
+            '2xl': '2x_l',
+            'xxxl': '3x_l',
+        }
+        return mapping.get(text, value)
 
     def _coerce_bool(self, value) -> bool:
         return str(value).strip().lower() in ('true', 'yes', '1', '是')
@@ -978,6 +1174,29 @@ class FieldMapper:
 
         return {
             'marketplace_id': self.marketplace_id,
+            'width': width_entry,
+            'height': height_entry,
+        }
+
+    def _build_item_depth_width_height(self, product: Dict) -> Optional[Dict]:
+        """构建 Item Dimensions D x W x H。Amazon 的 depth 对应这里的 length。"""
+        depth = product.get('item_length')
+        width = product.get('item_width')
+        height = product.get('item_height')
+
+        if not all([depth, width, height]):
+            return None
+
+        unit = product.get('dimension_unit', 'inches')
+        depth_entry = self._build_measurement_value(depth, unit, 'item_length')
+        width_entry = self._build_measurement_value(width, unit, 'item_width')
+        height_entry = self._build_measurement_value(height, unit, 'item_height')
+        if not depth_entry or not width_entry or not height_entry:
+            return None
+
+        return {
+            'marketplace_id': self.marketplace_id,
+            'depth': depth_entry,
             'width': width_entry,
             'height': height_entry,
         }

@@ -5,9 +5,8 @@
 """
 import os
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, numbers
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.datavalidation import DataValidation
 
 wb = Workbook()
 
@@ -456,6 +455,6 @@ output_path = os.path.join(output_dir, '亚马逊商品采集模板_v1.0.xlsx')
 wb.save(output_path)
 print(f"✅ 模板已生成: {output_path}")
 print(f"   Sheet1: 商品采集模板 ({len(COLUMNS)} 列)")
-print(f"   Sheet2: 填写说明")
+print("   Sheet2: 填写说明")
 print(f"   Sheet3: 产品类型参考 ({len(product_types)} 个类型)")
 print(f"   Sheet4: 站点参考 ({len(sites)} 个站点)")

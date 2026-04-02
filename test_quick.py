@@ -1,7 +1,8 @@
 from amazon.mapper import FieldMapper
 from config import reload_config
 import config as config_module
-from web.app import _resolve_ai_public_image_url, _resolve_ai_status_from_result
+from core.template_service import evaluate_template_families, extract_source_keyword, validate_product_type_candidate
+from web.app import _prepare_submission_products, _resolve_ai_public_image_url, _resolve_ai_status_from_result
 
 
 def test_mapper_keeps_shipping_and_compliance_fields(monkeypatch):
@@ -87,6 +88,28 @@ def test_mapper_promotes_local_ai_image_when_public_base_is_configured(monkeypat
     assert product['main_image_source'] == 'ai_public'
 
 
+def test_mapper_prefers_ai_secondary_image_when_public_base_is_configured(monkeypatch):
+    monkeypatch.setenv('OUTPUT_IMAGE_PUBLIC_BASE', 'https://cdn.example.com/amazon-images')
+    reload_config()
+
+    mapper = FieldMapper()
+    row = {
+        'SKU': 'SKU-2',
+        'item_name': 'Demo Title',
+        'other_image_url_1': 'https://example.com/original-sub.jpg',
+        'AI副图2路径': r'C:\tmp\sub_2.jpg',
+    }
+    col_map = {
+        'sku': 'SKU',
+        'title': 'item_name',
+        'image_2': 'other_image_url_1',
+    }
+
+    product = mapper.map_excel_row(row, col_map)
+
+    assert product['other_image_1'] == 'https://cdn.example.com/amazon-images/sub_2.jpg'
+
+
 def test_mapper_skips_invalid_dimension_values(monkeypatch):
     monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
     reload_config()
@@ -105,6 +128,41 @@ def test_mapper_skips_invalid_dimension_values(monkeypatch):
     assert 'length' not in attrs['item_dimensions'][0]
     assert attrs['item_package_dimensions'][0]['width']['value'] == 5.0
     assert 'height' not in attrs['item_package_dimensions'][0]
+
+
+def test_mapper_builds_item_depth_width_height(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    attrs = mapper.build_listing_attributes({
+        'sku': 'SKU-3A',
+        'title': 'Demo Rack',
+        'item_length': '12.6',
+        'item_width': '9.4',
+        'item_height': '11.0',
+        'dimension_unit': 'inches',
+    })
+
+    assert attrs['item_depth_width_height'][0]['depth']['value'] == 12.6
+    assert attrs['item_depth_width_height'][0]['width']['unit'] == 'inches'
+    assert attrs['item_depth_width_height'][0]['height']['value'] == 11.0
+    assert 'item_width_height' not in attrs
+
+
+def test_mapper_sets_gtin_exemption_boolean(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    attrs = mapper.build_listing_attributes({
+        'sku': 'SKU-3B',
+        'title': 'Demo Rack',
+        'product_identity_mode': 'gtin_exemption',
+        'supplier_declared_has_product_identifier_exemption': 'True',
+    })
+
+    assert attrs['supplier_declared_has_product_identifier_exemption'][0]['value'] is True
 
 
 def test_mapper_preserves_dynamic_schema_fields_and_battery_alias(monkeypatch):
@@ -304,6 +362,233 @@ def test_mapper_requires_valid_real_gtin_when_identity_mode_is_real(monkeypatch)
 
     assert validation['valid'] is False
     assert any('必须为纯数字' in msg for msg in validation['errors'])
+
+
+def test_mapper_builds_variant_relationship_attributes_for_parent_and_child(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+
+    parent_body = mapper.build_put_body({
+        'sku': 'PARENT-1',
+        'title': 'Demo Parent',
+        'product_type': 'SHIRT',
+        'brand': 'Demo',
+        'parentage_level': 'parent',
+        'variation_theme': 'COLOR_NAME',
+    })
+    child_attrs = mapper.build_listing_attributes({
+        'sku': 'CHILD-RED',
+        'title': 'Demo Child Red',
+        'product_type': 'SHIRT',
+        'brand': 'Demo',
+        'parentage_level': 'child',
+        'parent_sku': 'PARENT-1',
+        'variation_theme': 'COLOR_NAME',
+        'color': 'Red',
+        'price': '19.99',
+        'quantity': '5',
+    })
+
+    assert parent_body['requirements'] == 'LISTING_PRODUCT_ONLY'
+    assert parent_body['attributes']['parentage_level'][0]['value'] == 'parent'
+    assert parent_body['attributes']['variation_theme'][0]['name'] == 'COLOR_NAME'
+    assert 'child_parent_sku_relationship' not in parent_body['attributes']
+    assert 'purchasable_offer' not in parent_body['attributes']
+    assert 'fulfillment_availability' not in parent_body['attributes']
+    assert 'condition_type' not in parent_body['attributes']
+
+    assert child_attrs['parentage_level'][0]['value'] == 'child'
+    assert child_attrs['child_parent_sku_relationship'][0]['parent_sku'] == 'PARENT-1'
+    assert child_attrs['variation_theme'][0]['name'] == 'COLOR_NAME'
+
+
+def test_mapper_builds_pants_specific_bottoms_size_and_closure(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    attrs = mapper.build_listing_attributes({
+        'sku': 'PANTS-1',
+        'title': 'Demo Pants',
+        'product_type': 'PANTS',
+        'brand': 'Generic',
+        'bottoms_size': 'M',
+        'closure': 'drawstring',
+        'rise': 'mid_rise',
+    })
+
+    assert attrs['bottoms_size'][0]['size_system'] == 'as1'
+    assert attrs['bottoms_size'][0]['size_class'] == 'alpha'
+    assert attrs['bottoms_size'][0]['size'] == 'm'
+    assert attrs['closure'][0]['type'][0]['value'] == 'Drawstring'
+    assert attrs['rise'][0]['style'][0]['value'] == 'Mid Rise'
+
+
+def test_mapper_variant_validation_relaxes_gtin_for_parent_but_enforces_child_relationship(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    monkeypatch.setattr(FieldMapper, '_load_schema_fields', lambda self, product_type: None)
+
+    parent_validation = mapper.validate_required_fields({
+        'sku': 'PARENT-2',
+        'title': 'Demo Parent',
+        'product_type': 'SHIRT',
+        'parentage_level': 'parent',
+        'variation_theme': 'SIZE_NAME',
+    })
+    child_validation = mapper.validate_required_fields({
+        'sku': 'CHILD-2',
+        'title': 'Demo Child',
+        'product_type': 'SHIRT',
+        'parentage_level': 'child',
+        'variation_theme': 'SIZE_NAME',
+        'price': '21.99',
+        'main_image_url': 'https://example.com/child.jpg',
+    })
+
+    assert parent_validation['valid'] is True
+    assert not any('GTIN免码' in msg or '商品标识' in msg for msg in parent_validation['errors'])
+    assert child_validation['valid'] is False
+    assert any('parent_sku' in msg for msg in child_validation['errors'])
+    assert any('颜色或尺寸' in msg for msg in child_validation['errors'])
+
+
+def test_mapper_variant_validation_accepts_pants_bottoms_size(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    monkeypatch.setattr(FieldMapper, '_load_schema_fields', lambda self, product_type: None)
+
+    validation = mapper.validate_required_fields({
+        'sku': 'PANTS-CHILD',
+        'title': 'Demo Pants Child',
+        'product_type': 'PANTS',
+        'parentage_level': 'child',
+        'parent_sku': 'PANTS-PARENT',
+        'variation_theme': 'SIZE_NAME',
+        'bottoms_size': 'L',
+        'price': '21.99',
+        'product_identity_mode': 'gtin_exemption',
+    })
+
+    assert validation['valid'] is True
+    assert not any('颜色或尺寸' in msg for msg in validation['errors'])
+
+
+def test_prepare_submission_products_auto_includes_parent_and_blocks_missing_parent(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    col_map = {
+        'sku': 'SKU',
+        'title': 'item_name',
+        'product_type': 'product_type',
+        'parentage_level': 'parentage_level',
+        'parent_sku': 'parent_sku',
+        'variation_theme': 'variation_theme',
+        'color': 'color',
+    }
+    rows = [
+        {
+            'SKU': 'PARENT-3',
+            'item_name': 'Parent Shirt',
+            'product_type': 'SHIRT',
+            'parentage_level': 'parent',
+            'variation_theme': 'COLOR_NAME',
+        },
+        {
+            'SKU': 'CHILD-3-RED',
+            'item_name': 'Child Shirt Red',
+            'product_type': 'SHIRT',
+            'parentage_level': 'child',
+            'parent_sku': 'PARENT-3',
+            'variation_theme': 'COLOR_NAME',
+            'color': 'Red',
+        },
+        {
+            'SKU': 'CHILD-ORPHAN',
+            'item_name': 'Orphan Child',
+            'product_type': 'SHIRT',
+            'parentage_level': 'child',
+            'parent_sku': 'MISSING-PARENT',
+            'variation_theme': 'COLOR_NAME',
+            'color': 'Blue',
+        },
+    ]
+
+    ordered, blockers = _prepare_submission_products(rows, col_map, ['CHILD-3-RED', 'CHILD-ORPHAN'], mapper)
+
+    assert [product['sku'] for product in ordered] == ['PARENT-3', 'CHILD-3-RED']
+    assert any(item['sku'] == 'CHILD-ORPHAN' and '父体' in item['message'] for item in blockers)
+
+
+def test_evaluate_template_families_detects_theme_mismatch_and_duplicate_children():
+    template_definition = {
+        'variation_mode': 'variation',
+        'product_type': 'SHIRT',
+    }
+    col_map = {
+        'sku': 'SKU',
+        'product_type': 'product_type',
+        'parentage_level': 'parentage_level',
+        'parent_sku': 'parent_sku',
+        'variation_theme': 'variation_theme',
+        'color': 'color',
+        'size': 'size',
+    }
+    rows = [
+        {'SKU': 'PARENT-A', 'product_type': 'SHIRT', 'parentage_level': 'parent', 'variation_theme': 'COLOR_SIZE'},
+        {'SKU': 'CHILD-A-RED-S', 'product_type': 'SHIRT', 'parentage_level': 'child', 'parent_sku': 'PARENT-A', 'variation_theme': 'COLOR_NAME', 'color': 'Red', 'size': 'S'},
+        {'SKU': 'CHILD-A-RED-S-2', 'product_type': 'SHIRT', 'parentage_level': 'child', 'parent_sku': 'PARENT-A', 'variation_theme': 'COLOR_SIZE', 'color': 'Red', 'size': 'S'},
+    ]
+
+    issues = evaluate_template_families(rows, template_definition, col_map=col_map)
+
+    assert any('variation_theme' in msg for msg in issues['PARENT-A'])
+    assert any('variation_theme' in msg for msg in issues['CHILD-A-RED-S'])
+    assert any('变体组合重复' in msg for msg in issues['CHILD-A-RED-S'])
+    assert any('变体组合重复' in msg for msg in issues['CHILD-A-RED-S-2'])
+
+
+def test_evaluate_template_families_accepts_pants_bottoms_size():
+    template_definition = {
+        'variation_mode': 'variation',
+        'product_type': 'PANTS',
+    }
+    col_map = {
+        'sku': 'SKU',
+        'product_type': 'product_type',
+        'parentage_level': 'parentage_level',
+        'parent_sku': 'parent_sku',
+        'variation_theme': 'variation_theme',
+        'bottoms_size': 'bottoms_size',
+    }
+    rows = [
+        {'SKU': 'PARENT-PANTS', 'product_type': 'PANTS', 'parentage_level': 'parent', 'variation_theme': 'SIZE_NAME'},
+        {'SKU': 'CHILD-PANTS-L', 'product_type': 'PANTS', 'parentage_level': 'child', 'parent_sku': 'PARENT-PANTS', 'variation_theme': 'SIZE_NAME', 'bottoms_size': 'L'},
+    ]
+
+    issues = evaluate_template_families(rows, template_definition, col_map=col_map)
+
+    assert issues == {}
+
+
+def test_extract_source_keyword_does_not_treat_numeric_slug_as_valid_title():
+    info = extract_source_keyword(source_url='https://detail.1688.com/offer/968357855919.html')
+    assert info['query'] == ''
+    assert info['warning']
+
+
+def test_validate_product_type_candidate_blocks_numeric_ids():
+    result = validate_product_type_candidate(product_type='968357855919', marketplace='US', variation_mode='single')
+    assert result['usable'] is False
+    assert '商品ID' in result['message']
 
 
 def test_reload_config_initializes_instance(monkeypatch):

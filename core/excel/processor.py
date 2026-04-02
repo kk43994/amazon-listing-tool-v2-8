@@ -5,7 +5,7 @@ Excel 读写处理器 V2
 import os
 import json
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
@@ -787,7 +787,6 @@ class ExcelProcessor:
         # 写列名行 (第2行)
         for col_idx, col_def in enumerate(output_columns, start=1):
             cell = ws.cell(row=2, column=col_idx, value=col_def['label'])
-            group_color = col_def.get('group_color', 'FF4472C4')
             # 原始列浅色背景，AI列深色背景
             if col_def.get('is_ai'):
                 cell.fill = PatternFill(start_color='FFFFF3CD', end_color='FFFFF3CD',
@@ -874,6 +873,16 @@ class ExcelProcessor:
 
         columns.append({'key': 'search_terms_ai', 'label': 'AI搜索关键词', 'group': 'content',
                         'source': 'AI搜索关键词', 'is_ai': True, 'width': 30})
+        columns.append({'key': 'ai_text_model', 'label': 'AI文案模型', 'group': 'content',
+                        'source': 'AI文案模型', 'is_ai': True, 'width': 18})
+        columns.append({'key': 'ai_text_protocol', 'label': 'AI文案协议', 'group': 'content',
+                        'source': 'AI文案协议', 'is_ai': True, 'width': 18})
+        columns.append({'key': 'ai_text_attempts', 'label': 'AI文案尝试次数', 'group': 'content',
+                        'source': 'AI文案尝试次数', 'is_ai': True, 'width': 12})
+        columns.append({'key': 'ai_text_generated_at', 'label': 'AI文案生成时间', 'group': 'content',
+                        'source': 'AI文案生成时间', 'is_ai': True, 'width': 20})
+        columns.append({'key': 'ai_text_error', 'label': 'AI文案最后错误', 'group': 'content',
+                        'source': 'AI文案最后错误', 'is_ai': True, 'width': 28})
 
         # --- 图片 ---
         columns.append({'key': 'main_img_orig', 'label': '原始主图', 'group': 'images',
@@ -884,6 +893,16 @@ class ExcelProcessor:
                         'source': 'AI主图URL', 'is_ai': True, 'width': 36})
         columns.append({'key': 'main_img_ai_upload_status', 'label': '→ 主图上传状态', 'group': 'images',
                         'source': 'AI主图上传状态', 'is_ai': True, 'width': 14})
+        columns.append({'key': 'ai_image_model', 'label': 'AI图片模型', 'group': 'images',
+                        'source': 'AI图片模型', 'is_ai': True, 'width': 18})
+        columns.append({'key': 'ai_image_protocol', 'label': 'AI图片协议', 'group': 'images',
+                        'source': 'AI图片协议', 'is_ai': True, 'width': 18})
+        columns.append({'key': 'ai_image_attempts', 'label': 'AI图片尝试次数', 'group': 'images',
+                        'source': 'AI图片尝试次数', 'is_ai': True, 'width': 12})
+        columns.append({'key': 'ai_image_generated_at', 'label': 'AI图片生成时间', 'group': 'images',
+                        'source': 'AI图片生成时间', 'is_ai': True, 'width': 20})
+        columns.append({'key': 'ai_image_error', 'label': 'AI图片最后错误', 'group': 'images',
+                        'source': 'AI图片最后错误', 'is_ai': True, 'width': 28})
         for i in range(2, 10):
             columns.append({
                 'key': f'img_{i}', 'label': f'副图{i-1}',

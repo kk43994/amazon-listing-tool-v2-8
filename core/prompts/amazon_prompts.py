@@ -21,10 +21,12 @@ STRICT RULES:
 - NO special characters or emojis
 
 Product Type: {product_type}
+Target Marketplace Language: {language}
 Original Competitor Title:
 {product_info}
 
 IMPORTANT: The rewritten title must NOT be a copy. Change word order, use synonyms, rephrase — but keep essential keywords for search ranking.
+IMPORTANT: The title MUST be written in the target marketplace language specified above. For example, if the target is de_DE, write in German; if ja_JP, write in Japanese.
 
 Return ONLY the new title, nothing else."""
 
@@ -45,8 +47,11 @@ STRICT RULES:
 - If original says "lightweight and portable", try "Easy to carry — weighing just X oz, this..."
 
 Product Type: {product_type}
+Target Marketplace Language: {language}
 Competitor's Product Info:
 {product_info}
+
+IMPORTANT: All bullet points MUST be written in the target marketplace language specified above.
 
 Return exactly 5 bullet points in this exact format (one per line):
 • BENEFIT PHRASE — Supporting details...
@@ -73,10 +78,12 @@ STRICT RULES:
 - Must pass Amazon's content uniqueness check
 
 Product Type: {product_type}
+Target Marketplace Language: {language}
 Competitor's Product Info:
 {product_info}
 
-CRITICAL: Amazon may flag duplicate content. Make this description GENUINELY original — not just a rewording."""
+CRITICAL: Amazon may flag duplicate content. Make this description GENUINELY original — not just a rewording.
+IMPORTANT: The description MUST be written in the target marketplace language specified above."""
 
 # ===== 搜索关键词生成 =====
 SEARCH_TERMS_PROMPT = """You are an Amazon SEO expert. Generate backend search terms for this product.
@@ -94,48 +101,113 @@ STRICT RULES:
 - Think about what buyers search for that isn't in the title
 
 Product Type: {product_type}
+Target Marketplace Language: {language}
 Product Info:
 {product_info}
 
 Title (do NOT repeat these words):
 {title}
 
+IMPORTANT: Search terms MUST be in the target marketplace language specified above.
 Return ONLY the search terms, space-separated, all lowercase. Stay under 250 bytes."""
 
+# ===== 特殊功能/亮点 =====
+SPECIAL_FEATURE_PROMPT = """You are an Amazon listing specialist. Generate concise special feature tags for this product.
+
+TASK: Create 3-5 short special feature phrases that highlight the product's unique selling points.
+
+STRICT RULES:
+- Each feature: **2-5 words** (short, punchy phrases)
+- Focus on what makes this product special
+- Use language buyers search for
+- NO full sentences, just feature tags
+- Examples: "BPA-Free Material", "Foldable Design", "USB-C Fast Charging", "Machine Washable"
+
+Product Type: {product_type}
+Target Marketplace Language: {language}
+Product Info:
+{product_info}
+
+Return each feature on its own line, 3-5 features total. Nothing else."""
+
+# ===== 目标受众关键词 =====
+TARGET_AUDIENCE_PROMPT = """You are an Amazon SEO expert. Identify the target audience for this product.
+
+TASK: Generate target audience keywords that help Amazon match this product to the right buyers.
+
+STRICT RULES:
+- **3-5 audience segments**, one per line
+- Short phrases: "Men", "College Students", "Pet Owners", "Home Office Workers"
+- Be specific to the product, not generic
+- Think about WHO actually buys this product
+
+Product Type: {product_type}
+Target Marketplace Language: {language}
+Product Info:
+{product_info}
+
+Return each audience segment on its own line. Nothing else."""
+
+# ===== 主题关键词 =====
+SUBJECT_KEYWORDS_PROMPT = """You are an Amazon SEO expert. Generate subject matter keywords for this product.
+
+TASK: Create subject keywords that categorize this product for Amazon's search algorithm.
+
+STRICT RULES:
+- **3-5 subject keywords**, space-separated on ONE line
+- These describe WHAT the product IS, not what it DOES
+- Think category-level terms and synonyms
+- Examples for a water bottle: "hydration drinkware flask container beverage"
+- Do NOT repeat words from the title
+- All lowercase
+
+Product Type: {product_type}
+Target Marketplace Language: {language}
+Product Info:
+{product_info}
+
+Title (do NOT repeat these words):
+{title}
+
+Return ONLY the subject keywords, space-separated, all lowercase, on one line."""
+
 # ===== 图片背景替换 =====
-IMAGE_BG_WHITE_PROMPT = """Remove the background from this product image and place the product on a pure white background (#FFFFFF).
+# 核心原则：商品本体（形状、颜色、纹理、细节）必须100%保持不变，只替换背景。
 
-Amazon main image requirements:
-- Pure white background (RGB 255, 255, 255)
-- Product fills 85% of the image frame
-- No text, logos, watermarks, or additional graphics
-- No borders or color blocks
-- Product must be the only object
-- Professional studio-quality lighting
-- Soft, natural drop shadow
-- Maintain original product details, texture, and colors
-- Output size: at least 1000x1000 pixels (prefer 2000x2000)"""
+IMAGE_BG_WHITE_PROMPT = """Keep this product EXACTLY as it is — do NOT alter the product's shape, color, texture, or any detail.
+Only replace the background with pure white (#FFFFFF).
 
-IMAGE_BG_LIFESTYLE_PROMPT = """Place this product in a realistic lifestyle/usage scene.
+Rules:
+- The product must remain pixel-perfect identical to the original
+- Background: pure white (RGB 255,255,255), no gradients, no shadows on the background itself
+- Add a subtle, natural drop shadow directly beneath the product for depth
+- Product should fill approximately 85% of the frame
+- No added text, logos, watermarks, borders, or decorations
+- Professional e-commerce studio lighting
+- Output at least 1000x1000 pixels"""
 
-Requirements for Amazon secondary images:
-- Show the product being used naturally in context
-- Warm, inviting lighting
-- Relevant to the product's category: {style_hint}
-- Authentic and aspirational setting
-- High resolution, professional quality
-- Product must be clearly visible and recognizable
-- Must look DIFFERENT from competitor images"""
+IMAGE_BG_LIFESTYLE_PROMPT = """Keep this product EXACTLY as it is — do NOT alter the product's shape, color, texture, or any detail.
+Only replace the background with a realistic lifestyle scene appropriate for this product category: {style_hint}.
 
-IMAGE_BG_GRADIENT_PROMPT = """Place this product on a clean studio-style gradient background.
+Rules:
+- The product must remain pixel-perfect identical to the original
+- Place the product naturally in a real-world usage context (e.g., on a desk, in a kitchen, being held)
+- Warm, natural lighting that matches the scene
+- The scene should feel authentic and aspirational — not overly staged
+- Product must remain the clear focal point and fully visible
+- No added text, logos, or watermarks
+- High resolution, professional quality"""
 
-Requirements:
-- Background should transition softly from white to light gray
-- Keep the product perfectly intact with realistic proportions
-- Professional product photography lighting with subtle shadows
-- No text, watermarks, props, or decorative graphics
-- Product should remain the only focus of the image
-- High resolution, suitable for e-commerce display"""
+IMAGE_BG_GRADIENT_PROMPT = """Keep this product EXACTLY as it is — do NOT alter the product's shape, color, texture, or any detail.
+Only replace the background with a smooth studio-style gradient.
+
+Rules:
+- The product must remain pixel-perfect identical to the original
+- Background: soft gradient from white to light gray, clean and professional
+- Subtle, natural shadow beneath the product
+- No added text, logos, watermarks, props, or decorations
+- Product should be the only object in the frame
+- Professional product photography look suitable for e-commerce"""
 
 # ===== 产品信息提取 =====
 PRODUCT_ANALYSIS_PROMPT = """Analyze this competitor's product listing and extract structured data.

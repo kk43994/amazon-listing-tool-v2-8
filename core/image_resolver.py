@@ -13,9 +13,8 @@ import base64
 import io
 import logging
 import re
-import tempfile
 from pathlib import Path
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
@@ -213,23 +212,30 @@ def _resolve_external(url: str) -> ImageResolveResult:
         }
 
         with httpx.Client(timeout=_DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
+            # 流式下载，边读边检查大小，防止恶意/超大文件撑爆内存
+            with client.stream("GET", url, headers=headers) as response:
+                response.raise_for_status()
 
-            # Check content length
-            content_length = response.headers.get('content-length')
-            if content_length and int(content_length) > _MAX_EXTERNAL_SIZE:
-                return ImageResolveResult(error=f"图片文件过大: {int(content_length) / 1024 / 1024:.1f}MB")
+                # 预检 content-length
+                content_length = response.headers.get('content-length')
+                if content_length and int(content_length) > _MAX_EXTERNAL_SIZE:
+                    return ImageResolveResult(error=f"图片文件过大: {int(content_length) / 1024 / 1024:.1f}MB")
 
-            # Check content type
-            content_type = response.headers.get('content-type', '')
-            if not content_type.startswith('image/'):
-                logger.warning(f"External URL content-type is not image: {content_type}")
+                # Check content type
+                content_type = response.headers.get('content-type', '')
+                if not content_type.startswith('image/'):
+                    logger.warning(f"External URL content-type is not image: {content_type}")
 
-            image_data = response.content
-            if len(image_data) > _MAX_EXTERNAL_SIZE:
-                return ImageResolveResult(error=f"图片文件过大: {len(image_data) / 1024 / 1024:.1f}MB")
+                # 流式读取，累计不超过上限
+                chunks = []
+                downloaded = 0
+                for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                    downloaded += len(chunk)
+                    if downloaded > _MAX_EXTERNAL_SIZE:
+                        return ImageResolveResult(error=f"图片文件过大(>{_MAX_EXTERNAL_SIZE // 1024 // 1024}MB)，下载中止")
+                    chunks.append(chunk)
 
+            image_data = b"".join(chunks)
             image = Image.open(io.BytesIO(image_data))
             image.load()
 

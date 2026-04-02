@@ -13,6 +13,7 @@ import logging
 from datetime import datetime
 
 from config import get_config
+from core.utils import filter_rows
 
 # 配置日志
 def setup_logging(verbose: bool = False):
@@ -98,7 +99,7 @@ def main():
     config = get_config()
 
     logger.info("=" * 60)
-    logger.info(f"🚀 亚马逊商品处理工具 v1.0")
+    logger.info("🚀 亚马逊商品处理工具 v1.0")
     logger.info(f"   阶段: {args.stage}")
     logger.info(f"   模式: {'预览' if args.preview else '执行'}")
     logger.info("=" * 60)
@@ -110,9 +111,9 @@ def main():
             logger.info(f"📂 自动检测到: {args.input}")
         else:
             target_dir = config.INPUT_DIR if args.stage == 1 else config.OUTPUT_DIR
-            logger.error(f"❌ 未找到Excel文件")
+            logger.error("❌ 未找到Excel文件")
             logger.error(f"   请将文件放入 {target_dir}/ 目录")
-            logger.error(f"   或使用 --input 指定路径")
+            logger.error("   或使用 --input 指定路径")
             sys.exit(1)
 
     if not os.path.exists(args.input):
@@ -136,12 +137,12 @@ def main():
             col_map = pipeline.excel.detect_columns()
 
             if args.rows:
-                data = _filter_rows(data, args.rows)
+                data = filter_rows(data, args.rows)
 
             logger.info(f"\n📋 预览: 将处理 {len(data)} 条商品")
             logger.info(f"   图片处理: {'✅' if not args.no_images else '❌ 跳过'}")
             logger.info(f"   文案生成: {'✅' if not args.no_text else '❌ 跳过'}")
-            logger.info(f"\n   列映射:")
+            logger.info("\n   列映射:")
             for field, col in col_map.items():
                 if col:
                     logger.info(f"     {field} → {col}")
@@ -177,18 +178,6 @@ def main():
         )
         if not args.preview:
             logger.info(f"\n✅ 第二阶段完成! 报告: {result}")
-
-
-def _filter_rows(data, rows: str):
-    """根据行范围过滤"""
-    try:
-        if '-' in rows:
-            start, end = rows.split('-')
-            return data[int(start)-1:int(end)]
-        else:
-            return [data[int(rows)-1]]
-    except (ValueError, IndexError):
-        return data
 
 
 if __name__ == '__main__':

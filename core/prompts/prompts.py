@@ -4,7 +4,6 @@ AI Service Prompts - 电商图片生成提示词模板
 """
 import json
 import logging
-from textwrap import dedent
 from typing import List, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

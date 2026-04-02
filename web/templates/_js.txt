@@ -1875,7 +1875,7 @@ async function refreshListingStatuses(skus, options = {}) {
 }
 
 function enableToolbar(enabled) {
-  ['btnBatchCopy','btnBatchImg','btnValidate','btnListingCheck','btnExport'].forEach(id => {
+  ['btnBatchCopy','btnBatchImg','btnValidate','btnListingCheck','btnExport','btnComparison'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = !enabled;
   });
@@ -4096,6 +4096,7 @@ function renderImagesTab(p) {
     </div>
     <div class="compare-actions">
       <button class="btn btn-outline btn-sm" onclick="regenerateImage('${p.sku}','main')">${t('generate')}</button>
+      <button class="btn btn-ghost btn-sm" onclick="quickImageProcess('${escHtml(mainOrig)}','${bgStyle}')">快速预览</button>
       <button class="btn btn-primary btn-sm" onclick="adoptImage('${p.sku}','main')" ${mainAi?'':'disabled'}>${t('adopt')}</button>
     </div>
   </div>`;
@@ -6363,6 +6364,75 @@ function exportData() {
 
 function downloadTemplate() {
   window.location.href = '/api/download-template';
+}
+
+// ===== 21b. AI 全部对比视图 =====
+async function showComparisonView() {
+  if (!currentFile) return showToast('warning', '请先导入文件');
+  showToast('info', '正在加载对比数据...');
+  try {
+    const response = await fetch('/api/comparison?file=' + encodeURIComponent(currentFile));
+    const data = await response.json();
+    if (data.error) return showToast('error', data.error);
+    const items = data.comparisons || [];
+    if (items.length === 0) return showToast('warning', '暂无对比数据，请先运行 AI 文案生成');
+
+    const rows = items.map(item => {
+      const orig = item.original || {};
+      const ai = item.ai_generated || {};
+      const bullets = (ai.bullets || []).filter(b => b).map(b => `<li>${escHtml(b)}</li>`).join('');
+      const origImg = orig.image ? `<img src="${escHtml(orig.image)}" style="max-height:80px">` : '-';
+      const aiImg = ai.image ? `<img src="${escHtml(ai.image)}" style="max-height:80px">` : '-';
+      return `<tr>
+        <td><strong>${escHtml(item.sku)}</strong></td>
+        <td style="max-width:250px">${escHtml(orig.title || '-')}</td>
+        <td style="max-width:250px">${escHtml(ai.title || '-')}</td>
+        <td>${origImg}</td>
+        <td>${aiImg}</td>
+        <td>${bullets || '-'}</td>
+        <td>${escHtml(ai.keywords || '-')}</td>
+      </tr>`;
+    }).join('');
+
+    const html = `<div style="max-height:70vh;overflow:auto">
+      <table class="data-table data-table-compact">
+        <thead><tr>
+          <th>SKU</th><th>原始标题</th><th>AI 标题</th>
+          <th>原始图</th><th>AI 图</th><th>AI 卖点</th><th>AI 搜索词</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+    showModal('AI 前后对比 (' + items.length + ' 条)', html, { wide: true });
+  } catch (e) {
+    showToast('error', '加载对比数据失败: ' + e.message);
+  }
+}
+
+// ===== 21c. 单张图片快速换背景 =====
+async function quickImageProcess(imageUrl, bgStyle) {
+  if (!imageUrl) return showToast('warning', '没有可用的图片 URL');
+  showToast('info', '正在处理图片...');
+  try {
+    const response = await fetch('/api/image-process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_url: imageUrl, bg_style: bgStyle || 'white' })
+    });
+    const data = await response.json();
+    if (data.error) return showToast('error', data.error);
+    if (data.success && data.result_b64) {
+      const imgSrc = 'data:image/png;base64,' + data.result_b64;
+      showModal('AI 换背景结果', `<div style="text-align:center">
+        <img src="${imgSrc}" style="max-width:100%;max-height:60vh;border-radius:8px">
+        <div style="margin-top:12px;color:var(--text-secondary)">预览结果。如需保存到 SKU，请使用抽屉内的"生成"按钮。</div>
+      </div>`);
+    } else {
+      showToast('error', '图片处理未返回结果');
+    }
+  } catch (e) {
+    showToast('error', '图片处理失败: ' + e.message);
+  }
 }
 
 // ===== 22. Submit =====

@@ -49,6 +49,9 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
 config = get_config()
 
+_SUBMIT_SUCCESS_STATUSES = {'ACCEPTED', 'ACCEPTED_WITH_WARNINGS'}
+_SUBMIT_FAILURE_STATUSES = {'ERROR', 'INVALID', 'SKIPPED', 'PREVIEW_BLOCKED'}
+
 
 # ===== 统一响应格式 =====
 
@@ -329,6 +332,7 @@ _NON_REVALIDATING_HEADER_ALIASES = {
     'template_ready_to_submit', '模板提交就绪',
     'submit_status', '提交状态',
     'submission_id', '提交ID',
+    'submission_route', '提交路由',
     'submit_time', '提交时间',
     'submit_message', '提交信息',
     'asin', 'ASIN',
@@ -388,6 +392,7 @@ def _prepare_appended_row(headers, row_data: dict) -> dict:
     reset_aliases = list(_WORKFLOW_RESET_FIELDS) + [
         ('submit_status', '提交状态'),
         ('submission_id', '提交ID'),
+        ('submission_route', '提交路由'),
         ('submit_time', '提交时间'),
         ('submit_message', '提交信息'),
         ('asin', 'ASIN'),
@@ -1065,6 +1070,7 @@ def _logical_field_to_excel_header(field: str, col_map: dict):
         'preview_account': ('preview_account', 'preview_account'),
         'submit_status': ('submit_status', 'submit_status'),
         'submission_id': ('submission_id', 'submission_id'),
+        'submission_route': ('submission_route', 'submission_route'),
         'submit_time': ('submit_time', 'submit_time'),
         'submit_message': ('submit_message', 'submit_message'),
         'product_identity_mode': ('product_identity_mode', 'product_identity_mode'),
@@ -1350,6 +1356,7 @@ def _build_submit_persist_updates(headers, result_entry: dict, submit_time: str)
         or result_entry.get('submissionId', '')
         or ''
     ).strip()
+    submission_route = str(result_entry.get('submission_route', '') or '').strip()
     asin = str(result_entry.get('asin', '') or '').strip()
     submit_message = _format_submit_issues(result_entry)
 
@@ -1359,6 +1366,8 @@ def _build_submit_persist_updates(headers, result_entry: dict, submit_time: str)
         _pick_existing_header(headers, 'submit_time', '提交时间', default='submit_time'): submit_time,
         _pick_existing_header(headers, 'submit_message', '提交信息', '问题详情', default='submit_message'): submit_message,
     }
+    if submission_route:
+        updates[_pick_existing_header(headers, 'submission_route', '提交路由', default='submission_route')] = submission_route
     if asin:
         updates[_pick_existing_header(headers, 'asin', 'ASIN', default='asin')] = asin
     return updates
@@ -2619,7 +2628,7 @@ def image_process():
         if result:
             return jsonify({
                 'success': True,
-                'result_b64': result[:200] + '...',
+                'result_b64': result,
                 'message': 'Image processed successfully',
             })
         else:
@@ -3378,9 +3387,12 @@ def get_products():
                 'submit_status': str(item.get('submit_status', '') or item.get('提交状态', '') or 'PENDING'),
                 'asin': str(item.get('asin', '') or item.get('ASIN', '') or '').strip(),
                 'submission_route': (
-                    'existing_asin'
-                    if str(item.get('asin', '') or item.get('ASIN', '') or '').strip()
-                    else ('existing_asin' if cell_text(item, col_map.get('asin', '')) else 'unknown')
+                    str(item.get('submission_route', '') or item.get('提交路由', '') or '').strip()
+                    or (
+                        'existing_asin'
+                        if str(item.get('asin', '') or item.get('ASIN', '') or '').strip()
+                        else ('existing_asin' if cell_text(item, col_map.get('asin', '')) else 'unknown')
+                    )
                 ),
                 'submission_id': str(item.get('submission_id', '') or item.get('提交ID', '') or '').strip(),
                 'submit_time': str(item.get('submit_time', '') or item.get('提交时间', '') or '').strip(),
@@ -4135,6 +4147,7 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
         return {
             'success': True,
             'mode': 'preview',
+            'account_id': acc.get('seller_id', account_id or '') if acc else str(account_id or '').strip(),
             'total': len(results),
             'valid': valid_count,
             'invalid': len(results) - valid_count,
@@ -4239,11 +4252,12 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
         account_name=acc.get('name', acc.get('seller_id', '')),
     )
 
-    accepted = sum(1 for r in results if r.get('status') == 'ACCEPTED')
-    failed = sum(1 for r in results if r.get('status') in ('ERROR', 'INVALID', 'SKIPPED', 'PREVIEW_BLOCKED'))
+    accepted = sum(1 for r in results if str(r.get('status', '')).upper() in _SUBMIT_SUCCESS_STATUSES)
+    failed = sum(1 for r in results if str(r.get('status', '')).upper() in _SUBMIT_FAILURE_STATUSES)
 
     submission_record = {
         'timestamp': datetime.now().isoformat(),
+        'account_id': acc.get('seller_id', account_id or ''),
         'account': acc.get('name', acc.get('seller_id', '')),
         'marketplace': acc.get('marketplace_name', acc.get('marketplace_id', '')),
         'total': len(results),
@@ -4276,6 +4290,7 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
     return {
         'success': True,
         'mode': 'submit',
+        'account_id': acc.get('seller_id', account_id or ''),
         'account': acc.get('name', acc.get('seller_id', '')),
         'marketplace': acc.get('marketplace_name', acc.get('marketplace_id', '')),
         'total': len(results),
@@ -4622,7 +4637,8 @@ def export_excel():
                           'bullet_point_4', 'bullet_point_5',
                           'product_description', 'generic_keywords',
                           'main_image_url', 'other_image_url_1', 'other_image_url_2',
-                          'other_image_url_3', 'other_image_url_4',
+                          'other_image_url_3', 'other_image_url_4', 'other_image_url_5',
+                          'other_image_url_6', 'other_image_url_7', 'other_image_url_8',
                           'standard_price', 'quantity', 'condition_type',
                           'fulfillment_channel', 'upc']
 
@@ -4641,7 +4657,7 @@ def export_excel():
                 sp_row['product_description'] = mapped.get('description', '')
                 sp_row['generic_keywords'] = mapped.get('keywords', '')
                 sp_row['main_image_url'] = mapped.get('main_image_url', '')
-                for i in range(1, 5):
+                for i in range(1, 9):
                     sp_row[f'other_image_url_{i}'] = mapped.get(f'other_image_{i}', '')
                 sp_row['standard_price'] = mapped.get('price', '')
                 sp_row['quantity'] = mapped.get('quantity', '')
@@ -4786,6 +4802,7 @@ def submit_to_amazon():
                 title='Amazon 预览验证',
                 status='completed',
                 input_file=input_file,
+                account_id=account_id,
                 total=payload.get('total', 0),
                 success=payload.get('valid', 0),
                 failed=payload.get('invalid', 0),
@@ -4798,6 +4815,7 @@ def submit_to_amazon():
                 title='正式提交到亚马逊',
                 status='completed' if not payload.get('failed') else ('failed' if payload.get('accepted', 0) == 0 else 'completed'),
                 input_file=input_file,
+                account_id=account_id,
                 total=payload.get('total', 0),
                 success=payload.get('accepted', 0),
                 failed=payload.get('failed', 0),
@@ -4815,6 +4833,7 @@ def submit_to_amazon():
             title='正式提交到亚马逊' if not preview else 'Amazon 预览验证',
             status='failed',
             input_file=input_file,
+            account_id=account_id,
             message=str(e),
             error=str(e),
         )
@@ -4843,6 +4862,7 @@ def submit_to_amazon_task():
         title=title,
         input_file=input_file,
         status='running',
+        account_id=str(account_id or '').strip(),
         progress=0,
         total=len(skus),
         stage_name=stages[0],

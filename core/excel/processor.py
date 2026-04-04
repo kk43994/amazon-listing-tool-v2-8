@@ -9,6 +9,7 @@ from typing import List, Dict, Optional
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+from core.runtime_paths import resource_path, runtime_path
 
 try:
     import xlrd
@@ -1021,8 +1022,7 @@ class ExcelProcessor:
 
     def _load_selected_category_fields(self) -> List[Dict]:
         """加载用户选择的品类字段配置"""
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), 'config', 'selected_fields.json')
+        config_path = runtime_path('config', 'selected_fields.json')
         if not os.path.exists(config_path):
             return []
         try:
@@ -1032,7 +1032,7 @@ class ExcelProcessor:
             if not selected_keys:
                 return []
             # 从注册表获取字段定义
-            registry_path = os.path.join(os.path.dirname(config_path), 'sp_api_fields.json')
+            registry_path = resource_path('config', 'sp_api_fields.json')
             if not os.path.exists(registry_path):
                 return [{'key': k} for k in selected_keys]
             with open(registry_path, 'r', encoding='utf-8') as f:

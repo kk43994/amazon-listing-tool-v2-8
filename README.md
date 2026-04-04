@@ -72,6 +72,52 @@ python web/app.py
 http://127.0.0.1:5000
 ```
 
+## 发行构建
+
+当前仓库已经补上了面向终端用户的发行构建能力。
+
+### 本地构建
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-release.txt
+python tools/build_release.py
+```
+
+构建完成后会生成：
+
+- `release/AmazonListingTool-<platform>/`
+- `release/AmazonListingTool-<platform>.zip`
+
+### Windows 本地构建
+
+在 Windows 上执行：
+
+```bat
+py -3.11 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt -r requirements-release.txt
+tools\build_release.bat
+```
+
+### GitHub Actions 构建
+
+仓库内置了 GitHub Actions 工作流：
+
+- `.github/workflows/build-release.yml`
+
+支持：
+
+- `workflow_dispatch` 手动触发
+- 推送 `v*` tag 时自动触发
+
+工作流会分别构建：
+
+- macOS arm64 发行包
+- Windows amd64 发行包
+
+并把 zip 包作为 Actions Artifact 上传。
+
 ### 新 Mac 初始化建议
 
 1. 使用 Python 3.10+，当前推荐 `python3.11`

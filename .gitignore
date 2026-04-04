@@ -11,6 +11,10 @@ input/*.xls
 .venv/
 venv/
 .claude/
+build/
+dist/
+release/
+AmazonListingTool.spec
 pytest-cache-files-*/
 tmp_*/
 web-ui*.log

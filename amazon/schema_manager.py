@@ -8,11 +8,11 @@ import time
 import logging
 import requests
 from typing import Dict, List, Optional
+from core.runtime_paths import runtime_path
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CACHE_DIR = os.path.join(BASE_DIR, 'output', 'schema_cache')
+CACHE_DIR = runtime_path('output', 'schema_cache')
 CACHE_TTL = 7 * 24 * 3600  # 7 days
 
 

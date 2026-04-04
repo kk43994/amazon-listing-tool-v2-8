@@ -4,8 +4,9 @@
 import os
 import re
 from dotenv import load_dotenv
+from core.runtime_paths import runtime_path
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = runtime_path()
 
 _config_instance = None
 
@@ -62,7 +63,7 @@ class Config:
     def reload(self):
         """重新加载环境变量"""
         # 进程级环境变量优先，.env 作为默认值来源。
-        load_dotenv(override=False)
+        load_dotenv(dotenv_path=runtime_path('.env'), override=False)
 
         # AI Provider 配置
         raw_ai_api_key = os.getenv('AI_API_KEY', '').strip()

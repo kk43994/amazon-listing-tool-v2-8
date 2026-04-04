@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_config, reload_config
 from core.excel.processor import ExcelProcessor
 from core.media_store import get_media_store
+from core.runtime_paths import resource_path, runtime_path
 from core.utils import sanitize_filename as _sanitize_filename, filter_rows as _filter_rows
 from core.template_service import (
     DEFAULT_MARKETPLACE,
@@ -42,9 +43,11 @@ from core.template_service import (
 
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__,
-            template_folder='templates',
-            static_folder='static')
+app = Flask(
+    __name__,
+    template_folder=resource_path('web', 'templates'),
+    static_folder=resource_path('web', 'static'),
+)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
 config = get_config()
@@ -83,11 +86,11 @@ def _validate_file_path(filepath: str) -> str | None:
 
 
 def _env_file_path() -> str:
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    return runtime_path('.env')
 
 
 def _accounts_file_path() -> str:
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), 'accounts.json')
+    return runtime_path('accounts.json')
 
 
 def _restrict_secret_file_permissions(path: str):
@@ -5282,8 +5285,7 @@ def _load_field_registry():
     global _field_registry
     if _field_registry is not None:
         return _field_registry
-    registry_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                  'config', 'sp_api_fields.json')
+    registry_path = resource_path('config', 'sp_api_fields.json')
     if os.path.exists(registry_path):
         with open(registry_path, 'r', encoding='utf-8') as f:
             _field_registry = json.load(f)
@@ -5322,8 +5324,7 @@ def get_category_fields():
 @app.route('/api/selected-fields', methods=['GET', 'POST'])
 def selected_fields():
     """获取/保存用户选择的品类字段配置"""
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                'config', 'selected_fields.json')
+    config_path = runtime_path('config', 'selected_fields.json')
     if request.method == 'GET':
         if os.path.exists(config_path):
             with open(config_path, 'r', encoding='utf-8') as f:

@@ -1,0 +1,52 @@
+name: build-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            artifact_name: AmazonListingTool-darwin-arm64
+          - os: windows-latest
+            artifact_name: AmazonListingTool-windows-amd64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Create virtualenv
+        run: python -m venv .venv
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          . .venv/bin/activate || . .venv/Scripts/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller waitress
+
+      - name: Build release
+        shell: bash
+        run: |
+          . .venv/bin/activate || . .venv/Scripts/activate
+          python tools/build_release.py
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release/${{ matrix.artifact_name }}.zip
+

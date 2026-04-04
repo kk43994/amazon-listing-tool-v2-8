@@ -10,12 +10,12 @@ from typing import Dict, List, Optional
 from amazon.auth import AmazonAuth, AmazonAuthError, AmazonTokenError, AmazonNetworkError
 from amazon.listings import ListingsAPI
 from amazon.mapper import MARKETPLACE_IDS, ENDPOINTS, MARKETPLACE_REGION
+from core.runtime_paths import runtime_path
 
 logger = logging.getLogger(__name__)
 
 # 默认配置文件路径
-DEFAULT_ACCOUNTS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                      'accounts.json')
+DEFAULT_ACCOUNTS_FILE = runtime_path('accounts.json')
 
 
 def _is_real_credential(value: str) -> bool:

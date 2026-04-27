@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   build:
     strategy:
@@ -41,7 +44,7 @@ jobs:
         run: |
           if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
           "$PY" -m pip install --upgrade pip
-          "$PY" -m pip install -r requirements.txt -r requirements-release.txt
+          "$PY" -m pip install -r requirements.txt -r requirements-release.txt pytest
 
       - name: Environment check
         shell: bash

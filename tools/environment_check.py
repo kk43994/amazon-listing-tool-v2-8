@@ -49,6 +49,17 @@ OPTIONAL_NETWORK_TARGETS = (
 )
 
 
+def _configure_output_encoding() -> None:
+    """Windows CI/客户终端可能不是 UTF-8，尽量避免中文输出触发编码异常。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 @dataclass
 class CheckItem:
     name: str
@@ -349,6 +360,8 @@ def _print_report(report: CheckReport, quiet: bool = False) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_output_encoding()
+
     parser = argparse.ArgumentParser(description="亚马逊 2.8 环境检测")
     parser.add_argument("--json", action="store_true", help="输出 JSON，方便自动化读取")
     parser.add_argument("--quiet", action="store_true", help="减少说明性输出")

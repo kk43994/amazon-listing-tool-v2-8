@@ -65,6 +65,11 @@ def _write_readme(bundle_dir: Path) -> None:
     )
 
 
+def _remove_macos_metadata(target_dir: Path) -> None:
+    for path in target_dir.rglob(".DS_Store"):
+        path.unlink(missing_ok=True)
+
+
 def main() -> int:
     RELEASE_DIR.mkdir(exist_ok=True)
     package_name = f"AmazonListingTool-dependencies-{_platform_suffix()}"
@@ -92,6 +97,7 @@ def main() -> int:
     _copy_if_exists(PROJECT_ROOT / "tools" / "environment_check.py", bundle_dir / "tools" / "environment_check.py")
     _write_install_scripts(bundle_dir)
     _write_readme(bundle_dir)
+    _remove_macos_metadata(bundle_dir)
 
     archive = shutil.make_archive(str(RELEASE_DIR / package_name), "zip", root_dir=RELEASE_DIR, base_dir=package_name)
     print(f"依赖包目录: {bundle_dir}")

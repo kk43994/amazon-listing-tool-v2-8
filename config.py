@@ -56,6 +56,15 @@ def _read_bool_env(name: str, default: bool = False) -> bool:
     raw = str(os.getenv(name, "1" if default else "0") or "").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
+
+def _load_env_defaults() -> None:
+    """加载 .env 默认值；兼容测试里替换成的轻量 load_dotenv。"""
+    try:
+        load_dotenv(dotenv_path=runtime_path('.env'), override=False)
+    except TypeError:
+        load_dotenv(override=False)
+
+
 class Config:
     def __init__(self):
         self.reload()
@@ -63,7 +72,7 @@ class Config:
     def reload(self):
         """重新加载环境变量"""
         # 进程级环境变量优先，.env 作为默认值来源。
-        load_dotenv(dotenv_path=runtime_path('.env'), override=False)
+        _load_env_defaults()
 
         # AI Provider 配置
         raw_ai_api_key = os.getenv('AI_API_KEY', '').strip()

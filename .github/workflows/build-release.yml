@@ -6,6 +6,9 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -14,8 +17,10 @@ jobs:
         include:
           - os: macos-14
             artifact_name: AmazonListingTool-darwin-arm64
+            dependency_name: AmazonListingTool-dependencies-darwin-arm64
           - os: windows-latest
             artifact_name: AmazonListingTool-windows-amd64
+            dependency_name: AmazonListingTool-dependencies-windows-amd64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -28,25 +33,56 @@ jobs:
           python-version: "3.11"
 
       - name: Create virtualenv
+        shell: bash
         run: python -m venv .venv
 
       - name: Install dependencies
         shell: bash
         run: |
-          . .venv/bin/activate || . .venv/Scripts/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller waitress
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
+          "$PY" -m pip install --upgrade pip
+          "$PY" -m pip install -r requirements.txt -r requirements-release.txt
+
+      - name: Environment check
+        shell: bash
+        run: |
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
+          "$PY" tools/environment_check.py --source-deps
+
+      - name: Tests
+        shell: bash
+        run: |
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
+          "$PY" -m pytest -q
 
       - name: Build release
         shell: bash
         run: |
-          . .venv/bin/activate || . .venv/Scripts/activate
-          python tools/build_release.py
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
+          "$PY" tools/build_release.py
 
-      - name: Upload zip artifact
+      - name: Build offline dependency bundle
+        shell: bash
+        run: |
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
+          "$PY" tools/build_dependency_bundle.py
+
+      - name: Upload app zip artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: release/${{ matrix.artifact_name }}.zip
 
+      - name: Upload dependency zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.dependency_name }}
+          path: release/${{ matrix.dependency_name }}.zip
+
+      - name: Publish GitHub Release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/${{ matrix.artifact_name }}.zip
+            release/${{ matrix.dependency_name }}.zip

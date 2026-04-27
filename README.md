@@ -76,6 +76,17 @@ http://127.0.0.1:5000
 
 当前仓库已经补上了面向终端用户的发行构建能力。
 
+### 客户交付包
+
+客户不需要安装 Python、pip 或 `requirements.txt`。推荐只交付 GitHub Release 里的可执行压缩包：
+
+- macOS Apple Silicon：`AmazonListingTool-darwin-arm64.zip`
+- Windows 64 位：`AmazonListingTool-windows-amd64.zip`
+
+客户解压后双击 `启动亚马逊2.8.command` / `启动亚马逊2.8.bat` 即可。启动脚本会先运行环境检测，自动创建 `.env`、`accounts.json`、`input/`、`output/`、`logs/`，并在端口被占用时自动切换到后续端口。
+
+如果客户反馈打不开，让客户双击 `环境检测.command` / `环境检测.bat`，把检测结果截图发给技术支持。详细交付说明见 `docs/客户部署说明.md`。
+
 ### 本地构建
 
 ```bash
@@ -89,6 +100,14 @@ python tools/build_release.py
 
 - `release/AmazonListingTool-<platform>/`
 - `release/AmazonListingTool-<platform>.zip`
+
+如需给内部售后准备源码离线依赖包：
+
+```bash
+python tools/build_dependency_bundle.py
+```
+
+构建完成后会生成 `release/AmazonListingTool-dependencies-<platform>.zip`。该包只用于源码部署，不需要发给普通客户。
 
 ### Windows 本地构建
 
@@ -137,6 +156,12 @@ cp .env.example .env
    - `input/`
    - `output/`
    - `logs/`
+
+内部源码一键初始化也可以直接运行：
+
+```bash
+python3 tools/bootstrap.py
+```
 
 ### Amazon 凭证说明
 

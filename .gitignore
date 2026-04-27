@@ -1,12 +1,13 @@
 .env
 .env.*
 accounts.json
+.DS_Store
+**/.DS_Store
 __pycache__/
 *.pyc
 output/
 logs/
-input/*.xlsx
-input/*.xls
+input/
 *.db
 .venv/
 venv/
@@ -14,6 +15,11 @@ venv/
 build/
 dist/
 release/
+vendor/wheelhouse/
+wheelhouse/
+AmazonListingTool-dependencies-*/
+启动开发版.command
+启动开发版.bat
 AmazonListingTool.spec
 pytest-cache-files-*/
 tmp_*/

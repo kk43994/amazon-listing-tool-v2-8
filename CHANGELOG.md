@@ -2,6 +2,28 @@
 
 本文件记录准备推送到 GitHub / 准备打 tag 时的版本摘要。
 
+## v0.4.0 - 2026-04-27
+
+### 新增
+- 新增客户交付发行包防呆能力：启动脚本先执行环境检测，通过后再启动 Web 工作台
+- 新增 `tools/environment_check.py`，检测系统、依赖、目录权限、端口、AI 配置和 Amazon 账号配置
+- 新增 `tools/bootstrap.py`，支持新电脑源码部署一键创建虚拟环境、安装依赖、生成配置和启动脚本
+- 新增 `tools/build_dependency_bundle.py`，按平台整理离线 wheelhouse 依赖包
+- GitHub Actions 同时构建应用发行包和离线依赖包，并在推送 `v*` tag 时上传到 GitHub Release
+- 发行包新增 `环境检测.command` / `环境检测.bat`、客户快速开始说明和 `docs/客户部署说明.md`
+
+### 优化
+- 发行版端口 `5000` 被占用时自动尝试后续端口
+- 发行包在根目录额外放置 README、客户说明、模板和 `.env.example`，避免客户翻找 `_internal`
+- `.gitignore` 忽略客户输入、发行产物、离线依赖包和 macOS 元数据，避免误提交客户数据
+
+### 修复
+- 修复测试中替换 `load_dotenv` 后 `Config.reload()` 因参数不兼容失败的问题
+
+### 测试
+- 当前全量测试：`174 passed`
+- 本地已验证 macOS arm64 发行包可执行 `--env-check`
+
 ## v0.3.0 - 2026-04-03
 
 ### 新增

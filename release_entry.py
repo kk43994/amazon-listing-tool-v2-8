@@ -20,6 +20,17 @@ from amazon.accounts import AccountManager
 from core.runtime_paths import resource_path, runtime_path
 
 
+def _configure_output_encoding() -> None:
+    """Avoid UnicodeEncodeError when customers launch from a non-UTF-8 console."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def _ensure_runtime_dirs(config) -> None:
     for dirname in (config.INPUT_DIR, config.OUTPUT_DIR, config.LOGS_DIR, runtime_path("config")):
         os.makedirs(dirname, exist_ok=True)
@@ -95,6 +106,8 @@ def _run_env_check(json_output: bool = False, quiet: bool = False) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_output_encoding()
+
     parser = argparse.ArgumentParser(description="亚马逊 2.8 发行版启动入口")
     parser.add_argument("--env-check", action="store_true", help="只执行环境检测，不启动 Web 服务")
     parser.add_argument("--env-check-json", action="store_true", help="以 JSON 输出环境检测结果")

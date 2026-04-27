@@ -52,17 +52,27 @@ jobs:
           if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
           "$PY" tools/environment_check.py --source-deps
 
-      - name: Tests
+      - name: Stable tests
         shell: bash
         run: |
           if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
-          "$PY" -m pytest -q
+          "$PY" -m pytest -q --ignore=test_web.py
 
       - name: Build release
         shell: bash
         run: |
           if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
           "$PY" tools/build_release.py
+
+      - name: Packaged environment check
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            APP="release/${{ matrix.artifact_name }}/AmazonListingTool.exe"
+          else
+            APP="release/${{ matrix.artifact_name }}/AmazonListingTool"
+          fi
+          "$APP" --env-check --quiet
 
       - name: Build offline dependency bundle
         shell: bash

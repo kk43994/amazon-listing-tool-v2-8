@@ -1,5 +1,6 @@
 .env
 .env.*
+!.env.example
 accounts.json
 .DS_Store
 **/.DS_Store

@@ -558,37 +558,64 @@
         </h3>
         <p class="settings-desc">客户只需要粘贴服务商给的 Key。不会填就点“一键恢复推荐”，系统会把域名、接口格式、模型自动写好。</p>
 
-        <!-- ★★★ 售后请把下面"获取 Key"卡片里的占位内容（VENDOR_NAME、VENDOR_BUY_URL、客服微信号、客服微信二维码图片）改成你们自己的，傻子客户才知道去哪买 ★★★ -->
+        <!-- ★★★ 售后注意：如果换了供应商，把下面的链接 https://api.kk666.best 和客服微信二维码（web/static/img/vendor-qr.png）改一下即可 ★★★ -->
         <div class="vendor-cta" id="vendorCtaCard">
           <div class="vendor-cta-head">
             <span class="vendor-cta-badge">还没有 Key？</span>
-            <strong>跟客服买一个，几分钟就能拿到</strong>
+            <strong>跟着下面 4 步去注册自取，5 分钟搞定</strong>
           </div>
           <div class="vendor-cta-body">
             <div class="vendor-cta-step">
               <span class="vendor-cta-num">1</span>
               <div>
-                <div class="vendor-cta-step-title">联系客服（任选一种方式）</div>
-                <div class="vendor-cta-step-desc">告诉客服"我要买 AI Key 用于亚马逊上架工具"，对方会发一段以 <code>sk-</code> 开头的 Key 给你。</div>
+                <div class="vendor-cta-step-title">点这个链接去注册账号</div>
+                <div class="vendor-cta-step-desc">用手机号或微信注册都行；同一个浏览器开着，下面 3 步都在网站里完成。</div>
                 <div class="vendor-cta-contacts">
-                  <button class="btn btn-primary btn-sm" onclick="copyText('VENDOR_WECHAT_ID_PLACEHOLDER', '已复制客服微信号，去微信里搜')">📱 复制客服微信号</button>
-                  <button class="btn btn-outline btn-sm" onclick="showVendorQr()">📷 查看微信二维码</button>
-                  <a class="btn btn-outline btn-sm" href="VENDOR_BUY_URL_PLACEHOLDER" target="_blank" rel="noopener">🛒 在线购买页</a>
+                  <a class="btn btn-primary btn-sm" href="https://api.kk666.best" target="_blank" rel="noopener">🌐 打开注册页（api.kk666.best）</a>
+                  <button class="btn btn-outline btn-sm" onclick="copyText('https://api.kk666.best', '已复制注册地址，浏览器粘贴打开')">📋 复制网址</button>
                 </div>
               </div>
             </div>
             <div class="vendor-cta-step">
               <span class="vendor-cta-num">2</span>
               <div>
-                <div class="vendor-cta-step-title">把 Key 粘贴到下面"文字 API Key"和"图片 API Key"两个框</div>
-                <div class="vendor-cta-step-desc">如果客服只给了一个 Key，文字和图片两边粘同一个就行；其他选项点"一键恢复推荐"自动填好。</div>
+                <div class="vendor-cta-step-title">进「模型广场」找两个模型，看接口路径</div>
+                <div class="vendor-cta-step-desc">
+                  登录后左侧菜单点 <strong>「模型广场」</strong>，搜下面两个模型名，点进去看「接口」字段（一般是 <code>/v1beta/models/{model}:generateContent</code>）：<br>
+                  • 文字模型：<code>gemini-3.1-flash-lite-preview</code><br>
+                  • 图片模型：<code>gemini-3.1-flash-image-preview</code><br>
+                  <strong>看到的接口要和下面"文字接口格式"/"图片接口格式"一致</strong>。如果对得上，点下面"一键恢复推荐"就行；如果不一样，把广场上看到的接口截图发给客服。
+                </div>
               </div>
             </div>
             <div class="vendor-cta-step">
               <span class="vendor-cta-num">3</span>
               <div>
-                <div class="vendor-cta-step-title">点"测试连接"出现绿色对勾就成功了</div>
-                <div class="vendor-cta-step-desc">如果失败：① 检查 Key 有没有多复制空格 ② 公司网络拦了请配代理（设置 → 高级 → HTTP_PROXY） ③ 上面方式发客服找他帮看。</div>
+                <div class="vendor-cta-step-title">「APIkey 管理」里创建并复制密钥</div>
+                <div class="vendor-cta-step-desc">
+                  左侧菜单点 <strong>「API Key 管理」（或「密钥管理」）→ 新建 → 取个名字（比如「亚马逊上架工具」）→ 创建后会显示一段以 <code>sk-</code> 开头的 Key</strong>。<br>
+                  <strong>立刻复制保存</strong>（关闭页面就再也看不到要重建）。
+                </div>
+              </div>
+            </div>
+            <div class="vendor-cta-step">
+              <span class="vendor-cta-num">4</span>
+              <div>
+                <div class="vendor-cta-step-title">「分组管理」里创建一个分组绑定模型</div>
+                <div class="vendor-cta-step-desc">
+                  左侧菜单点 <strong>「分组管理」→ 新建分组</strong>，<strong>把上面 2 个模型勾上 → 把刚才那个 Key 也加进这个分组</strong>。<br>
+                  分组的作用：告诉系统「这个 Key 能用这两个模型」。<strong>不创建分组的话，调用会被拒绝。</strong>
+                </div>
+              </div>
+            </div>
+            <div class="vendor-cta-step">
+              <span class="vendor-cta-num">✓</span>
+              <div>
+                <div class="vendor-cta-step-title">把 Key 粘到下面两个输入框，点「测试连接」</div>
+                <div class="vendor-cta-step-desc">
+                  「文字 API Key」和「图片 API Key」两个框都粘同一个 Key 就行；其他选项点 <strong>「一键恢复推荐」</strong> 自动填好。<br>
+                  绿色对勾 = 成功。失败常见原因：① Key 复制带空格 ② 第 4 步没把模型加到分组里 ③ 公司网拦了，去 .env 配代理 ④ 实在搞不定<a href="javascript:void(0)" onclick="showVendorQr()">点这里找客服</a>。
+                </div>
               </div>
             </div>
           </div>

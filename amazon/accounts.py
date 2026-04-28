@@ -5,6 +5,7 @@
 import json
 import os
 import logging
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from amazon.auth import AmazonAuth, AmazonAuthError, AmazonTokenError, AmazonNetworkError
@@ -33,6 +34,16 @@ def account_has_real_credentials(account: Optional[Dict], require_seller_id: boo
         required_fields.insert(0, 'seller_id')
 
     return all(_is_real_credential(account.get(field)) for field in required_fields)
+
+
+def _account_test_check(name: str, label: str, status: str, message: str, code: str = "") -> Dict:
+    return {
+        "name": name,
+        "label": label,
+        "status": status,
+        "message": str(message or ""),
+        "code": code,
+    }
 
 
 class AccountManager:
@@ -118,6 +129,10 @@ class AccountManager:
                 'is_default': acc.get('is_default', False),
                 'enabled': acc.get('enabled', True),
                 'has_credentials': account_has_real_credentials(acc),
+                'last_test_at': acc.get('last_test_at', ''),
+                'last_test_success': acc.get('last_test_success'),
+                'last_test_message': acc.get('last_test_message', ''),
+                'last_test_checks': acc.get('last_test_checks', []),
             }
             safe_list.append(safe)
         return safe_list
@@ -188,6 +203,19 @@ class AccountManager:
             self.save_accounts()
         return found
 
+    def _record_test_result(self, account: Optional[Dict], result: Dict) -> None:
+        """Persist the latest test outcome so support can see what failed last time."""
+        if not isinstance(account, dict):
+            return
+        account['last_test_at'] = datetime.now(timezone.utc).isoformat()
+        account['last_test_success'] = bool(result.get('success'))
+        account['last_test_message'] = str(result.get('message', ''))[:500]
+        account['last_test_checks'] = list(result.get('checks') or [])[:10]
+        try:
+            self.save_accounts()
+        except Exception as exc:
+            logger.warning("保存账号测试结果失败: %s", exc)
+
     def test_connection(self, seller_id: str = None) -> Dict:
         """
         测试账号连接
@@ -195,16 +223,46 @@ class AccountManager:
         Returns:
             {'success': bool, 'message': str, 'seller_info': {...}}
         """
+        checks: List[Dict] = []
         acc = self.get_account(seller_id) if seller_id else self.get_default_account()
+
+        def finish(success: bool, message: str, **extra) -> Dict:
+            result = {
+                'success': success,
+                'message': message,
+                'seller_id': acc.get('seller_id') if acc else seller_id,
+                'marketplace': acc.get('marketplace_name') if acc else '',
+                'marketplace_id': acc.get('marketplace_id') if acc else '',
+                'checks': checks,
+            }
+            result.update(extra)
+            self._record_test_result(acc, result)
+            return result
+
         if not acc:
-            return {'success': False, 'message': '未找到账号'}
+            checks.append(_account_test_check('account_found', '账号存在', 'fail', '没有找到这个 Seller ID', 'AMAZON_ACCOUNT_NOT_FOUND'))
+            return finish(False, '未找到账号', code='AMAZON_ACCOUNT_NOT_FOUND')
+
+        checks.append(_account_test_check('account_found', '账号存在', 'pass', f"已找到账号 {acc.get('name') or acc.get('seller_id')}"))
 
         if not all([acc.get('lwa_client_id'),
                     acc.get('lwa_client_secret'),
                     acc.get('refresh_token')]):
-            return {'success': False, 'message': '凭证不完整(缺少client_id/secret/refresh_token)'}
+            checks.append(_account_test_check('credentials_format', '凭证格式', 'fail', '缺少 LWA Client ID、Client Secret 或 Refresh Token', 'AMAZON_CREDENTIALS_MISSING'))
+            return finish(False, '凭证不完整(缺少client_id/secret/refresh_token)', code='AMAZON_CREDENTIALS_MISSING')
         if not account_has_real_credentials(acc):
-            return {'success': False, 'message': '凭证未配置完成，仍包含模板占位值'}
+            checks.append(_account_test_check('credentials_format', '凭证格式', 'fail', '仍包含 YOUR_ 这类模板占位值', 'AMAZON_CREDENTIALS_PLACEHOLDER'))
+            return finish(False, '凭证未配置完成，仍包含模板占位值', code='AMAZON_CREDENTIALS_PLACEHOLDER')
+
+        checks.append(_account_test_check('credentials_format', '凭证格式', 'pass', 'Seller ID、LWA Client ID/Secret、Refresh Token 已填写'))
+
+        marketplace_id = acc.get('marketplace_id', 'ATVPDKIKX0DER')
+        region = MARKETPLACE_REGION.get(marketplace_id)
+        endpoint = ENDPOINTS.get(region or '')
+        if not region or not endpoint:
+            checks.append(_account_test_check('marketplace', '站点映射', 'fail', f'未知 marketplace_id: {marketplace_id}', 'AMAZON_MARKETPLACE_BAD'))
+            return finish(False, f'站点配置错误: 未知 marketplace_id {marketplace_id}', code='AMAZON_MARKETPLACE_BAD')
+        checks.append(_account_test_check('marketplace', '站点映射', 'pass', f'{acc.get("marketplace_name") or marketplace_id} -> {endpoint}'))
 
         try:
             auth = AmazonAuth(
@@ -215,36 +273,48 @@ class AccountManager:
             # 尝试获取token
             token = auth.get_access_token()
             if not token:
-                return {'success': False, 'message': 'Token获取失败'}
+                checks.append(_account_test_check('lwa_token', 'LWA Token', 'fail', 'Amazon 没有返回 Access Token', 'AMAZON_TOKEN_EMPTY'))
+                return finish(False, 'Token获取失败', code='AMAZON_TOKEN_EMPTY')
+            checks.append(_account_test_check('lwa_token', 'LWA Token', 'pass', 'Refresh Token 可以换取 Access Token'))
 
             listings = ListingsAPI(
                 auth=auth,
                 seller_id=acc.get('seller_id', ''),
-                marketplace_id=acc.get('marketplace_id', 'ATVPDKIKX0DER'),
+                marketplace_id=marketplace_id,
             )
             probe = listings.probe_connection()
             if not probe.get('success'):
-                return {
-                    'success': False,
-                    'message': probe.get('message', 'Listings API 探测失败'),
-                    'seller_id': acc.get('seller_id'),
-                    'marketplace': acc.get('marketplace_name'),
-                    'token_ok': True,
-                }
+                status_code = probe.get('status_code')
+                checks.append(_account_test_check('listings_api', 'Listings API', 'fail', probe.get('message', 'Listings API 探测失败'), 'AMAZON_LISTINGS_FAIL'))
+                if status_code in (401, 403):
+                    checks.append(_account_test_check('permission', '账号权限', 'fail', f'Amazon 返回 {status_code}，通常是授权/权限/站点不匹配', 'AMAZON_PERMISSION_FAIL'))
+                else:
+                    checks.append(_account_test_check('permission', '账号权限', 'warn', 'Token 可用，但 Listings API 探测未通过，请检查站点和权限', 'AMAZON_PERMISSION_UNKNOWN'))
+                return finish(
+                    False,
+                    probe.get('message', 'Listings API 探测失败'),
+                    token_ok=True,
+                    probe_status=status_code,
+                    code='AMAZON_LISTINGS_FAIL',
+                )
 
-            return {
-                'success': True,
-                'message': f"连接成功! 账号: {acc.get('name')}",
-                'seller_id': acc.get('seller_id'),
-                'marketplace': acc.get('marketplace_name'),
-                'probe_status': probe.get('status_code'),
-            }
+            checks.append(_account_test_check('listings_api', 'Listings API', 'pass', f"Listings API 可访问（HTTP {probe.get('status_code')}）"))
+            checks.append(_account_test_check('permission', '账号权限', 'pass', '账号对当前站点具备基础 Listings 访问权限'))
+
+            return finish(
+                True,
+                f"连接成功! 账号: {acc.get('name')}",
+                probe_status=probe.get('status_code'),
+            )
         except AmazonTokenError as e:
-            return {'success': False, 'message': f'凭证错误: {e}'}
+            checks.append(_account_test_check('lwa_token', 'LWA Token', 'fail', f'凭证错误: {e}', 'AMAZON_TOKEN_FAIL'))
+            return finish(False, f'凭证错误: {e}', code='AMAZON_TOKEN_FAIL')
         except AmazonNetworkError as e:
-            return {'success': False, 'message': f'网络错误: {e}'}
+            checks.append(_account_test_check('lwa_token', 'LWA Token', 'fail', f'网络错误: {e}', 'AMAZON_NETWORK_FAIL'))
+            return finish(False, f'网络错误: {e}', code='AMAZON_NETWORK_FAIL')
         except Exception as e:
-            return {'success': False, 'message': f'连接失败: {e}'}
+            checks.append(_account_test_check('unexpected', '未知异常', 'fail', f'连接失败: {e}', 'AMAZON_TEST_FAIL'))
+            return finish(False, f'连接失败: {e}', code='AMAZON_TEST_FAIL')
 
     def get_auth(self, seller_id: str = None) -> Optional[AmazonAuth]:
         """获取Auth实例"""

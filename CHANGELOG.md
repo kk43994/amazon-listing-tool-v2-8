@@ -2,6 +2,33 @@
 
 本文件记录准备推送到 GitHub / 准备打 tag 时的版本摘要。
 
+## Unreleased
+
+### 新增
+- Web 工作台新增首次使用引导和设置状态面板，按“AI 接口 -> Amazon 账号 -> 导入商品表 -> 一键自检”引导客户完成配置
+- 新增轻量级 `/api/setup-status`，不触发外部 API 调用即可判断客户下一步该做什么
+- 发行包新增 `客户先看这里.txt`，用客户能看懂的方式说明启动、配置、自检和处理顺序
+- 发行包新增 `一键检测修复.command/.bat` Doctor，自动补齐基础运行文件并检查内置依赖、端口、浏览器、AI 中转域名和 Amazon 网络
+- 发行包新增 ASCII 备用入口 `Start-Amazon-2.8`、`Doctor`、`Env-Check`、`Support-Bundle` 和 `Read-Me-First.txt`，避免中文文件名在部分电脑上乱码或被拦截
+- 新增 `VERSION`、`release-manifest.json`、`dependency-inventory.json`、zip SHA256 和 `/api/version`，售后可精确确认客户运行版本
+- Doctor 新增支持包导出，生成已脱敏的 `logs/support-bundle-*.zip`，包含诊断报告、日志、任务历史、版本/依赖清单、脱敏 `.env` 和 `accounts.json`
+- 设置页新增配置网址导航、API 推荐一键填写和 Amazon 账号字段解释，客户可按提示填写 `https://api.kk666.best` 与默认模型
+- 设置页新增 AI 简单/高级模式、推荐配置后端恢复接口、支持信息复制和支持包下载
+- 工作台新增更醒目的“只需点这个”下一步按钮，并按“未配置 AI / 未配置 Amazon / 未导入文件 / 筛选为空”显示专门空状态
+- 设置页拆分为 AI 接口、Amazon 账号、环境自检、高级设置四个标签，减少客户在一页里迷路
+- Amazon 账号测试新增分项结果和最近测试记录，显示 LWA Token、站点映射、Listings API、权限分别是否通过
+- 新增客户发版清单 `docs/RELEASE_CHECKLIST.md`，覆盖本地检查、CI、干净机器、客户流程和售后资料
+
+### 优化
+- 客户启动脚本增加“不关闭窗口”和“浏览器未打开时复制本地地址”的提示
+- Doctor 网络检测拆分 DNS/TCP/TLS/HTTP，并识别云同步目录、临时目录、发行包缺失 `_internal` 等常见客户环境问题
+- Web 后端增加 AI Base URL 与 Amazon 账号格式校验，客户模式下阻止旧域名或缺少 `{model}` 的错误配置
+- 工作台风险按钮会根据 AI、Amazon 账号、Excel 导入状态直接锁定，并在 tooltip 告诉客户下一步
+- Excel 写回改为“写临时文件 -> 校验可读 -> 原子替换”，被 Excel/WPS 占用时统一提示 `EXCEL_LOCKED`
+- 源码离线部署检测到本地 wheelhouse 时跳过 pip 在线升级，并安装 release 构建依赖，避免无网络新电脑卡住
+- GitHub Actions 增加前端 `node --check`，并通过 macOS/Windows 矩阵验证发行包根目录与打包程序自检
+- `.env.example` 默认 AI Base URL 改为 `https://api.kk666.best`
+
 ## v0.4.4 - 2026-04-27
 
 ### 修复

@@ -58,11 +58,24 @@ jobs:
           if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
           "$PY" -m pytest -q --ignore=test_web.py
 
+      - name: Frontend JS syntax check
+        shell: bash
+        run: |
+          cp web/templates/_js.txt amazon28-ui-check.js
+          node --check amazon28-ui-check.js
+
       - name: Build release
         shell: bash
         run: |
           if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
           "$PY" tools/build_release.py
+
+      - name: Verify release root files
+        shell: bash
+        run: |
+          if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=.venv/Scripts/python.exe; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then SYS="windows"; else SYS="darwin"; fi
+          "$PY" tools/verify_release.py "release/${{ matrix.artifact_name }}" --system "$SYS"
 
       - name: Packaged environment check
         shell: bash
@@ -74,6 +87,26 @@ jobs:
           fi
           "$APP" --env-check --quiet
 
+      - name: Packaged web smoke
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            APP="release/${{ matrix.artifact_name }}/AmazonListingTool.exe"
+          else
+            APP="release/${{ matrix.artifact_name }}/AmazonListingTool"
+          fi
+          "$APP" --smoke-test --quiet --port 0
+
+      - name: Packaged doctor smoke
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            APP="release/${{ matrix.artifact_name }}/AmazonListingTool.exe"
+          else
+            APP="release/${{ matrix.artifact_name }}/AmazonListingTool"
+          fi
+          "$APP" --doctor --quiet
+
       - name: Build offline dependency bundle
         shell: bash
         run: |
@@ -84,7 +117,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: release/${{ matrix.artifact_name }}.zip
+          path: |
+            release/${{ matrix.artifact_name }}.zip
+            release/${{ matrix.artifact_name }}.zip.sha256
 
       - name: Upload dependency zip artifact
         uses: actions/upload-artifact@v4
@@ -98,4 +133,5 @@ jobs:
         with:
           files: |
             release/${{ matrix.artifact_name }}.zip
+            release/${{ matrix.artifact_name }}.zip.sha256
             release/${{ matrix.dependency_name }}.zip

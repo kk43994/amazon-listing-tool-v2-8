@@ -52,6 +52,7 @@ def _ensure_venv() -> Path:
 def _find_wheelhouse() -> Path | None:
     candidates = list(WHEELHOUSE_CANDIDATES)
     candidates.extend(PROJECT_ROOT.glob("AmazonListingTool-dependencies-*/vendor/wheelhouse"))
+    candidates.extend((PROJECT_ROOT / "release").glob("AmazonListingTool-dependencies-*/vendor/wheelhouse"))
     for candidate in candidates:
         if candidate.exists() and any(candidate.glob("*")):
             return candidate
@@ -59,15 +60,18 @@ def _find_wheelhouse() -> Path | None:
 
 
 def _install_dependencies(python_path: Path) -> None:
-    _run([str(python_path), "-m", "pip", "install", "--upgrade", "pip"])
     wheelhouse = _find_wheelhouse()
     base_cmd = [str(python_path), "-m", "pip", "install"]
     requirements = ["-r", "requirements.txt"]
+    if (PROJECT_ROOT / "requirements-release.txt").exists():
+        requirements.extend(["-r", "requirements-release.txt"])
     if wheelhouse:
         print(f"使用本地离线依赖包：{wheelhouse}")
+        print("离线模式下跳过 pip 在线升级，避免无网络新电脑卡住。")
         _run(base_cmd + ["--no-index", "--find-links", str(wheelhouse)] + requirements)
     else:
         print("未找到本地 wheelhouse，将从 PyPI 在线安装依赖。")
+        _run([str(python_path), "-m", "pip", "install", "--upgrade", "pip"])
         _run(base_cmd + requirements)
 
 

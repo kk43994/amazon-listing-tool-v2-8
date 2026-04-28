@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import re
+import platform
 import subprocess
 import tempfile
 import time
@@ -13,6 +14,7 @@ import logging
 import threading
 import requests
 from datetime import datetime
+from datetime import timedelta
 from uuid import uuid4
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
@@ -54,6 +56,11 @@ config = get_config()
 
 _SUBMIT_SUCCESS_STATUSES = {'ACCEPTED', 'ACCEPTED_WITH_WARNINGS'}
 _SUBMIT_FAILURE_STATUSES = {'ERROR', 'INVALID', 'SKIPPED', 'PREVIEW_BLOCKED'}
+RECOMMENDED_AI_BASE = 'https://api.kk666.best'
+RECOMMENDED_AI_ENDPOINT = '/v1beta/models/{model}:generateContent'
+RECOMMENDED_TEXT_MODEL = 'gemini-3.1-flash-lite-preview'
+RECOMMENDED_IMAGE_MODEL = 'gemini-3.1-flash-image-preview'
+RECENT_PREVIEW_MAX_AGE = timedelta(hours=24)
 
 
 # ===== 统一响应格式 =====
@@ -68,9 +75,12 @@ def ok(data=None, message=''):
     return jsonify(resp)
 
 
-def err(message, code=400):
+def err(message, code=400, error_code=None):
     """统一错误响应"""
-    return jsonify({'success': False, 'error': message}), code
+    payload = {'success': False, 'error': message}
+    if error_code:
+        payload['code'] = error_code
+    return jsonify(payload), code
 
 
 def _validate_file_path(filepath: str) -> str | None:
@@ -91,6 +101,10 @@ def _env_file_path() -> str:
 
 def _accounts_file_path() -> str:
     return runtime_path('accounts.json')
+
+
+def _setup_state_path() -> str:
+    return runtime_path('config', 'setup-state.json')
 
 
 def _restrict_secret_file_permissions(path: str):
@@ -130,6 +144,49 @@ def _write_env_updates(updates: dict):
 
     for key, val in updates.items():
         os.environ[str(key)] = str(val)
+
+
+def _persist_setup_state(completed: bool) -> bool:
+    path = _setup_state_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {}
+    if os.path.exists(path):
+        try:
+            payload = json.load(open(path, 'r', encoding='utf-8'))
+        except Exception:
+            payload = {}
+    if completed:
+        payload['completed'] = True
+        payload['completed_at'] = payload.get('completed_at') or datetime.utcnow().isoformat() + 'Z'
+    else:
+        payload['completed'] = False
+    payload['last_checked_at'] = datetime.utcnow().isoformat() + 'Z'
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+    return bool(payload.get('completed'))
+
+
+def _read_setup_completed() -> bool:
+    try:
+        payload = json.load(open(_setup_state_path(), 'r', encoding='utf-8'))
+        return bool(payload.get('completed'))
+    except Exception:
+        return False
+
+
+def _open_path_in_file_manager(path: str, reveal: bool = False) -> None:
+    path = os.path.abspath(path)
+    if sys.platform.startswith('win'):
+        if reveal and os.path.isfile(path):
+            subprocess.Popen(['explorer', '/select,', path])
+        else:
+            os.startfile(path)  # type: ignore[attr-defined]
+        return
+    if sys.platform == 'darwin':
+        cmd = ['open', '-R', path] if reveal and os.path.isfile(path) else ['open', path]
+    else:
+        cmd = ['xdg-open', path]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _marketplace_name(marketplace_id: str) -> str:
@@ -230,11 +287,134 @@ def _sync_sp_config_to_accounts(data: dict) -> bool:
     return True
 
 
+def _is_real_config_value(value: str) -> bool:
+    text = str(value or '').strip()
+    upper = text.upper()
+    return bool(text) and 'YOUR_' not in upper and not upper.startswith('REPLACE-WITH')
+
+
+def _looks_like_legacy_ai_base(value: str) -> bool:
+    text = _normalize_ai_base_url(value).lower()
+    return not text or 'api.example.com' in text or 'api.kk666.online' in text
+
+
+def _normalize_ai_base_url(value: str) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    if not re.match(r'^https?://', text, re.IGNORECASE):
+        text = f'https://{text.lstrip("/")}'
+    text = text.rstrip('/')
+    lowered = text.lower()
+    if lowered.endswith('/v1') or lowered.endswith('/v1beta'):
+        text = text.rsplit('/', 1)[0]
+    return text
+
+
+def _recommended_ai_updates() -> dict:
+    return {
+        'AI_TEXT_API_BASE': RECOMMENDED_AI_BASE,
+        'AI_IMAGE_API_BASE': RECOMMENDED_AI_BASE,
+        'AI_TEXT_ENDPOINT_TEMPLATE': RECOMMENDED_AI_ENDPOINT,
+        'AI_IMAGE_ENDPOINT_TEMPLATE': RECOMMENDED_AI_ENDPOINT,
+        'AI_TEXT_PROTOCOL': 'gemini_generate_content',
+        'AI_IMAGE_PROTOCOL': 'gemini_generate_content',
+        'AI_TEXT_MODEL': RECOMMENDED_TEXT_MODEL,
+        'AI_IMAGE_MODEL': RECOMMENDED_IMAGE_MODEL,
+    }
+
+
+def _validate_ai_updates(updates: dict, payload: dict) -> str:
+    for key in ('AI_TEXT_API_BASE', 'AI_IMAGE_API_BASE'):
+        if key in updates:
+            normalized = _normalize_ai_base_url(updates[key])
+            if _looks_like_legacy_ai_base(normalized):
+                return f"{key} 不能留空或使用旧域名，请填 {RECOMMENDED_AI_BASE}"
+            updates[key] = normalized
+
+    for key in ('AI_TEXT_ENDPOINT_TEMPLATE', 'AI_IMAGE_ENDPOINT_TEMPLATE'):
+        if key in updates:
+            endpoint = _normalize_endpoint_template(updates[key])
+            if 'generatecontent' in endpoint.lower() and '{model}' not in endpoint:
+                return f"{key} 必须保留 {{model}}，推荐填写 {RECOMMENDED_AI_ENDPOINT}"
+            updates[key] = endpoint
+
+    customer_mode = str(payload.get('mode') or payload.get('ai_config_mode') or '').strip().lower()
+    if customer_mode in {'simple', 'recommended', 'customer'}:
+        for key in ('AI_TEXT_API_BASE', 'AI_IMAGE_API_BASE'):
+            value = updates.get(key) or getattr(config, key, '')
+            if _normalize_ai_base_url(value) != RECOMMENDED_AI_BASE:
+                return f"客户简单模式下 Base URL 固定使用 {RECOMMENDED_AI_BASE}，不要手改"
+    return ''
+
+
+def _read_project_version() -> str:
+    for path in (runtime_path('VERSION'), resource_path('VERSION')):
+        try:
+            if os.path.exists(path):
+                return open(path, 'r', encoding='utf-8').read().strip() or '0.0.0-dev'
+        except OSError:
+            continue
+    return '0.0.0-dev'
+
+
+def _read_release_manifest() -> dict:
+    for path in (runtime_path('release-manifest.json'), resource_path('release-manifest.json')):
+        try:
+            if os.path.exists(path):
+                payload = json.load(open(path, 'r', encoding='utf-8'))
+                return payload if isinstance(payload, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _version_payload() -> dict:
+    return {
+        'version': _read_project_version(),
+        'platform': f"{platform.system()} {platform.release()} ({platform.machine()})",
+        'python': platform.python_version(),
+        'frozen': bool(getattr(sys, 'frozen', False)),
+        'runtime_dir': runtime_path(),
+        'resource_dir': resource_path(),
+        'manifest': _read_release_manifest(),
+    }
+
+
+def _validate_amazon_account_payload(data: dict, strict: bool = True) -> list[str]:
+    errors = []
+    seller_id = str(data.get('seller_id') or '').strip()
+    client_id = str(data.get('lwa_client_id') or data.get('client_id') or '').strip()
+    client_secret = str(data.get('lwa_client_secret') or data.get('client_secret') or '').strip()
+    refresh_token = str(data.get('refresh_token') or '').strip()
+    marketplace_id = str(data.get('marketplace_id') or config.AMAZON_MARKETPLACE or '').strip()
+
+    if not _is_real_config_value(seller_id):
+        errors.append('Seller ID 不能为空，且不能使用 YOUR_SELLER_ID 这类模板值')
+    if not _is_real_config_value(client_id):
+        errors.append('LWA Client ID 不能为空')
+    elif strict and not re.match(r'^amzn1\.application-oa2-client\.', client_id, re.IGNORECASE):
+        errors.append('LWA Client ID 通常以 amzn1.application-oa2-client. 开头，请检查是否复制错')
+    if not _is_real_config_value(client_secret):
+        errors.append('LWA Client Secret 不能为空')
+    if not _is_real_config_value(refresh_token):
+        errors.append('Refresh Token 不能为空')
+    elif strict and not refresh_token.lower().startswith('atzr|'):
+        errors.append('Refresh Token 通常以 Atzr| 开头，请检查是否填成 Access Token')
+
+    try:
+        from amazon.mapper import MARKETPLACE_REGION
+
+        if marketplace_id and marketplace_id not in MARKETPLACE_REGION:
+            errors.append(f'Marketplace ID 不在内置站点列表中：{marketplace_id}')
+    except Exception:
+        pass
+    return errors
+
+
 def _amazon_credentials_configured() -> bool:
     def is_real(value: str) -> bool:
-        text = str(value or '').strip()
-        upper = text.upper()
-        return bool(text) and 'YOUR_' not in upper
+        return _is_real_config_value(value)
 
     env_ready = bool(
         is_real(config.AMAZON_CLIENT_ID)
@@ -290,6 +470,8 @@ _WORKFLOW_RESET_FIELDS = (
     ('preview_message', '预览信息'),
     ('preview_time', '预览时间'),
     ('preview_account', '预览账号'),
+    ('preview_account_id', '预览账号ID'),
+    ('preview_marketplace_id', '预览站点ID'),
     ('preview_issue_payload',),
     ('validation_status',),
     ('validation_errors',),
@@ -314,6 +496,8 @@ _NON_REVALIDATING_HEADER_ALIASES = {
     'preview_message', '预览信息',
     'preview_time', '预览时间',
     'preview_account', '预览账号',
+    'preview_account_id', '预览账号ID',
+    'preview_marketplace_id', '预览站点ID',
     'preview_issue_payload',
     'validation_status', 'validation_errors', 'validation_warnings',
     'listing_check_status', '缺项诊断状态',
@@ -474,9 +658,76 @@ def _persist_row_updates(input_file: str, sku: str, updates: dict):
     _persist_bulk_row_updates(input_file, {sku: updates})
 
 
+def _backup_excel_before_mutation(input_file: str, reason: str = 'mutation') -> str:
+    """Before changing a customer's Excel, keep a timestamped copy for rollback."""
+    if not input_file or not os.path.exists(input_file):
+        return ''
+    try:
+        backups_dir = runtime_path('backups')
+        os.makedirs(backups_dir, exist_ok=True)
+        source = os.path.abspath(input_file)
+        stem, ext = os.path.splitext(os.path.basename(source))
+        safe_reason = re.sub(r'[^A-Za-z0-9_.-]+', '-', str(reason or 'mutation')).strip('-') or 'mutation'
+        filename = f"{stem}.{safe_reason}.{datetime.now().strftime('%Y%m%d-%H%M%S')}.{uuid4().hex[:6]}{ext or '.xlsx'}"
+        dest = os.path.join(backups_dir, filename)
+        import shutil
+
+        shutil.copy2(source, dest)
+        return dest
+    except Exception as exc:
+        logger.warning("Excel 修改前备份失败 %s: %s", input_file, exc)
+        return ''
+
+
+def _excel_locked_customer_message(input_file: str) -> str:
+    name = os.path.basename(str(input_file or 'Excel文件')) or 'Excel文件'
+    return f"EXCEL_LOCKED: {name} 正在被 Excel/WPS 或其他程序占用，请关闭表格后重试"
+
+
+def _verify_saved_excel_copy(temp_path: str, ext: str):
+    """Verify the temporary workbook is readable before replacing the customer's file."""
+    if ext == '.xls':
+        import xlrd
+
+        book = xlrd.open_workbook(temp_path, on_demand=True)
+        book.release_resources()
+        return
+
+    from openpyxl import load_workbook
+
+    book = load_workbook(temp_path, read_only=True, data_only=True)
+    book.close()
+
+
+def _atomic_save_excel(save_callback, input_file: str):
+    """Save to a temp file, verify it, then atomically replace the original workbook."""
+    target = os.path.abspath(str(input_file))
+    target_dir = os.path.dirname(target) or '.'
+    base = os.path.basename(target)
+    ext = os.path.splitext(base)[1].lower() or '.xlsx'
+    temp_path = os.path.join(target_dir, f'.{base}.tmp-{uuid4().hex}{ext}')
+    try:
+        save_callback(temp_path)
+        _verify_saved_excel_copy(temp_path, ext)
+        os.replace(temp_path, target)
+    except PermissionError as exc:
+        raise RuntimeError(_excel_locked_customer_message(input_file)) from exc
+    except OSError as exc:
+        if getattr(exc, 'errno', None) in (1, 13):
+            raise RuntimeError(_excel_locked_customer_message(input_file)) from exc
+        raise
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
 def _persist_bulk_row_updates(input_file: str, updates_by_sku: dict):
     """批量更新多个 SKU，xlsx 保持原表结构，xls 使用 xlwt 重写。"""
     with _get_excel_file_lock(input_file):
+        _backup_excel_before_mutation(input_file, reason='row_update')
         ext = os.path.splitext(str(input_file))[1].lower()
         if ext == '.xls':
             _persist_bulk_row_updates_xls(input_file, updates_by_sku)
@@ -488,6 +739,7 @@ def _persist_bulk_row_updates(input_file: str, updates_by_sku: dict):
 
 def _append_rows(input_file: str, rows: list[dict]):
     with _get_excel_file_lock(input_file):
+        _backup_excel_before_mutation(input_file, reason='append_rows')
         ext = os.path.splitext(str(input_file))[1].lower()
         if ext == '.xls':
             _append_rows_xls_rebuild(input_file, rows)
@@ -500,59 +752,61 @@ def _persist_bulk_row_updates_xlsx(input_file: str, updates_by_sku: dict):
     from openpyxl import load_workbook
 
     wb = load_workbook(input_file)
-    ws = wb.active
-    header_row = _detect_header_row(ws)
-    headers = _build_header_index(ws, header_row)
+    try:
+        ws = wb.active
+        header_row = _detect_header_row(ws)
+        headers = _build_header_index(ws, header_row)
 
-    sku_col_idx = None
-    for candidate in ('SKU', 'sku', 'seller_sku', 'seller-sku'):
-        if candidate in headers:
-            sku_col_idx = headers[candidate]
-            break
+        sku_col_idx = None
+        for candidate in ('SKU', 'sku', 'seller_sku', 'seller-sku'):
+            if candidate in headers:
+                sku_col_idx = headers[candidate]
+                break
 
-    if sku_col_idx is None:
+        if sku_col_idx is None:
+            raise ValueError('找不到SKU列')
+
+        row_map = {}
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            cell_sku = str(ws.cell(row=row_idx, column=sku_col_idx).value or '').strip()
+            if cell_sku:
+                row_map[cell_sku] = row_idx
+
+        missing_skus = [sku for sku in updates_by_sku if sku not in row_map]
+        if missing_skus:
+            raise ValueError(f"SKU未找到: {', '.join(missing_skus)}")
+
+        for sku, updates in updates_by_sku.items():
+            target_row_idx = row_map[sku]
+            prepared_updates = _augment_updates_with_workflow_resets(headers, updates)
+            for header_name, value in prepared_updates.items():
+                col_idx = _ensure_header(ws, header_row, headers, header_name)
+                ws.cell(row=target_row_idx, column=col_idx, value=value)
+
+        _atomic_save_excel(lambda path: wb.save(path), input_file)
+    finally:
         wb.close()
-        raise ValueError('找不到SKU列')
-
-    row_map = {}
-    for row_idx in range(header_row + 1, ws.max_row + 1):
-        cell_sku = str(ws.cell(row=row_idx, column=sku_col_idx).value or '').strip()
-        if cell_sku:
-            row_map[cell_sku] = row_idx
-
-    missing_skus = [sku for sku in updates_by_sku if sku not in row_map]
-    if missing_skus:
-        wb.close()
-        raise ValueError(f"SKU未找到: {', '.join(missing_skus)}")
-
-    for sku, updates in updates_by_sku.items():
-        target_row_idx = row_map[sku]
-        prepared_updates = _augment_updates_with_workflow_resets(headers, updates)
-        for header_name, value in prepared_updates.items():
-            col_idx = _ensure_header(ws, header_row, headers, header_name)
-            ws.cell(row=target_row_idx, column=col_idx, value=value)
-
-    wb.save(input_file)
-    wb.close()
 
 
 def _append_rows_xlsx(input_file: str, rows: list[dict]):
     from openpyxl import load_workbook
 
     wb = load_workbook(input_file)
-    ws = wb.active
-    header_row = _detect_header_row(ws)
-    headers = _build_header_index(ws, header_row)
+    try:
+        ws = wb.active
+        header_row = _detect_header_row(ws)
+        headers = _build_header_index(ws, header_row)
 
-    for row_data in rows or []:
-        row_data = _prepare_appended_row(headers, row_data)
-        target_row_idx = ws.max_row + 1
-        for header_name, value in row_data.items():
-            col_idx = _ensure_header(ws, header_row, headers, header_name)
-            ws.cell(row=target_row_idx, column=col_idx, value=value)
+        for row_data in rows or []:
+            row_data = _prepare_appended_row(headers, row_data)
+            target_row_idx = ws.max_row + 1
+            for header_name, value in row_data.items():
+                col_idx = _ensure_header(ws, header_row, headers, header_name)
+                ws.cell(row=target_row_idx, column=col_idx, value=value)
 
-    wb.save(input_file)
-    wb.close()
+        _atomic_save_excel(lambda path: wb.save(path), input_file)
+    finally:
+        wb.close()
 
 
 def _persist_bulk_row_updates_xls(input_file: str, updates_by_sku: dict):
@@ -853,7 +1107,7 @@ def _persist_bulk_row_updates_xls_rebuild(input_file: str, updates_by_sku: dict)
     for row_idx, row in enumerate(rows):
         for col_idx, value in enumerate(row):
             new_sheet.write(row_idx, col_idx, value)
-    new_workbook.save(input_file)
+    _atomic_save_excel(lambda path: new_workbook.save(path), input_file)
 
 
 def _append_rows_xls_rebuild(input_file: str, rows_to_append: list[dict]):
@@ -914,7 +1168,7 @@ def _append_rows_xls_rebuild(input_file: str, rows_to_append: list[dict]):
     for row_idx, row in enumerate(rows):
         for col_idx, value in enumerate(row):
             new_sheet.write(row_idx, col_idx, value)
-    new_workbook.save(input_file)
+    _atomic_save_excel(lambda path: new_workbook.save(path), input_file)
 
 
 def _detect_xls_preserve_support() -> dict:
@@ -1071,6 +1325,8 @@ def _logical_field_to_excel_header(field: str, col_map: dict):
         'preview_message': ('preview_message', 'preview_message'),
         'preview_time': ('preview_time', 'preview_time'),
         'preview_account': ('preview_account', 'preview_account'),
+        'preview_account_id': ('preview_account_id', 'preview_account_id'),
+        'preview_marketplace_id': ('preview_marketplace_id', 'preview_marketplace_id'),
         'submit_status': ('submit_status', 'submit_status'),
         'submission_id': ('submission_id', 'submission_id'),
         'submission_route': ('submission_route', 'submission_route'),
@@ -1376,7 +1632,14 @@ def _build_submit_persist_updates(headers, result_entry: dict, submit_time: str)
     return updates
 
 
-def _build_preview_persist_updates(headers, result_entry: dict, preview_time: str, account_name: str) -> dict:
+def _build_preview_persist_updates(
+    headers,
+    result_entry: dict,
+    preview_time: str,
+    account_name: str,
+    account_id: str = '',
+    marketplace_id: str = '',
+) -> dict:
     status = str(result_entry.get('status', '') or '').strip().upper()
     if not status:
         status = 'VALID' if result_entry.get('valid') else 'INVALID'
@@ -1396,6 +1659,8 @@ def _build_preview_persist_updates(headers, result_entry: dict, preview_time: st
         _pick_existing_header(headers, 'preview_message', '预览信息', default='preview_message'): '; '.join(details),
         _pick_existing_header(headers, 'preview_time', '预览时间', default='preview_time'): preview_time,
         _pick_existing_header(headers, 'preview_account', '预览账号', default='preview_account'): account_name,
+        _pick_existing_header(headers, 'preview_account_id', '预览账号ID', default='preview_account_id'): account_id,
+        _pick_existing_header(headers, 'preview_marketplace_id', '预览站点ID', default='preview_marketplace_id'): marketplace_id,
         _pick_existing_header(headers, 'preview_issue_payload', default='preview_issue_payload'): _compact_json_cell(
             _build_preview_issue_payload(result_entry)
         ),
@@ -2849,6 +3114,177 @@ def list_files():
     })
 
 
+@app.route('/api/sample-excel', methods=['POST'])
+def create_sample_excel():
+    """生成一个极小示例表，让客户先验证流程再导入真实数据。"""
+    try:
+        from openpyxl import Workbook
+
+        os.makedirs(config.INPUT_DIR, exist_ok=True)
+        filename = f'示例商品_{time.strftime("%Y%m%d_%H%M%S")}.xlsx'
+        filepath = os.path.join(config.INPUT_DIR, filename)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'demo'
+        ws.append([
+            'SKU', 'item_name', 'brand', 'main_image_url', 'standard_price', 'quantity',
+            'condition_type', 'product_type', 'country_of_origin',
+        ])
+        ws.append([
+            'DEMO-SKU-001',
+            'Demo Stainless Steel Water Bottle',
+            'DemoBrand',
+            'https://m.media-amazon.com/images/I/61vJtKbAssL._AC_SL1500_.jpg',
+            '19.99',
+            '10',
+            'new_new',
+            'WATER_BOTTLE',
+            'US',
+        ])
+        wb.save(filepath)
+        wb.close()
+        invalidate_excel_cache(filepath)
+        return jsonify({'success': True, 'filename': filename, 'filepath': filepath, 'message': '示例 Excel 已生成'})
+    except Exception as exc:
+        return err(f'生成示例 Excel 失败：{exc}', 500, 'SAMPLE_EXCEL_FAIL')
+
+
+def _probe_writable_dir(path: str) -> tuple[bool, str]:
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe_path = os.path.join(path, f'.setup_probe_{uuid4().hex[:8]}.tmp')
+        with open(probe_path, 'w', encoding='utf-8') as fh:
+            fh.write('ok')
+        os.remove(probe_path)
+        return True, ''
+    except Exception as exc:
+        return False, str(exc)
+
+
+@app.route('/api/setup-status')
+def setup_status():
+    """返回轻量级首次使用状态，供前端做新手引导，不触发外部 API 调用。"""
+    input_files = []
+    output_files = []
+    for directory, bucket in ((config.INPUT_DIR, input_files), (config.OUTPUT_DIR, output_files)):
+        try:
+            if os.path.exists(directory):
+                bucket.extend([
+                    name for name in os.listdir(directory)
+                    if name.lower().endswith(('.xlsx', '.xls', '.json')) and not name.startswith(('~', '.'))
+                ])
+        except OSError:
+            pass
+
+    dir_checks = {}
+    for label, directory in (('input', config.INPUT_DIR), ('output', config.OUTPUT_DIR), ('logs', config.LOGS_DIR)):
+        ok, detail = _probe_writable_dir(directory)
+        dir_checks[label] = {'ok': ok, 'path': directory, 'detail': detail}
+    dirs_ok = all(item['ok'] for item in dir_checks.values())
+
+    text_key_ready = _is_real_config_value(config.AI_TEXT_API_KEY)
+    image_key_ready = _is_real_config_value(config.AI_IMAGE_API_KEY)
+    ai_ready = bool(text_key_ready and image_key_ready)
+    ai_message = '文字和图片 AI 已配置' if ai_ready else '请先填写文字/图片 AI Key，保存后再点测试连接'
+    if ai_ready and (_looks_like_legacy_ai_base(config.AI_TEXT_API_BASE) or _looks_like_legacy_ai_base(config.AI_IMAGE_API_BASE)):
+        ai_message = f'AI Key 已填写，但 Base URL 建议改成 {RECOMMENDED_AI_BASE}'
+
+    account_ready = False
+    account_count = 0
+    account_message = '请添加 Amazon SP-API 账号'
+    account_name = ''
+    try:
+        from amazon.accounts import AccountManager, account_has_real_credentials
+
+        manager = AccountManager(_accounts_file_path())
+        account_count = len(manager.accounts)
+        default_account = manager.get_default_account()
+        if default_account:
+            account_name = default_account.get('name') or default_account.get('seller_id') or ''
+            account_ready = account_has_real_credentials(default_account)
+            account_message = '默认 Amazon 账号已配置' if account_ready else '默认 Amazon 账号仍缺少凭证，请补齐后再提交'
+    except Exception as exc:
+        account_message = f'账号配置读取失败：{exc}'
+
+    file_ready = len(input_files) > 0
+    steps = [
+        {
+            'id': 'ai',
+            'title': '配置 AI 接口',
+            'status': 'done' if ai_ready else 'todo',
+            'message': ai_message,
+            'action': 'settings_ai',
+            'button': '去设置 AI',
+        },
+        {
+            'id': 'account',
+            'title': '添加 Amazon 账号',
+            'status': 'done' if account_ready else 'todo',
+            'message': account_message,
+            'action': 'add_account' if not account_ready else 'settings_account',
+            'button': '添加账号' if not account_ready else '查看账号',
+        },
+        {
+            'id': 'file',
+            'title': '导入商品表',
+            'status': 'done' if file_ready else 'todo',
+            'message': f'已找到 {len(input_files)} 个输入文件' if file_ready else '导入客户 Excel，或先生成官方字段模板',
+            'action': 'upload',
+            'button': '导入 Excel',
+        },
+        {
+            'id': 'check',
+            'title': '一键自检',
+            'status': 'done' if ai_ready and account_ready and dirs_ok else 'todo',
+            'message': '配置基本齐全，可运行自检确认能否真正连通' if ai_ready and account_ready else '前面几步填完后再运行自检',
+            'action': 'self_check',
+            'button': '运行自检',
+        },
+    ]
+
+    next_step = next((step for step in steps if step['status'] != 'done'), None)
+    setup_completed_now = bool(ai_ready and account_ready)
+    setup_completed = _persist_setup_state(setup_completed_now) if setup_completed_now or _read_setup_completed() else False
+    return jsonify({
+        'success': True,
+        'version': _version_payload(),
+        'ready': bool(ai_ready and account_ready and file_ready and dirs_ok),
+        'needs_setup': bool(not (ai_ready and account_ready and file_ready)),
+        'first_run_completed': setup_completed,
+        'runtime_dir': runtime_path(),
+        'env_exists': os.path.exists(_env_file_path()),
+        'dirs_ok': dirs_ok,
+        'dir_checks': dir_checks,
+        'ai': {
+            'ready': ai_ready,
+            'text_key_ready': text_key_ready,
+            'image_key_ready': image_key_ready,
+            'text_base': config.AI_TEXT_API_BASE,
+            'image_base': config.AI_IMAGE_API_BASE,
+            'recommended_base': RECOMMENDED_AI_BASE,
+            'message': ai_message,
+        },
+        'amazon': {
+            'ready': account_ready,
+            'account_count': account_count,
+            'default_account': account_name,
+            'message': account_message,
+        },
+        'files': {
+            'input_count': len(input_files),
+            'output_count': len(output_files),
+            'latest_input': input_files[0] if input_files else '',
+        },
+        'steps': steps,
+        'next_step': next_step,
+    })
+
+
+@app.route('/api/version')
+def app_version():
+    return jsonify({'success': True, **_version_payload()})
+
+
 @app.route('/api/config', methods=['GET', 'POST'])
 def manage_config():
     """查看/修改配置"""
@@ -2909,6 +3345,8 @@ def manage_config():
                 value = data[payload_key]
                 if env_key.endswith('_API_KEY') and str(value or '').strip() == '':
                     continue
+                if env_key.endswith('_API_BASE'):
+                    value = _normalize_ai_base_url(value)
                 if env_key.endswith('_ENDPOINT_TEMPLATE'):
                     value = _normalize_endpoint_template(value)
                 if env_key == 'DEFAULT_LANG':
@@ -2947,9 +3385,33 @@ def manage_config():
                 'gemini_generate_content' if 'generatecontent' in endpoint else 'openai_images'
             )
 
+        validation_error = _validate_ai_updates(updates, data)
+        if validation_error:
+            return err(validation_error, 400, 'AI_BASE_BAD')
+
         _write_env_updates(updates)
         reload_config()
         return jsonify({'success': True, 'message': '配置已更新，已即时生效'})
+
+
+@app.route('/api/config/recommended-ai', methods=['POST'])
+def reset_recommended_ai_config():
+    """一键恢复客户推荐 AI 配置，不覆盖已经粘贴的 Key。"""
+    updates = _recommended_ai_updates()
+    _write_env_updates(updates)
+    reload_config()
+    return jsonify({
+        'success': True,
+        'message': '已恢复推荐 AI 域名、接口格式和模型；Key 不会被覆盖',
+        'config': {
+            'text_api_base': RECOMMENDED_AI_BASE,
+            'image_api_base': RECOMMENDED_AI_BASE,
+            'text_endpoint_template': RECOMMENDED_AI_ENDPOINT,
+            'image_endpoint_template': RECOMMENDED_AI_ENDPOINT,
+            'text_model': RECOMMENDED_TEXT_MODEL,
+            'image_model': RECOMMENDED_IMAGE_MODEL,
+        },
+    })
 
 
 @app.route('/api/sp-config', methods=['POST'])
@@ -2964,21 +3426,30 @@ def save_sp_config():
     _write_env_updates(updates)
     _sync_sp_config_to_accounts(data)
     reload_config()
-    return jsonify({'success': True, 'message': 'SP-API配置已保存，已即时生效'})
+    warnings = _validate_amazon_account_payload(data, strict=False)
+    return jsonify({'success': True, 'message': 'SP-API配置已保存，已即时生效', 'warnings': warnings})
 
 
 @app.route('/api/config/test', methods=['POST'])
 def test_ai_config():
     """测试当前 AI 配置是否可用。"""
+    data = request.json or {}
+    kind = str(data.get('kind') or 'text').strip().lower()
     try:
-        from core.ai_client import ai_text
+        from core.ai_client import ai_text, ai_image_generate
+
+        if kind == 'image':
+            result = ai_image_generate('Generate a small plain white square on a clean background.', size='512x512')
+            if result:
+                return jsonify({'success': True, 'message': '图片 AI 连接成功，已返回图片数据'})
+            return jsonify({'success': False, 'message': '图片 AI 请求已发送，但未返回图片数据'})
 
         result = ai_text('请只回复 OK', temperature=0.0, max_tokens=8, raise_on_error=True, system_prompt='You are a helpful assistant.')
         if result:
-            return jsonify({'success': True, 'message': f'AI连接成功: {result[:60]}'})
-        return jsonify({'success': False, 'message': 'AI请求已发送，但未返回有效文本'})
+            return jsonify({'success': True, 'message': f'AI连接成功（文字）: {result[:60]}'})
+        return jsonify({'success': False, 'message': '文字 AI 请求已发送，但未返回有效文本'})
     except Exception as e:
-        return jsonify({'success': False, 'message': f'AI连接失败: {str(e)}'})
+        return jsonify({'success': False, 'message': f'AI连接失败: {str(e)}', 'code': 'AI_TEST_FAIL'})
 
 
 @app.route('/api/self-check', methods=['POST'])
@@ -3006,6 +3477,12 @@ def run_self_check():
         append_check('output_dir', 'pass', '输出目录可写', config.OUTPUT_DIR)
     except Exception as e:
         append_check('output_dir', 'fail', '输出目录不可写', str(e))
+
+    # AI 中转域名
+    if _looks_like_legacy_ai_base(config.AI_TEXT_API_BASE) or _looks_like_legacy_ai_base(config.AI_IMAGE_API_BASE):
+        append_check('ai_base_url', 'warn', f'AI Base URL 建议改为 {RECOMMENDED_AI_BASE}', f"文字={config.AI_TEXT_API_BASE}; 图片={config.AI_IMAGE_API_BASE}")
+    else:
+        append_check('ai_base_url', 'pass', 'AI Base URL 已填写', f"文字={config.AI_TEXT_API_BASE}; 图片={config.AI_IMAGE_API_BASE}")
 
     # 文本AI
     try:
@@ -3082,6 +3559,81 @@ def run_self_check():
     })
 
 
+@app.route('/api/support-info')
+def support_info():
+    """返回可复制给客服的脱敏环境摘要。"""
+    setup_response = setup_status()
+    setup = setup_response.get_json(silent=True) if hasattr(setup_response, 'get_json') else {}
+    return jsonify({
+        'success': True,
+        'version': _version_payload(),
+        'setup': setup,
+        'ai': {
+            'text_base': config.AI_TEXT_API_BASE,
+            'image_base': config.AI_IMAGE_API_BASE,
+            'text_model': config.AI_TEXT_MODEL,
+            'image_model': config.AI_IMAGE_MODEL,
+            'text_key_ready': _is_real_config_value(config.AI_TEXT_API_KEY),
+            'image_key_ready': _is_real_config_value(config.AI_IMAGE_API_KEY),
+        },
+        'amazon_configured': _amazon_credentials_configured(),
+    })
+
+
+@app.route('/api/support-bundle', methods=['POST'])
+def download_support_bundle():
+    """生成已脱敏技术支持包，浏览器直接下载。"""
+    try:
+        from tools.environment_check import create_support_bundle, run_checks
+
+        report = run_checks(
+            require_source_dependencies=False,
+            check_network=False,
+            strict_network=False,
+            check_runtime_imports=bool(getattr(sys, 'frozen', False)),
+            fix=True,
+            port=config.WEB_PORT,
+        )
+        bundle_path = create_support_bundle(report)
+        return send_file(str(bundle_path), as_attachment=True, download_name=os.path.basename(bundle_path))
+    except Exception as exc:
+        logger.exception("生成支持包失败")
+        return err(f'生成支持包失败：{exc}', 500)
+
+
+@app.route('/api/open-folder', methods=['POST'])
+def open_runtime_folder():
+    """Open common customer folders from the local desktop app."""
+    data = request.json or {}
+    kind = str(data.get('kind') or 'output').strip().lower()
+    try:
+        if kind == 'backups':
+            path = runtime_path('backups')
+            os.makedirs(path, exist_ok=True)
+            reveal = False
+        elif kind == 'latest_backup':
+            backups_dir = runtime_path('backups')
+            os.makedirs(backups_dir, exist_ok=True)
+            candidates = [p for p in os.listdir(backups_dir) if not p.startswith('.')]
+            if not candidates:
+                return err('还没有备份文件；当系统写回 Excel 时会自动生成备份', 404, 'NO_BACKUP')
+            latest = max((os.path.join(backups_dir, p) for p in candidates), key=os.path.getmtime)
+            path = latest
+            reveal = True
+        elif kind == 'logs':
+            path = config.LOGS_DIR
+            os.makedirs(path, exist_ok=True)
+            reveal = False
+        else:
+            path = config.OUTPUT_DIR
+            os.makedirs(path, exist_ok=True)
+            reveal = False
+        _open_path_in_file_manager(path, reveal=reveal)
+        return jsonify({'success': True, 'path': path})
+    except Exception as exc:
+        return err(f'打开文件夹失败：{exc}', 500, 'OPEN_FOLDER_FAIL')
+
+
 # ===== 账号管理 API =====
 
 @app.route('/api/accounts', methods=['GET'])
@@ -3105,6 +3657,9 @@ def add_account():
         from amazon.accounts import AccountManager
         mgr = AccountManager()
         data = request.json or {}
+        errors = _validate_amazon_account_payload(data, strict=True)
+        if errors:
+            return jsonify({'error': '；'.join(errors), 'code': 'AMAZON_ACCOUNT_BAD'}), 400
         success = mgr.add_account(data)
         if success:
             return jsonify({'success': True, 'message': '账号添加成功'})
@@ -3386,6 +3941,8 @@ def get_products():
                 'preview_message': str(item.get('preview_message', '') or item.get('预览信息', '') or '').strip(),
                 'preview_time': str(item.get('preview_time', '') or item.get('预览时间', '') or '').strip(),
                 'preview_account': str(item.get('preview_account', '') or item.get('预览账号', '') or '').strip(),
+                'preview_account_id': str(item.get('preview_account_id', '') or item.get('预览账号ID', '') or '').strip(),
+                'preview_marketplace_id': str(item.get('preview_marketplace_id', '') or item.get('预览站点ID', '') or '').strip(),
                 'preview_issue_payload': str(item.get('preview_issue_payload', '') or '').strip(),
                 'submit_status': str(item.get('submit_status', '') or item.get('提交状态', '') or 'PENDING'),
                 'asin': str(item.get('asin', '') or item.get('ASIN', '') or '').strip(),
@@ -3502,7 +4059,14 @@ def _apply_validation_results_to_file(input_file: str, results: list):
         _persist_bulk_row_updates(input_file, updates_by_sku)
 
 
-def _apply_preview_results_to_file(input_file: str, headers: list, results: list, account_name: str):
+def _apply_preview_results_to_file(
+    input_file: str,
+    headers: list,
+    results: list,
+    account_name: str,
+    account_id: str = '',
+    marketplace_id: str = '',
+):
     """将 Amazon 预览结果回写到 Excel，便于后续按结果筛选与修复。"""
     preview_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     updates_by_sku = {}
@@ -3510,7 +4074,14 @@ def _apply_preview_results_to_file(input_file: str, headers: list, results: list
         sku = str(result.get('sku', '') or '').strip()
         if not sku:
             continue
-        updates_by_sku[sku] = _build_preview_persist_updates(headers, result, preview_time, account_name)
+        updates_by_sku[sku] = _build_preview_persist_updates(
+            headers,
+            result,
+            preview_time,
+            account_name,
+            account_id=account_id,
+            marketplace_id=marketplace_id,
+        )
 
     if updates_by_sku:
         _persist_bulk_row_updates(input_file, updates_by_sku)
@@ -4044,6 +4615,77 @@ def _prepare_submission_products(all_data: list, col_map: dict, skus: list, mapp
     return ordered_products, blockers
 
 
+def _row_field(row: dict, *names: str) -> str:
+    for name in names:
+        if not name:
+            continue
+        value = row.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ''
+
+
+def _build_source_rows_by_sku(all_data: list, col_map: dict, mapper) -> dict:
+    rows = {}
+    for item in all_data:
+        try:
+            product = mapper.map_excel_row(item, col_map)
+            sku = str(product.get('sku', '') or '').strip()
+        except Exception:
+            sku = ''
+        if not sku:
+            sku = _row_field(item, col_map.get('sku', ''), 'SKU', 'sku', 'seller_sku')
+        if sku and sku not in rows:
+            rows[sku] = item
+    return rows
+
+
+def _parse_preview_time(value: str) -> datetime | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S'):
+        try:
+            return datetime.strptime(text[:19], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _preview_gate_reasons(row: dict, account: dict) -> list[str]:
+    reasons = []
+    status = _row_field(row, 'preview_status', '预览状态').upper()
+    if status != 'VALID':
+        reasons.append('没有最近一次 Amazon 预览通过记录')
+
+    current_account_id = str(account.get('seller_id', '') or '').strip()
+    current_account_name = str(account.get('name', '') or '').strip()
+    current_marketplace = str(account.get('marketplace_id', '') or '').strip()
+    preview_account_id = _row_field(row, 'preview_account_id', '预览账号ID')
+    preview_account_name = _row_field(row, 'preview_account', '预览账号')
+    preview_marketplace = _row_field(row, 'preview_marketplace_id', '预览站点ID')
+
+    if preview_account_id:
+        if preview_account_id != current_account_id:
+            reasons.append(f'预览账号不一致：预览={preview_account_id}，当前={current_account_id}')
+    elif preview_account_name not in {current_account_name, current_account_id}:
+        reasons.append('未记录同一 Amazon 账号的预览结果，请用当前账号重新预览')
+
+    if preview_marketplace:
+        if preview_marketplace != current_marketplace:
+            reasons.append(f'预览站点不一致：预览={preview_marketplace}，当前={current_marketplace}')
+    else:
+        reasons.append('未记录预览站点，请重新预览')
+
+    preview_time = _parse_preview_time(_row_field(row, 'preview_time', '预览时间'))
+    if not preview_time:
+        reasons.append('未记录预览时间，请重新预览')
+    elif datetime.now() - preview_time > RECENT_PREVIEW_MAX_AGE:
+        reasons.append('预览结果已超过 24 小时，请重新预览')
+
+    return reasons
+
+
 def _run_submit_operation(input_file: str, skus: list, preview: bool = True, account_id: str = '',
                           progress_callback=None) -> dict:
     processor = ExcelProcessor()
@@ -4107,6 +4749,11 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
                     'errors': validation['errors'],
                     'warnings': validation['warnings'],
                     'source': 'local',
+                    'status': 'VALID' if validation['valid'] else 'INVALID',
+                    'account_id': acc.get('seller_id', account_id or '') if acc else str(account_id or '').strip(),
+                    'account': acc.get('name', acc.get('seller_id', '')) if acc else '',
+                    'marketplace_id': acc.get('marketplace_id', '') if acc else '',
+                    'marketplace_name': acc.get('marketplace_name', '') if acc else '',
                 })
                 continue
 
@@ -4136,6 +4783,10 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
                 'source': 'amazon_preview',
                 'status': preview_status or 'UNKNOWN',
                 'issues': normalized_issues,
+                'account_id': acc.get('seller_id', account_id or '') if acc else str(account_id or '').strip(),
+                'account': acc.get('name', acc.get('seller_id', '')) if acc else '',
+                'marketplace_id': acc.get('marketplace_id', '') if acc else '',
+                'marketplace_name': acc.get('marketplace_name', '') if acc else '',
             })
             time.sleep(1.0)
 
@@ -4146,6 +4797,8 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
                 headers=headers,
                 results=results,
                 account_name=acc.get('name', acc.get('seller_id', '')) if acc else '',
+                account_id=acc.get('seller_id', account_id or '') if acc else str(account_id or '').strip(),
+                marketplace_id=acc.get('marketplace_id', '') if acc else '',
             )
         return {
             'success': True,
@@ -4195,13 +4848,33 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
             'issues': [{'severity': 'ERROR', 'message': blocker.get('message', '变体提交流程检查未通过')}],
         })
 
-    total = len(prepared_products) + len(blockers)
+    rows_by_sku = _build_source_rows_by_sku(all_data, col_map, mapper)
+    gate_passed_products = []
+    for product in prepared_products:
+        sku = str(product.get('sku', '') or '').strip()
+        reasons = _preview_gate_reasons(rows_by_sku.get(sku, {}), acc)
+        if reasons:
+            result_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            results.append({
+                'sku': sku or 'N/A',
+                'status': 'PREVIEW_BLOCKED',
+                'submit_time': result_time,
+                'message': '正式提交前必须用同一账号/站点完成 24 小时内的 Amazon 预览：' + '；'.join(reasons),
+                'issues': [{'severity': 'ERROR', 'message': reason} for reason in reasons],
+                'eligibility_reasons': reasons,
+            })
+        else:
+            gate_passed_products.append(product)
+    prepared_products = gate_passed_products
+
+    blocked_count = len(results)
+    total = blocked_count + len(prepared_products)
     precheck_results = []
     for idx, product in enumerate(prepared_products, start=1):
         sku = product.get('sku', '')
         result_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        emit('提交门禁检查', idx - 1 + len(blockers), total, sku)
+        emit('提交门禁检查', idx - 1 + blocked_count, total, sku)
         precheck_result = _run_listing_check_for_product(
             product,
             mapper=mapper,

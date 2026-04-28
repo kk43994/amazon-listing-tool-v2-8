@@ -9,6 +9,7 @@ __pycache__/
 output/
 logs/
 input/
+backups/
 *.db
 .venv/
 venv/

@@ -5,12 +5,12 @@ const i18n = {
   en: {
     workspace:'Workspace', settings:'Settings', total_products:'Total',
     ai_processed:'AI Done', pending:'Pending', errors:'Errors',
-    upload_excel:'Import Excel', download_template:'Template', export:'Export',
-    batch_ai_copy:'Batch AI Copy', batch_ai_image:'Batch AI Image',
-    validate_all:'Validate', submit_amazon:'Submit',
+    upload_excel:'1 Import Excel', download_template:'Template', export:'Export',
+    batch_ai_copy:'2 Batch AI Copy', batch_ai_image:'2 Batch AI Image',
+    validate_all:'3 Validate', submit_amazon:'5 Submit',
     rewrite_title:'Rewrite Title', rewrite_bullets:'Rewrite Bullets', rewrite_all:'Rewrite All',
     regen_main:'Regen Main Image', regen_all:'Regen All Images',
-    preview_validate:'Preview Validate', submit_now:'Submit Now',
+    preview_validate:'5 Preview Validate', submit_now:'6 Submit Now',
     sku:'SKU', product_name:'Product Name', main_image:'Image', price:'Price',
     stock:'Stock', ai_status:'AI Status', validation:'Valid', actions:'Actions',
     brand:'Brand', product_type:'Type', variant_type:'Variant', color:'Color',
@@ -69,7 +69,7 @@ const i18n = {
     field_selector:'Field Preference', search_fields:'Search fields...',
     selected_fields:'Preferred Fields', no_category_fields:'No preferred optional fields configured. The official form still follows Amazon requirements.',
     configure_fields:'Preferences', apply_fields:'Apply', clear_fields:'Clear All',
-    diagnostics:'Diagnostics', diagnose_missing:'Diagnose Missing',
+    diagnostics:'Diagnostics', diagnose_missing:'4 Diagnose Missing',
     diagnose_this:'Diagnose This SKU', last_checked:'Last Checked',
     missing_fields:'Missing Fields', media_check:'Media Check',
     preview_issues:'Preview Issues', listing_issues:'Listing Issues',
@@ -77,12 +77,12 @@ const i18n = {
   zh: {
     workspace:'工作台', settings:'设置', total_products:'总商品',
     ai_processed:'AI已处理', pending:'待处理', errors:'校验错误',
-    upload_excel:'导入Excel', download_template:'下载模板', export:'导出',
-    batch_ai_copy:'批量AI文案', batch_ai_image:'批量AI生图',
-    validate_all:'校验', submit_amazon:'提交上架',
+    upload_excel:'1 导入Excel', download_template:'下载模板', export:'导出',
+    batch_ai_copy:'2 批量AI文案', batch_ai_image:'2 批量AI生图',
+    validate_all:'3 校验', submit_amazon:'5 提交上架',
     rewrite_title:'仿写标题', rewrite_bullets:'仿写卖点', rewrite_all:'全部仿写',
     regen_main:'重生主图', regen_all:'重生全部图片',
-    preview_validate:'预览验证', submit_now:'正式提交',
+    preview_validate:'5 预览验证', submit_now:'6 正式提交',
     sku:'SKU', product_name:'商品名称', main_image:'主图', price:'价格',
     stock:'库存', ai_status:'AI状态', validation:'校验', actions:'操作',
     brand:'品牌', product_type:'类型', variant_type:'变体', color:'颜色',
@@ -140,7 +140,7 @@ const i18n = {
     field_selector:'字段偏好', search_fields:'搜索字段...',
     selected_fields:'偏好字段', no_category_fields:'当前未设置偏好字段，但官方表单仍会按 Amazon 要求展示。',
     configure_fields:'偏好设置', apply_fields:'应用', clear_fields:'清空',
-    diagnostics:'诊断', diagnose_missing:'缺项诊断',
+    diagnostics:'诊断', diagnose_missing:'4 缺项诊断',
     diagnose_this:'诊断此商品', last_checked:'最近诊断',
     missing_fields:'缺失字段', media_check:'媒体检查',
     preview_issues:'预览问题', listing_issues:'后台问题',
@@ -206,6 +206,18 @@ let templateSelectionValidation = null;
 let recentSubmitHighlights = new Set();
 let recentSubmitToastTaskIds = new Set();
 let recentSubmitScrollPending = false;
+let setupStatus = null;
+let setupNextAction = '';
+let customerFlowNextAction = '';
+let aiConfigMode = localStorage.getItem('amazon28_aiConfigMode') || 'simple';
+let settingsActiveSection = localStorage.getItem('amazon28_settingsSection') || 'ai';
+
+const RECOMMENDED_AI_CONFIG = {
+  baseUrl: 'https://api.kk666.best',
+  endpoint: '/v1beta/models/{model}:generateContent',
+  textModel: 'gemini-3.1-flash-lite-preview',
+  imageModel: 'gemini-3.1-flash-image-preview',
+};
 
 const COMMON_FIELD_LABELS_ZH = {
   merchant_suggested_asin: '建议匹配的 ASIN',
@@ -358,9 +370,28 @@ function showPage(page) {
   if (pageEl) pageEl.classList.add('active');
   if (navEl) navEl.classList.add('active');
   document.getElementById('pageTitle').textContent = t(page);
-  if (page === 'settings') { loadConfig(); loadAccounts(); }
+  if (page === 'settings') {
+    showSettingsSection(settingsActiveSection || 'ai');
+    loadConfig();
+    loadAccounts();
+    refreshSetupStatus({ showFirstRun: false });
+  }
   closeMobileSidebar();
 }
+
+function showSettingsSection(section) {
+  const allowed = ['ai', 'amazon', 'self_check', 'advanced'];
+  const next = allowed.includes(section) ? section : 'ai';
+  settingsActiveSection = next;
+  localStorage.setItem('amazon28_settingsSection', next);
+  document.querySelectorAll('[data-settings-section]').forEach(card => {
+    card.classList.toggle('is-hidden', card.getAttribute('data-settings-section') !== next);
+  });
+  document.querySelectorAll('[data-settings-tab]').forEach(tab => {
+    tab.classList.toggle('active', tab.getAttribute('data-settings-tab') === next);
+  });
+}
+
 function isMobileViewport() {
   return window.innerWidth <= 768;
 }
@@ -389,6 +420,375 @@ function escHtml(s) {
   const d = document.createElement('div');
   d.textContent = String(s);
   return d.innerHTML;
+}
+
+function setupStatusLabel(status) {
+  const map = {
+    done: ['已完成', 'done'],
+    todo: ['待完成', 'todo'],
+    blocked: ['需处理', 'blocked'],
+  };
+  return map[status] || ['待完成', 'todo'];
+}
+
+function renderSetupStepCard(step, options = {}) {
+  const [label, tone] = setupStatusLabel(step.status);
+  const action = step.action ? ` setupAction="${escHtml(step.action)}"` : '';
+  const button = step.button && !options.readonly
+    ? `<button class="btn btn-outline btn-sm" onclick="runSetupAction('${escHtml(step.action || '')}')">${escHtml(step.button)}</button>`
+    : '';
+  return `<div class="setup-step-card ${tone}"${action}>
+    <div class="setup-step-top">
+      <div class="setup-step-title">${escHtml(step.title || '')}</div>
+      <span class="setup-step-badge ${tone}">${label}</span>
+    </div>
+    <div class="setup-step-message">${escHtml(step.message || '')}</div>
+    ${button}
+  </div>`;
+}
+
+function renderSetupStatus(data) {
+  setupStatus = data || null;
+  setupNextAction = data?.next_step?.action || '';
+
+  const guide = document.getElementById('setupGuideCard');
+  const guideSteps = document.getElementById('setupGuideSteps');
+  const guideSummary = document.getElementById('setupGuideSummary');
+  const primary = document.getElementById('setupPrimaryAction');
+  const panel = document.getElementById('setupStatusGrid');
+  const steps = data?.steps || [];
+
+  if (panel) {
+    panel.innerHTML = steps.map(step => renderSetupStepCard(step)).join('');
+  }
+
+  if (guide && guideSteps && guideSummary) {
+    const hiddenForSession = sessionStorage.getItem('amazon28_setup_hidden') === '1';
+    if (!data || data.ready || hiddenForSession) {
+      guide.style.display = 'none';
+    } else {
+      guide.style.display = '';
+      guideSummary.textContent = data.next_step
+        ? `下一步：${data.next_step.title}。${data.next_step.message || ''}`
+        : '基础配置已完成，可以开始处理商品。';
+      guideSteps.innerHTML = steps.map(step => renderSetupStepCard(step, { readonly: true })).join('');
+      if (primary) primary.textContent = data.next_step?.button || '继续下一步';
+    }
+  }
+  renderCustomerFlow();
+  enableToolbar(products.length > 0);
+}
+
+async function refreshSetupStatus(options = {}) {
+  try {
+    const response = await fetch('/api/setup-status');
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+    renderSetupStatus(data);
+    if (options.manual) showToast(data.ready ? 'success' : 'info', data.ready ? '配置已就绪' : '已刷新配置状态，请按提示继续');
+    if (options.showFirstRun !== false) maybeShowFirstRunModal(data);
+    return data;
+  } catch (e) {
+    if (options.manual) showToast('error', '读取配置状态失败: ' + e.message);
+    return null;
+  }
+}
+
+function maybeShowFirstRunModal(data) {
+  if (!data || data.ready || !data.needs_setup) return;
+  if (sessionStorage.getItem('amazon28_first_run_seen') === '1') return;
+  sessionStorage.setItem('amazon28_first_run_seen', '1');
+  const steps = data.steps || [];
+  showModal('第一次使用：先完成 3 件事', `
+    <div class="customer-quick-start">
+      <div class="quick-start-step">
+        <strong>1. 先填 AI 接口</strong>
+        <p>不填 AI Key，批量文案和生图会失败。Base URL 固定填 https://api.kk666.best；填完后点“测试连接”。</p>
+      </div>
+      <div class="quick-start-step">
+        <strong>2. 再填 Amazon 账号</strong>
+        <p>不填 Seller ID / LWA / Refresh Token，就不能做 Amazon 预览和正式提交。</p>
+      </div>
+      <div class="quick-start-step">
+        <strong>3. 最后导入 Excel 或生成官方模板</strong>
+        <p>导入后系统会自动检查字段，能做的按钮才继续往下走。</p>
+      </div>
+      <div class="setup-status-grid">${steps.map(step => renderSetupStepCard(step, { readonly: true })).join('')}</div>
+    </div>
+  `);
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-primary btn-sm" onclick="closeModal(); runSetupPrimaryAction()">按提示继续</button>
+    <button class="btn btn-outline btn-sm" onclick="closeModal(); openCustomerQuickStart()">看详细说明</button>
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">稍后再说</button>`;
+}
+
+function dismissSetupGuide() {
+  sessionStorage.setItem('amazon28_setup_hidden', '1');
+  const guide = document.getElementById('setupGuideCard');
+  if (guide) guide.style.display = 'none';
+}
+
+function runSetupPrimaryAction() {
+  runSetupAction(setupNextAction || setupStatus?.next_step?.action || 'settings_ai');
+}
+
+function scrollToElementLater(selector) {
+  setTimeout(() => {
+    const el = document.querySelector(selector);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 160);
+}
+
+function runSetupAction(action) {
+  if (action === 'settings_ai') {
+    showPage('settings');
+    showSettingsSection('ai');
+    scrollToElementLater('#cfgTextApiKey');
+    setTimeout(() => document.getElementById('cfgTextApiKey')?.focus(), 220);
+    return;
+  }
+  if (action === 'settings_account') {
+    showPage('settings');
+    showSettingsSection('amazon');
+    scrollToElementLater('#accountTable');
+    return;
+  }
+  if (action === 'add_account') {
+    showPage('settings');
+    showSettingsSection('amazon');
+    setTimeout(showAddAccount, 180);
+    return;
+  }
+  if (action === 'upload') {
+    document.getElementById('fileInput')?.click();
+    return;
+  }
+  if (action === 'self_check') {
+    showPage('settings');
+    showSettingsSection('self_check');
+    scrollToElementLater('#selfCheckResults');
+    setTimeout(runSelfCheck, 220);
+    return;
+  }
+  showPage('settings');
+}
+
+function openCustomerQuickStart() {
+  showModal('客户版操作说明', `
+    <div class="customer-quick-start">
+      <div class="quick-start-step">
+        <strong>只双击一个启动文件</strong>
+        <p>Windows 双击“启动亚马逊2.8.bat”，Mac 双击“启动亚马逊2.8.command”。不要直接点 exe，不要在压缩包里运行。</p>
+      </div>
+      <div class="quick-start-step">
+        <strong>打开后先去“设置”</strong>
+        <p>先点“一键恢复推荐”，Base URL 固定用 https://api.kk666.best，再粘贴文字/图片 Key，最后添加 Amazon 账号。</p>
+      </div>
+      <div class="quick-start-step">
+        <strong>处理顺序固定</strong>
+        <p>导入 Excel -> AI 文案/生图 -> 校验/缺项诊断 -> Amazon 预览 -> 正式提交。不要跳过预览直接提交。</p>
+      </div>
+      <div class="quick-start-step">
+        <strong>出问题先点一键自检</strong>
+        <p>自检会告诉你是 AI、Amazon 账号、输出目录还是文件格式问题，直接把结果截图发给技术支持即可。</p>
+      </div>
+    </div>
+  `);
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-primary btn-sm" onclick="closeModal(); runSetupPrimaryAction()">回到下一步</button>
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">关闭</button>`;
+}
+
+function getCustomerFlowSnapshot() {
+  const realProducts = products.filter(product => product.parentage_level !== 'parent' && !isRowDisabled(product));
+  const total = realProducts.length;
+  const processed = realProducts.filter(product => ['completed', 'done'].includes(String(product.ai_status || '').toLowerCase())).length;
+  const previewPassed = realProducts.filter(product => String(product.preview_status || '').toUpperCase() === 'VALID').length;
+  const submitted = realProducts.filter(product => product.submit_status && product.submit_status !== 'PENDING').length;
+  const blocking = realProducts.filter(product => {
+    const hasLocalErrors = Array.isArray(product._validErrors) && product._validErrors.length > 0;
+    return hasLocalErrors || hasTemplateBlockingIssues(product);
+  }).length;
+  return {
+    aiReady: !!setupStatus?.ai?.ready,
+    amazonReady: !!setupStatus?.amazon?.ready,
+    hasFile: !!currentFile && total > 0,
+    total,
+    processed,
+    previewPassed,
+    submitted,
+    blocking,
+  };
+}
+
+function resolveCustomerFlow(snapshot = getCustomerFlowSnapshot()) {
+  const steps = [
+    {
+      id: 'setup',
+      name: '先配置',
+      desc: snapshot.aiReady && snapshot.amazonReady ? 'AI 和账号已就绪' : '先去设置页填 Key 和账号',
+      action: snapshot.aiReady ? 'add_account' : 'settings_ai',
+      done: snapshot.aiReady && snapshot.amazonReady,
+    },
+    {
+      id: 'import',
+      name: '导入表格',
+      desc: snapshot.hasFile ? `已载入 ${snapshot.total} 个商品` : '导入 Excel 或生成官方模板',
+      action: 'upload',
+      done: snapshot.hasFile,
+    },
+    {
+      id: 'ai',
+      name: '跑 AI',
+      desc: snapshot.hasFile ? `${snapshot.processed}/${snapshot.total} 已处理` : '先导入商品表',
+      action: 'batch_ai',
+      done: snapshot.hasFile && snapshot.total > 0 && snapshot.processed >= snapshot.total,
+    },
+    {
+      id: 'check',
+      name: '检查问题',
+      desc: snapshot.hasFile ? (snapshot.blocking ? `还有 ${snapshot.blocking} 个问题` : '校验/诊断无阻断') : '先导入商品表',
+      action: 'check',
+      done: snapshot.hasFile && snapshot.total > 0 && snapshot.blocking === 0,
+    },
+    {
+      id: 'preview',
+      name: '先预览',
+      desc: snapshot.hasFile ? `${snapshot.previewPassed}/${snapshot.total} 预览通过` : '提交前必须预览',
+      action: 'preview',
+      done: snapshot.hasFile && snapshot.total > 0 && snapshot.previewPassed >= snapshot.total,
+    },
+    {
+      id: 'submit',
+      name: '再提交',
+      desc: snapshot.submitted ? `已提交 ${snapshot.submitted} 个` : '最后一步，不要提前点',
+      action: 'submit',
+      done: snapshot.hasFile && snapshot.total > 0 && snapshot.submitted >= snapshot.total,
+    },
+  ];
+
+  let activeIndex = steps.findIndex(step => !step.done);
+  if (activeIndex < 0) activeIndex = steps.length - 1;
+  steps.forEach((step, index) => {
+    step.state = step.done ? 'done' : (index === activeIndex ? 'active' : 'locked');
+  });
+  const active = steps[activeIndex];
+  return { steps, active };
+}
+
+function renderCustomerFlow() {
+  const container = document.getElementById('customerFlowCard');
+  const stepsEl = document.getElementById('customerFlowSteps');
+  const titleEl = document.getElementById('customerFlowTitle');
+  const hintEl = document.getElementById('customerFlowHint');
+  const btn = document.getElementById('customerFlowPrimaryBtn');
+  const heroTitle = document.getElementById('customerNextStepTitle');
+  const heroDesc = document.getElementById('customerNextStepDesc');
+  const heroBtn = document.getElementById('customerFlowHeroBtn');
+  if (!container || !stepsEl) return;
+
+  const snapshot = getCustomerFlowSnapshot();
+  const flow = resolveCustomerFlow(snapshot);
+  customerFlowNextAction = flow.active?.action || '';
+  stepsEl.innerHTML = flow.steps.map((step, idx) => `<div class="customer-flow-step ${step.state}">
+    <div class="customer-flow-number">${step.state === 'done' ? '✓' : idx + 1}</div>
+    <div class="customer-flow-name">${escHtml(step.name)}</div>
+    <div class="customer-flow-desc">${escHtml(step.desc)}</div>
+  </div>`).join('');
+
+  const titleMap = {
+    setup: '先别处理商品，先把配置填完整',
+    import: '下一步：导入客户 Excel',
+    ai: '下一步：批量跑 AI 文案/图片',
+    check: '下一步：检查并修掉阻断项',
+    preview: '下一步：先做 Amazon 预览',
+    submit: '下一步：确认预览通过后再正式提交',
+  };
+  const buttonMap = {
+    setup: snapshot.aiReady ? '添加 Amazon 账号' : '去设置 AI',
+    import: '导入 Excel',
+    ai: '开始批量 AI',
+    check: '开始校验',
+    preview: '先跑预览',
+    submit: '正式提交',
+  };
+  const descMap = {
+    setup: snapshot.aiReady
+      ? 'AI 已经可以用了，现在只差 Amazon 账号。点按钮后填 Seller ID、LWA Client ID/Secret、Refresh Token。'
+      : '先把 AI Key 填好。点按钮后直接进入 AI 设置页，客户只需要点“一键恢复推荐”再粘贴 Key。',
+    import: '配置完成后先导入 Excel。没有真实表也可以先生成示例 Excel，确认软件能正常跑通。',
+    ai: '表格已导入，先让系统批量生成/改写文案。不要先提交，未处理内容更容易被 Amazon 拒绝。',
+    check: 'AI 处理后先跑校验/缺项诊断，把红色阻断项修掉，再进入 Amazon 预览。',
+    preview: '正式提交前必须先预览。预览会发现 Amazon 后台字段/权限问题，但不会真正上架。',
+    submit: '只有最近同账号同站点预览通过的 SKU 才能提交。提交前还会再弹一次确认。',
+  };
+  if (titleEl) titleEl.textContent = titleMap[flow.active?.id] || '按顺序做，不要跳步';
+  if (hintEl) hintEl.textContent = flow.active?.desc || '系统会根据当前状态告诉你下一步该点什么。';
+  if (btn) btn.textContent = buttonMap[flow.active?.id] || '按推荐执行';
+  if (heroTitle) heroTitle.textContent = titleMap[flow.active?.id] || '按推荐执行下一步';
+  if (heroDesc) heroDesc.textContent = descMap[flow.active?.id] || '不要跳步，系统会一直把最安全的下一步放在这里。';
+  if (heroBtn) heroBtn.textContent = buttonMap[flow.active?.id] || '按推荐执行';
+}
+
+function runCustomerFlowPrimary() {
+  runCustomerFlowAction(customerFlowNextAction || resolveCustomerFlow().active?.action || 'settings_ai');
+}
+
+function runCustomerFlowAction(action) {
+  if (action === 'settings_ai' || action === 'add_account' || action === 'upload' || action === 'self_check') {
+    return runSetupAction(action);
+  }
+  if (action === 'batch_ai') return batchProcess('rewrite', 'all');
+  if (action === 'check') return batchValidate();
+  if (action === 'preview') return submitToAmazon('preview');
+  if (action === 'submit') return submitToAmazon('submit');
+  return runSetupPrimaryAction();
+}
+
+function showCustomerBlock(title, message, action, buttonText = '去处理') {
+  showModal(title, `<div class="customer-quick-start">
+    <div class="quick-start-step">
+      <strong>${escHtml(title)}</strong>
+      <p>${escHtml(message)}</p>
+    </div>
+    <ul class="customer-block-list">
+      <li>系统已经帮你挡住这一步，避免客户点错造成失败。</li>
+      <li>按推荐按钮处理完，再回来继续当前操作。</li>
+    </ul>
+  </div>`);
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-primary btn-sm" onclick="closeModal(); runCustomerFlowAction('${escHtml(action)}')">${escHtml(buttonText)}</button>
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">关闭</button>`;
+}
+
+async function ensureCustomerPrerequisite(kind, options = {}) {
+  if (!setupStatus) await refreshSetupStatus({ showFirstRun: false });
+  const snapshot = getCustomerFlowSnapshot();
+  if (kind === 'file' && !snapshot.hasFile) {
+    showCustomerBlock('还没有商品表', '先导入 Excel，系统才知道要处理哪些商品。', 'upload', '导入 Excel');
+    return false;
+  }
+  if (kind === 'ai' && !snapshot.aiReady) {
+    showCustomerBlock('AI 还没配置好', '先去设置页点“一键恢复推荐”，Base URL 固定用 https://api.kk666.best，然后粘贴文字 AI 和图片 AI 的 Key。否则批量文案和生图一定会失败。', 'settings_ai', '去设置 AI');
+    return false;
+  }
+  if (kind === 'amazon' && !snapshot.amazonReady) {
+    showCustomerBlock('Amazon 账号还没配置好', '先添加 Seller ID、LWA Client ID、LWA Client Secret 和 Refresh Token。否则无法预览或正式提交。', 'add_account', '添加账号');
+    return false;
+  }
+  if (kind === 'preview_before_submit') {
+    const targetSet = new Set((options.skus || []).map(item => String(item || '').trim()).filter(Boolean));
+    const realProducts = products.filter(product => {
+      if (product.parentage_level === 'parent' || isRowDisabled(product)) return false;
+      return targetSet.size === 0 || targetSet.has(product.sku);
+    });
+    const notPreviewed = realProducts.filter(product => String(product.preview_status || '').toUpperCase() !== 'VALID');
+    if (notPreviewed.length > 0) {
+      showCustomerBlock('先预览，别直接提交', `还有 ${notPreviewed.length} 个 SKU 没有 Amazon 预览通过。客户模式下先跑预览，预览通过后才允许正式提交。`, 'preview', '先跑预览');
+      return false;
+    }
+  }
+  return true;
 }
 
 function formatOfficialFieldLabel(key, zhLabel = '', enLabel = '') {
@@ -613,7 +1013,12 @@ function getSubmitEligibleSkus() {
 function updateSubmitAvailability() {
   const btn = document.getElementById('btnSubmit');
   if (!btn) return;
-  btn.disabled = products.length === 0 || getSubmitEligibleSkus().length === 0;
+  const reason = products.length === 0
+    ? '先导入 Excel'
+    : (!setupStatus?.amazon?.ready ? 'Amazon 账号还没配置好：先添加账号' : (getSubmitEligibleSkus().length === 0 ? '没有可预览/提交的 SKU，请先修复阻断项' : ''));
+  btn.disabled = !!reason;
+  btn.title = reason || '';
+  btn.classList.toggle('toolbar-locked', !!reason);
 }
 
 function getSelectedActionableSkus() {
@@ -848,6 +1253,16 @@ function renderReasonSummary(mapObj, toneClass) {
   ).join('')}</div>`;
 }
 
+function renderSkippedSkuDetails(skipped) {
+  const items = (skipped || []).slice(0, 20);
+  if (items.length === 0) return '';
+  return `<div class="preflight-block">
+    <div class="preflight-title">逐 SKU 跳过原因</div>
+    <div class="preflight-sku-list">${items.map(item => `<div class="preflight-sku-row"><strong>${escHtml(item.sku || '-')}</strong><span>${escHtml(item.reason || '-')}</span></div>`).join('')}</div>
+    ${(skipped || []).length > items.length ? `<div class="preflight-empty">还有 ${(skipped || []).length - items.length} 个 SKU 未展开显示</div>` : ''}
+  </div>`;
+}
+
 function showActionPreflight(plan, onConfirm, context = {}) {
   const title = getPlanTitle(plan.action, plan.scope);
   const skippedHtml = renderReasonSummary(plan.reasonCounts, 'warn');
@@ -875,6 +1290,7 @@ function showActionPreflight(plan, onConfirm, context = {}) {
         <div class="preflight-title">自动跳过原因</div>
         ${skippedHtml}
       </div>
+      ${renderSkippedSkuDetails(plan.skipped)}
       <div class="preflight-block">
         <div class="preflight-title">执行前提醒</div>
         ${attentionHtml}
@@ -1001,6 +1417,9 @@ function applyPreviewResult(product, result) {
     valid: !!result.valid,
     issues: result.issues || [],
   };
+  if (result.account_id) product.preview_account_id = result.account_id;
+  if (result.marketplace_id) product.preview_marketplace_id = result.marketplace_id;
+  if (result.account || result.account_name) product.preview_account = result.account || result.account_name;
   const messages = [];
   (result.errors || []).forEach(message => {
     if (message) messages.push(`[ERROR] ${formatTemplateFieldText(message, product)}`);
@@ -1617,6 +2036,7 @@ function uploadExcel(file) {
       if (d.warning) showToast('warning', d.warning);
       loadProducts();
       loadTaskCenter();
+      refreshSetupStatus({ showFirstRun: false });
     })
     .catch(e => showToast('error', '上传失败: ' + e.message));
   document.getElementById('fileInput').value = '';
@@ -1875,11 +2295,33 @@ async function refreshListingStatuses(skus, options = {}) {
 }
 
 function enableToolbar(enabled) {
-  ['btnBatchCopy','btnBatchImg','btnValidate','btnListingCheck','btnExport','btnComparison'].forEach(id => {
+  const aiReady = !!setupStatus?.ai?.ready;
+  const amazonReady = !!setupStatus?.amazon?.ready;
+  const locks = {
+    btnBatchCopy: enabled && aiReady ? '' : (enabled ? 'AI 还没配置好：去设置页填 Key 并保存' : '先导入 Excel'),
+    btnBatchImg: enabled && aiReady ? '' : (enabled ? 'AI 还没配置好：去设置页填 Key 并保存' : '先导入 Excel'),
+    btnValidate: enabled ? '' : '先导入 Excel',
+    btnListingCheck: enabled && amazonReady ? '' : (enabled ? 'Amazon 账号还没配置好：先添加账号' : '先导入 Excel'),
+    btnExport: enabled ? '' : '先导入 Excel',
+    btnComparison: enabled ? '' : '先导入 Excel',
+  };
+  Object.entries(locks).forEach(([id, reason]) => {
     const el = document.getElementById(id);
-    if (el) el.disabled = !enabled;
+    if (!el) return;
+    el.disabled = !!reason;
+    el.title = reason || '';
+    el.classList.toggle('toolbar-locked', !!reason);
   });
   updateSubmitAvailability();
+  const submitBtn = document.getElementById('btnSubmit');
+  if (submitBtn && enabled && !amazonReady) {
+    submitBtn.disabled = true;
+    submitBtn.title = 'Amazon 账号还没配置好：先添加账号';
+    submitBtn.classList.add('toolbar-locked');
+  } else if (submitBtn && !submitBtn.disabled) {
+    submitBtn.title = '';
+    submitBtn.classList.remove('toolbar-locked');
+  }
 }
 
 // ===== 8. Stats =====
@@ -1923,6 +2365,7 @@ function updateStats() {
   if (previewFailEl) previewFailEl.textContent = previewFail;
   updateSubmitAvailability();
   updateToolbarRecommendation();
+  renderCustomerFlow();
 }
 
 // ===== 9. Filter & Search =====
@@ -2020,6 +2463,51 @@ function renderInlineSubmissionSummary(p) {
   return `<div class="table-row-status">${pills.join('')}</div>`;
 }
 
+function renderWorkspaceEmptyState() {
+  const empty = document.getElementById('emptyState');
+  if (!empty) return;
+  const titleEl = empty.querySelector('.empty-title');
+  const descEl = empty.querySelector('.empty-desc');
+  const actionsEl = document.getElementById('emptyActions');
+  const snapshot = getCustomerFlowSnapshot();
+  let title = '暂无商品数据';
+  let desc = '导入 Excel 文件或生成示例 Excel 开始铺货。';
+  let actions = [
+    `<button class="btn btn-primary btn-sm" onclick="document.getElementById('fileInput').click()">导入 Excel</button>`,
+    `<button class="btn btn-outline btn-sm" onclick="createSampleExcel()">生成示例 Excel</button>`,
+  ];
+
+  if (!snapshot.aiReady) {
+    title = '第一步：先配置 AI，不要直接导入';
+    desc = '客户只需要点“一键恢复推荐”，Base URL 固定用 https://api.kk666.best，然后粘贴文字 Key 和图片 Key。';
+    actions = [
+      `<button class="btn btn-primary btn-sm" onclick="runSetupAction('settings_ai')">去设置 AI</button>`,
+      `<button class="btn btn-outline btn-sm" onclick="resetRecommendedAiConfig()">一键恢复推荐</button>`,
+    ];
+  } else if (!snapshot.amazonReady) {
+    title = '第二步：添加 Amazon 账号';
+    desc = '还没有可用 Seller ID、LWA Client ID/Secret、Refresh Token。没有账号就不能做 Amazon 预览和正式提交。';
+    actions = [
+      `<button class="btn btn-primary btn-sm" onclick="runSetupAction('add_account')">添加 Amazon 账号</button>`,
+      `<button class="btn btn-outline btn-sm" onclick="runSetupAction('self_check')">先跑一键自检</button>`,
+    ];
+  } else if (!currentFile) {
+    title = '第三步：导入商品 Excel';
+    desc = 'AI 和 Amazon 账号都准备好了。现在导入客户表格；不确定格式时先生成示例 Excel 测试。';
+  } else if (products.length > 0 && filteredProducts.length === 0) {
+    title = '当前筛选没有匹配商品';
+    desc = '数据已经导入，但当前筛选条件下没有行。切回“全部”或清空搜索关键词即可看到商品。';
+    actions = [
+      `<button class="btn btn-primary btn-sm" onclick="filterByStatus('all')">查看全部商品</button>`,
+      `<button class="btn btn-outline btn-sm" onclick="document.getElementById('searchInput').value=''; searchQuery=''; applyFilter();">清空搜索</button>`,
+    ];
+  }
+
+  if (titleEl) titleEl.textContent = title;
+  if (descEl) descEl.textContent = desc;
+  if (actionsEl) actionsEl.innerHTML = actions.join('');
+}
+
 // ===== 10. Table Rendering =====
 function renderTable() {
   const tbody = document.getElementById('tableBody');
@@ -2028,6 +2516,7 @@ function renderTable() {
 
   if (filteredProducts.length === 0) {
     tbody.innerHTML = '';
+    renderWorkspaceEmptyState();
     empty.style.display = 'flex';
     pag.style.display = 'none';
     return;
@@ -5977,7 +6466,7 @@ function showListingCheckReport(results) {
 }
 
 async function runListingCheck(targetSku = '', overrideSkus = null) {
-  if (!currentFile) return showToast('warning', '请先导入文件');
+  if (!await ensureCustomerPrerequisite('file')) return;
   const skus = Array.isArray(overrideSkus) && overrideSkus.length > 0
     ? overrideSkus
     : (targetSku ? [targetSku] : getSelectedActionableSkus());
@@ -6023,13 +6512,16 @@ async function runListingCheck(targetSku = '', overrideSkus = null) {
   }
 }
 
-function batchListingCheck() {
+async function batchListingCheck() {
+  if (!await ensureCustomerPrerequisite('file')) return;
   const plan = collectActionPlan('validate', 'all');
   if (plan.actionableSkus.length === 0) return showToast('warning', '没有可诊断的商品');
   runListingCheck('', plan.actionableSkus);
 }
 
-function regenerateField(sku, field) {
+async function regenerateField(sku, field) {
+  if (!await ensureCustomerPrerequisite('file')) return;
+  if (!await ensureCustomerPrerequisite('ai')) return;
   showToast('info', '正在生成 ' + field + '...');
   const textFieldMap = {
     title: ['title'],
@@ -6085,7 +6577,9 @@ function adoptField(sku, field) {
   }).catch(e => showToast('error', e.message));
 }
 
-function regenerateImage(sku, scope) {
+async function regenerateImage(sku, scope) {
+  if (!await ensureCustomerPrerequisite('file')) return;
+  if (!await ensureCustomerPrerequisite('ai')) return;
   showToast('info', '正在生成图片...');
   const bgStyle = (drawerProduct && drawerProduct.sku === sku && drawerProduct._bgStyle) || 'white';
   fetch('/api/process-single', {
@@ -6205,7 +6699,9 @@ function selectBg(el, bg) {
 }
 
 // ===== 19. AI Processing =====
-function processSingle(sku) {
+async function processSingle(sku) {
+  if (!await ensureCustomerPrerequisite('file')) return;
+  if (!await ensureCustomerPrerequisite('ai')) return;
   showToast('info', '正在AI处理: ' + sku);
   fetch('/api/process-single', {
     method: 'POST',
@@ -6221,7 +6717,9 @@ function processSingle(sku) {
   }).catch(e => showToast('error', e.message));
 }
 
-function batchProcess(action, scope) {
+async function batchProcess(action, scope) {
+  if (!await ensureCustomerPrerequisite('file')) return;
+  if ((action === 'rewrite' || action === 'image') && !await ensureCustomerPrerequisite('ai')) return;
   const plan = collectActionPlan(action, scope);
   if (plan.actionableSkus.length === 0) {
     return showToast('warning', plan.skipped.length > 0 ? '没有可执行商品，请先修复摘要中的问题' : '没有可处理的商品');
@@ -6342,7 +6840,7 @@ function validateRow(p) {
 }
 
 async function batchValidate() {
-  if (!currentFile) return showToast('warning', '请先导入文件');
+  if (!await ensureCustomerPrerequisite('file')) return;
 
   const plan = collectActionPlan('validate', 'all');
   if (plan.actionableSkus.length === 0) return showToast('warning', '没有可校验的商品');
@@ -6415,9 +6913,29 @@ function downloadTemplate() {
   window.location.href = '/api/download-template';
 }
 
+function createSampleExcel() {
+  showToast('info', '正在生成示例 Excel...');
+  fetch('/api/sample-excel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  }).then(r => r.json()).then(d => {
+    if (d.error) return showToast('error', d.error);
+    currentFile = d.filepath || '';
+    if (currentFile) localStorage.setItem('amazon28_currentFile', currentFile);
+    currentFileMeta = { type: 'xlsx', warning: '', xlsPreserveSupported: true };
+    document.getElementById('fileInfo').dataset.baseName = d.filename || '';
+    document.getElementById('fileInfo').textContent = d.filename || '示例 Excel';
+    templatePanelCollapsed = true;
+    loadProducts();
+    refreshSetupStatus({ showFirstRun: false });
+    showToast('success', '示例 Excel 已载入，可先测试工具流程');
+  }).catch(e => showToast('error', '生成示例失败: ' + e.message));
+}
+
 // ===== 21b. AI 全部对比视图 =====
 async function showComparisonView() {
-  if (!currentFile) return showToast('warning', '请先导入文件');
+  if (!await ensureCustomerPrerequisite('file')) return;
   showToast('info', '正在加载对比数据...');
   try {
     const response = await fetch('/api/comparison?file=' + encodeURIComponent(currentFile));
@@ -6461,6 +6979,7 @@ async function showComparisonView() {
 // ===== 21c. 单张图片快速换背景 =====
 async function quickImageProcess(imageUrl, bgStyle) {
   if (!imageUrl) return showToast('warning', '没有可用的图片 URL');
+  if (!await ensureCustomerPrerequisite('ai')) return;
   showToast('info', '正在处理图片...');
   try {
     const response = await fetch('/api/image-process', {
@@ -6486,8 +7005,10 @@ async function quickImageProcess(imageUrl, bgStyle) {
 
 // ===== 22. Submit =====
 async function requestAmazonSubmission(mode, skus, options = {}) {
-  if (!currentFile) return showToast('warning', '请先导入文件');
   const targetSkus = Array.from(new Set((skus || []).map(item => String(item || '').trim()).filter(Boolean)));
+  if (!await ensureCustomerPrerequisite('file')) return;
+  if (!await ensureCustomerPrerequisite('amazon')) return;
+  if (mode === 'submit' && !await ensureCustomerPrerequisite('preview_before_submit', { skus: targetSkus })) return;
   if (targetSkus.length === 0) return showToast('warning', '没有可提交的商品');
   closeAllDropdowns();
 
@@ -6505,10 +7026,12 @@ async function requestAmazonSubmission(mode, skus, options = {}) {
 
   const executeWithAccount = accountId => {
     const accountMeta = getAccountMeta(accountId);
-    if (options.skipPreflight || !options.plan) return executeSubmit(mode, accountId, targetSkus);
+    if (options.skipPreflight || !options.plan) {
+      return confirmFormalSubmitIfNeeded(mode, accountId, targetSkus, () => executeSubmit(mode, accountId, targetSkus));
+    }
     return showActionPreflight(
       options.plan,
-      () => executeSubmit(mode, accountId, targetSkus),
+      () => confirmFormalSubmitIfNeeded(mode, accountId, targetSkus, () => executeSubmit(mode, accountId, targetSkus)),
       { account: accountMeta, mode }
     );
   };
@@ -6556,8 +7079,37 @@ async function requestAmazonSubmission(mode, skus, options = {}) {
   document.getElementById('modal').classList.add('show');
 }
 
+function confirmFormalSubmitIfNeeded(mode, accountId, skus, onConfirm) {
+  if (mode !== 'submit') return onConfirm();
+  const accountMeta = getAccountMeta(accountId) || { name: accountId || '-', site: '-' };
+  const targetSet = new Set((skus || []).map(item => String(item || '').trim()).filter(Boolean));
+  const targetProducts = products.filter(product => targetSet.has(product.sku));
+  const previewPassed = targetProducts.filter(product => String(product.preview_status || '').toUpperCase() === 'VALID').length;
+  const blockedRows = targetProducts.filter(product => String(product.preview_status || '').toUpperCase() !== 'VALID').slice(0, 8);
+  showModal('正式提交前最后确认', `
+    <div class="preflight-panel danger">
+      <div class="preflight-stat-grid">
+        <div class="preflight-stat"><span>目标账号</span><strong>${escHtml(accountMeta.name || accountId || '-')}</strong></div>
+        <div class="preflight-stat"><span>目标站点</span><strong>${escHtml(accountMeta.site || '-')}</strong></div>
+        <div class="preflight-stat"><span>SKU 数量</span><strong>${targetSet.size}</strong></div>
+        <div class="preflight-stat"><span>预览通过</span><strong>${previewPassed}</strong></div>
+      </div>
+      <div class="preflight-note danger">这是正式提交，会把数据发送给 Amazon。提交前请确认账号、站点和 SKU 数量正确；系统会在后端再次阻止未通过同账号/站点预览的 SKU。</div>
+      ${blockedRows.length ? `<div class="preflight-block"><div class="preflight-title">仍可能被阻止的 SKU</div><div class="preflight-tags">${blockedRows.map(item => `<span class="preflight-tag warn">${escHtml(item.sku)} 未预览通过</span>`).join('')}</div></div>` : ''}
+    </div>
+  `);
+  document.getElementById('modalFooter').innerHTML = `
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">取消</button>
+    <button class="btn btn-success btn-sm" id="formalSubmitConfirmBtn">我确认，正式提交 ${targetSet.size} 个 SKU</button>`;
+  document.getElementById('formalSubmitConfirmBtn').onclick = () => {
+    closeModal();
+    onConfirm();
+  };
+}
+
 async function submitToAmazon(mode) {
-  if (!currentFile) return showToast('warning', '请先导入文件');
+  if (!await ensureCustomerPrerequisite('file')) return;
+  if (!await ensureCustomerPrerequisite('amazon')) return;
   const plan = collectActionPlan(mode === 'preview' ? 'preview' : 'submit', 'all');
   if (plan.actionableSkus.length === 0) {
     if (plan.skipped.length > 0) return showToast('warning', `当前没有可提交 SKU：${plan.skipped[0].reason}`);
@@ -6575,11 +7127,11 @@ function confirmSubmitAccount() {
   pendingSubmitPayload = null;
   closeModal();
   if (payload.skipPreflight || !payload.plan) {
-    executeSubmit(payload.mode, selectedAccountId, payload.skus);
+    confirmFormalSubmitIfNeeded(payload.mode, selectedAccountId, payload.skus, () => executeSubmit(payload.mode, selectedAccountId, payload.skus));
   } else {
     showActionPreflight(
       payload.plan,
-      () => executeSubmit(payload.mode, selectedAccountId, payload.skus),
+      () => confirmFormalSubmitIfNeeded(payload.mode, selectedAccountId, payload.skus, () => executeSubmit(payload.mode, selectedAccountId, payload.skus)),
       { account: getAccountMeta(selectedAccountId), mode: payload.mode }
     );
   }
@@ -6778,6 +7330,77 @@ function showSubmitResults(data, isPreview) {
 }
 
 // ===== 23. Settings =====
+function setAiConfigMode(mode) {
+  aiConfigMode = mode === 'advanced' ? 'advanced' : 'simple';
+  localStorage.setItem('amazon28_aiConfigMode', aiConfigMode);
+  document.querySelectorAll('[data-ai-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.aiMode === aiConfigMode);
+  });
+  document.querySelectorAll('.advanced-ai-field').forEach(el => {
+    el.style.display = aiConfigMode === 'advanced' ? '' : 'none';
+  });
+  if (aiConfigMode === 'simple') fillRecommendedAiConfig({ silent: true });
+  validateAiConfigFields();
+}
+
+function setFieldValidity(id, ok, message = '') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('field-invalid', ok === false);
+  el.classList.toggle('field-valid', ok === true);
+  el.title = message || '';
+}
+
+function validateAiConfigFields() {
+  const baseOk = value => String(value || '').trim().replace(/\/$/, '') === RECOMMENDED_AI_CONFIG.baseUrl;
+  const endpointOk = value => /\{model\}/.test(String(value || '')) && /generateContent/i.test(String(value || ''));
+  const keyOk = id => {
+    const el = document.getElementById(id);
+    return !!el?.value || String(el?.placeholder || '').startsWith('***');
+  };
+  setFieldValidity('cfgTextApiKey', keyOk('cfgTextApiKey'), '文字 Key 不能为空');
+  setFieldValidity('cfgImageApiKey', keyOk('cfgImageApiKey'), '图片 Key 不能为空');
+  setFieldValidity('cfgTextBaseUrl', baseOk(document.getElementById('cfgTextBaseUrl')?.value), 'Base URL 固定填 https://api.kk666.best');
+  setFieldValidity('cfgImageBaseUrl', baseOk(document.getElementById('cfgImageBaseUrl')?.value), 'Base URL 固定填 https://api.kk666.best');
+  setFieldValidity('cfgTextEndpoint', endpointOk(document.getElementById('cfgTextEndpoint')?.value), '接口格式必须保留 {model}');
+  setFieldValidity('cfgImageEndpoint', endpointOk(document.getElementById('cfgImageEndpoint')?.value), '接口格式必须保留 {model}');
+}
+
+function fillRecommendedAiConfig() {
+  const options = arguments[0] || {};
+  const fields = {
+    cfgTextBaseUrl: RECOMMENDED_AI_CONFIG.baseUrl,
+    cfgImageBaseUrl: RECOMMENDED_AI_CONFIG.baseUrl,
+    cfgTextEndpoint: RECOMMENDED_AI_CONFIG.endpoint,
+    cfgImageEndpoint: RECOMMENDED_AI_CONFIG.endpoint,
+    cfgTextModel: RECOMMENDED_AI_CONFIG.textModel,
+    cfgImageModel: RECOMMENDED_AI_CONFIG.imageModel,
+  };
+  Object.entries(fields).forEach(([id, value]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  });
+  validateAiConfigFields();
+  if (!options.silent) showToast('success', '已按推荐填写 API 域名、接口格式和模型；请再粘贴 Key 并保存');
+}
+
+function resetRecommendedAiConfig() {
+  showToast('info', '正在恢复推荐 AI 配置...');
+  fetch('/api/config/recommended-ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  }).then(r => r.json()).then(d => {
+    if (d.error || d.success === false) {
+      showToast('error', d.error || '恢复推荐配置失败');
+      return;
+    }
+    fillRecommendedAiConfig({ silent: true });
+    showToast('success', d.message || '已恢复推荐配置');
+    refreshSetupStatus({ showFirstRun: false });
+  }).catch(e => showToast('error', e.message));
+}
+
 function loadConfig(applyDefaultLang = false) {
   fetch('/api/config').then(r => r.json()).then(d => {
     if (d.text_api_key) document.getElementById('cfgTextApiKey').value = d.text_api_key;
@@ -6802,11 +7425,14 @@ function loadConfig(applyDefaultLang = false) {
     document.getElementById('cfgMediaS3Prefix').value = d.media_s3_prefix || 'amazon28';
     document.getElementById('cfgMediaSubmitScheme').value = d.media_s3_submit_scheme || 's3';
     document.getElementById('cfgMediaPreviewBase').value = d.media_s3_preview_base || '';
+    setAiConfigMode(aiConfigMode);
+    validateAiConfigFields();
     if (applyDefaultLang && d.default_lang) setLanguage(d.default_lang);
   }).catch(() => {});
 }
 
 function saveConfig() {
+  if (aiConfigMode === 'simple') fillRecommendedAiConfig({ silent: true });
   fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -6819,10 +7445,89 @@ function saveConfig() {
       image_api_base: document.getElementById('cfgImageBaseUrl').value,
       image_endpoint_template: document.getElementById('cfgImageEndpoint').value,
       image_model: document.getElementById('cfgImageModel').value,
+      mode: aiConfigMode,
     })
   }).then(r => r.json()).then(d => {
     showToast(d.error ? 'error' : 'success', d.error || '配置已保存');
+    if (!d.error) refreshSetupStatus({ showFirstRun: false });
   }).catch(e => showToast('error', e.message));
+}
+
+function copyText(text, successMessage = '已复制') {
+  const value = String(text || '');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(value)
+      .then(() => showToast('success', successMessage))
+      .catch(() => fallbackCopyText(value, successMessage));
+    return;
+  }
+  fallbackCopyText(value, successMessage);
+}
+
+function fallbackCopyText(text, successMessage) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'readonly');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    showToast('success', successMessage);
+  } catch (e) {
+    showToast('error', '复制失败，请手动复制');
+  }
+  textarea.remove();
+}
+
+function copySupportInfo() {
+  fetch('/api/support-info').then(r => r.json()).then(d => {
+    const text = JSON.stringify(d, null, 2);
+    copyText(text, '已复制脱敏支持信息，可直接发给技术支持');
+  }).catch(e => showToast('error', '复制支持信息失败: ' + e.message));
+}
+
+function downloadSupportBundle() {
+  showToast('info', '正在生成支持包...');
+  fetch('/api/support-bundle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  }).then(async response => {
+    if (!response.ok) {
+      let message = '生成支持包失败';
+      try {
+        const data = await response.json();
+        message = data.error || message;
+      } catch (e) {}
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/i);
+    const filename = match ? match[1] : 'support-bundle.zip';
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('success', '支持包已生成，下载后发给技术支持');
+  }).catch(e => showToast('error', e.message));
+}
+
+function openRuntimeFolder(kind) {
+  fetch('/api/open-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind })
+  }).then(r => r.json()).then(d => {
+    if (d.error) return showToast('error', d.error);
+    showToast('success', '已打开：' + (d.path || kind));
+  }).catch(e => showToast('error', '打开失败: ' + e.message));
 }
 
 function saveGeneralConfig() {
@@ -6847,15 +7552,17 @@ function saveGeneralConfig() {
   }).then(r => r.json()).then(d => {
     if (!d.error) setLanguage(nextLang);
     showToast(d.error ? 'error' : 'success', d.error || '设置已保存');
+    if (!d.error) refreshSetupStatus({ showFirstRun: false });
   }).catch(e => showToast('error', e.message));
 }
 
-function testConnection() {
-  showToast('info', '正在测试...');
+function testConnection(kind = 'text') {
+  const label = kind === 'image' ? '图片 AI' : '文字 AI';
+  showToast('info', `正在测试${label}...`);
   fetch('/api/config/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({})
+    body: JSON.stringify({ kind })
   }).then(r => r.json()).then(d => {
     showToast(d.success ? 'success' : 'error', d.message || (d.success ? '连接成功' : '连接失败'));
   }).catch(e => showToast('error', e.message));
@@ -6873,7 +7580,45 @@ function testAccountConnection(sellerId) {
     } else {
       showToast('error', d.message || '账号连接失败');
     }
+    showAccountTestResult(d);
+    loadAccounts();
+    refreshSetupStatus({ showFirstRun: false });
   }).catch(e => showToast('error', '测试失败: ' + e.message));
+}
+
+function formatAccountCheckStatus(status) {
+  const value = String(status || '').toLowerCase();
+  if (value === 'pass') return ['通过', 'success'];
+  if (value === 'warn') return ['提醒', 'warning'];
+  return ['失败', 'danger'];
+}
+
+function showAccountTestResult(result) {
+  const checks = Array.isArray(result?.checks) ? result.checks : [];
+  const checkHtml = checks.length > 0
+    ? checks.map(check => {
+        const [label, tone] = formatAccountCheckStatus(check.status);
+        const code = check.code ? ` · ${escHtml(check.code)}` : '';
+        return `<div class="account-test-check ${tone}">
+          <span class="account-test-dot"></span>
+          <div>
+            <strong>${escHtml(check.label || check.name || '检测项')}</strong>
+            <p>${escHtml(check.message || '')}${code}</p>
+          </div>
+          <em>${label}</em>
+        </div>`;
+      }).join('')
+    : '<div class="task-empty">当前版本没有返回分项结果，请把弹窗截图发给客服。</div>';
+  showModal(result?.success ? 'Amazon 账号测试通过' : 'Amazon 账号测试失败', `
+    <div class="account-test-summary ${result?.success ? 'success' : 'danger'}">
+      <strong>${escHtml(result?.message || (result?.success ? '连接成功' : '连接失败'))}</strong>
+      <p>系统会分别检查：LWA Token、站点映射、Listings API、账号权限。失败时按红色项处理。</p>
+    </div>
+    <div class="account-test-checks">${checkHtml}</div>
+  `);
+  document.getElementById('modalFooter').innerHTML = `
+    ${result?.success ? '' : '<button class="btn btn-outline btn-sm" onclick="closeModal(); showAddAccount()">重新填写账号</button>'}
+    <button class="btn btn-ghost btn-sm" onclick="closeModal()">关闭</button>`;
 }
 
 // ===== 24. Account Management =====
@@ -6893,21 +7638,27 @@ function loadAccounts() {
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px">暂无账号</td></tr>';
       return;
     }
-    tbody.innerHTML = accounts.map(a => `<tr>
+    tbody.innerHTML = accounts.map(a => {
+      const lastTest = a.last_test_at
+        ? `<span class="badge ${a.last_test_success ? 'badge-success' : 'badge-danger'}" title="${escHtml(a.last_test_message || '')}">上次测试${a.last_test_success ? '通过' : '失败'}</span>`
+        : '<span class="badge badge-default">未测试</span>';
+      return `<tr>
       <td>${escHtml(a.name)}</td>
       <td>${escHtml(a.seller_id)}</td>
       <td>${escHtml(a.marketplace_name || a.marketplace_id || '-')}</td>
       <td>${[
         a.is_default ? '<span class="badge badge-success">默认</span>' : '',
         a.enabled === false ? '<span class="badge badge-danger">停用</span>' : '<span class="badge badge-default">启用</span>',
-        a.has_credentials === false ? '<span class="badge badge-warning">缺少凭证</span>' : '<span class="badge badge-success">凭证完整</span>'
+        a.has_credentials === false ? '<span class="badge badge-warning">缺少凭证</span>' : '<span class="badge badge-success">凭证完整</span>',
+        lastTest
       ].filter(Boolean).join(' ')}</td>
       <td>
         <button class="btn-link" onclick="testAccountConnection('${escHtml(a.seller_id)}')">测试</button> |
         ${!a.is_default && a.enabled !== false ? `<button class="btn-link" onclick="setDefaultAccount('${escHtml(a.seller_id)}')">设为默认</button> | ` : ''}
         <button class="btn-danger-link" onclick="deleteAccount('${escHtml(a.seller_id)}')">删除</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
     updateWorkspaceContext();
   }).catch(() => {});
 }
@@ -6915,21 +7666,30 @@ function loadAccounts() {
 function showAddAccount() {
   document.getElementById('modalTitle').textContent = '添加亚马逊账号';
   document.getElementById('modalBody').innerHTML = `
+    <div class="account-help-box" style="margin-bottom:12px;">
+      <strong>客户照着填，不要猜</strong>
+      <span>账号名称：随便起，例如“美国站主账号”。</span>
+      <span>Seller ID：Seller Central 后台里的卖家 ID / Merchant Token。</span>
+      <span>LWA Client ID / Secret：Developer Console 的 SP-API 应用凭证。</span>
+      <span>Refresh Token：授权后得到的长 token，通常以 <code>Atzr|</code> 开头。</span>
+    </div>
     <div class="settings-grid">
-      <div class="form-group"><label>账号名称</label><input type="text" id="newAccName" placeholder="如: 主账号-美国站"></div>
-      <div class="form-group"><label>Seller ID</label><input type="text" id="newAccSellerId" placeholder="A1B2C3D4E5F6G7"></div>
+      <div class="form-group"><label>账号名称</label><input type="text" id="newAccName" placeholder="如: 主账号-美国站"><div class="field-help">给客户自己看的名字，不影响提交。</div></div>
+      <div class="form-group"><label>Seller ID</label><input type="text" id="newAccSellerId" placeholder="A1B2C3D4E5F6G7"><div class="field-help">不要填店铺名，填 Seller ID / Merchant Token。</div></div>
       <div class="form-group"><label>站点</label><select id="newAccMarket">
         <option value="US">🇺🇸 US</option><option value="CA">🇨🇦 CA</option><option value="MX">🇲🇽 MX</option>
         <option value="UK">🇬🇧 UK</option><option value="DE">🇩🇪 DE</option><option value="FR">🇫🇷 FR</option>
         <option value="JP">🇯🇵 JP</option><option value="AU">🇦🇺 AU</option>
-      </select></div>
-      <div class="form-group"><label>LWA Client ID</label><input type="text" id="newAccClientId" placeholder="amzn1.application-oa2-client.xxx"></div>
-      <div class="form-group"><label>LWA Client Secret</label><input type="password" id="newAccClientSecret" placeholder="Client Secret"></div>
-      <div class="form-group"><label>Refresh Token</label><input type="password" id="newAccRefreshToken" placeholder="Atzr|xxx"></div>
+      </select><div class="field-help">美国站选 US；加拿大/墨西哥按实际店铺选。</div></div>
+      <div class="form-group"><label>LWA Client ID</label><input type="text" id="newAccClientId" placeholder="amzn1.application-oa2-client.xxx"><div class="field-help">一般以 amzn1.application-oa2-client 开头。</div></div>
+      <div class="form-group"><label>LWA Client Secret</label><input type="password" id="newAccClientSecret" placeholder="Client Secret"><div class="field-help">和 Client ID 同一应用里的 Secret，注意不要多复制空格。</div></div>
+      <div class="form-group"><label>Refresh Token</label><input type="password" id="newAccRefreshToken" placeholder="Atzr|xxx"><div class="field-help">通常以 Atzr| 开头，是授权后得到的刷新令牌。</div></div>
     </div>
     <p style="font-size:12px;color:var(--text-muted);margin-top:8px;">
-      以上凭证从 Amazon Developer Central 和 Seller Central 获取，
-      <a href="https://developer-docs.amazon.com/sp-api/docs/connecting-to-the-selling-partner-api" target="_blank" style="color:var(--primary);">查看文档</a>
+      以上凭证从 Amazon Seller Central 和 Developer Console 获取：
+      <a href="https://sellercentral.amazon.com" target="_blank" style="color:var(--primary);">打开 Seller Central</a> ·
+      <a href="https://developer.amazonservices.com/signin" target="_blank" style="color:var(--primary);">打开 Developer Console</a> ·
+      <a href="https://developer-docs.amazon.com/sp-api/docs/connecting-to-the-selling-partner-api" target="_blank" style="color:var(--primary);">查看 SP-API 文档</a>
     </p>`;
   document.getElementById('modalFooter').innerHTML = `
     <button class="btn btn-ghost btn-sm" onclick="closeModal()">取消</button>
@@ -6949,6 +7709,12 @@ function addAccount() {
 
   if (!name || !seller_id) return showToast('warning', '请填写账号名称和Seller ID');
   if (!lwa_client_id || !lwa_client_secret || !refresh_token) return showToast('warning', '请填写LWA凭证（Client ID、Client Secret、Refresh Token）');
+  if (!/^amzn1\.application-oa2-client\./i.test(lwa_client_id.trim())) {
+    return showToast('warning', 'LWA Client ID 通常以 amzn1.application-oa2-client. 开头，请检查是不是填错了');
+  }
+  if (!/^Atzr\|/i.test(refresh_token.trim())) {
+    return showToast('warning', 'Refresh Token 通常以 Atzr| 开头，请检查是不是复制错了');
+  }
 
   const mpIds = {US:'ATVPDKIKX0DER',CA:'A2EUQ1WTGCTBG2',MX:'A1AM78C64UM0Y8',UK:'A1F83G8C2ARO7P',DE:'A1PA6795UKMFR9',FR:'A13V1IB3VIYZZH',JP:'A1VC38T7YXB528',AU:'A39IBJ37TRP1C6'};
 
@@ -6968,6 +7734,7 @@ function addAccount() {
   }).then(r => r.json()).then(d => {
     closeModal();
     loadAccounts();
+    refreshSetupStatus({ showFirstRun: false });
     showToast(d.error ? 'error' : 'success', d.error || '账号已添加');
   }).catch(e => showToast('error', e.message));
 }
@@ -6976,7 +7743,7 @@ function setDefaultAccount(sellerId) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ seller_id: sellerId })
-  }).then(r => r.json()).then(() => loadAccounts())
+  }).then(r => r.json()).then(() => { loadAccounts(); refreshSetupStatus({ showFirstRun: false }); })
     .catch(e => showToast('error', e.message));
 }
 
@@ -6994,16 +7761,31 @@ function doDeleteAccount(sellerId) {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ seller_id: sellerId })
-  }).then(() => loadAccounts())
+  }).then(() => { loadAccounts(); refreshSetupStatus({ showFirstRun: false }); })
     .catch(e => showToast('error', e.message));
 }
 
 // ===== 25. UI Helpers =====
+function customerFriendlyMessage(msg) {
+  const text = String(msg || '');
+  if (!text) return '';
+  if (text.includes('EXCEL_LOCKED') || /Permission denied|另一个程序|being used by another process|文件.*占用|Excel.*占用|WPS.*占用/i.test(text)) {
+    return 'Excel 文件被打开/占用：请先关闭 Excel/WPS 里的这个表格，再重新点击。错误码：EXCEL_LOCKED';
+  }
+  if (text.includes('AI_BASE_BAD')) {
+    return 'AI 接口域名不正确：请点“一键恢复推荐”，Base URL 固定用 https://api.kk666.best。错误码：AI_BASE_BAD';
+  }
+  if (text.includes('AMAZON_ACCOUNT_BAD')) {
+    return 'Amazon 账号信息格式不完整：请按示例重新填写 Seller ID、LWA 和 Refresh Token。错误码：AMAZON_ACCOUNT_BAD';
+  }
+  return text;
+}
+
 function showToast(type, msg) {
   const c = document.getElementById('toastContainer');
   const t = document.createElement('div');
   t.className = 'toast toast-' + type;
-  t.textContent = msg;
+  t.textContent = type === 'error' ? customerFriendlyMessage(msg) : String(msg || '');
   c.appendChild(t);
   setTimeout(() => t.remove(), 4000);
 }
@@ -7344,8 +8126,25 @@ async function runSelfCheck() {
     const data = await response.json();
     const checks = data.checks || [];
     if (!container) return;
+    const actionForCheck = (check) => {
+      const name = String(check.name || '');
+      if (['ai_base_url', 'text_ai', 'image_ai'].includes(name)) {
+        return `<button class="btn btn-outline btn-sm" onclick="showSettingsSection('ai'); setAiConfigMode('simple'); resetRecommendedAiConfig(); scrollToElementLater('#cfgTextApiKey')">修复 AI 配置</button>`;
+      }
+      if (name === 'amazon_account') {
+        return '<button class="btn btn-outline btn-sm" onclick="showSettingsSection(\'amazon\'); showAddAccount()">添加/修复账号</button>';
+      }
+      if (name === 'output_dir') {
+        return `<button class="btn btn-outline btn-sm" onclick="openRuntimeFolder('output')">打开输出目录</button>`;
+      }
+      if (name === 'media_store') {
+        return `<button class="btn btn-outline btn-sm" onclick="showSettingsSection('advanced'); scrollToElementLater('#cfgMediaStoreEnabled')">检查媒体存储</button>`;
+      }
+      return '';
+    };
     container.innerHTML = checks.map(check => {
       const [label, tone] = formatTaskStatus(check.status);
+      const actionHtml = check.status === 'pass' ? '' : actionForCheck(check);
       return `<div class="task-card">
         <div class="task-card-head">
           <strong>${escHtml(check.name)}</strong>
@@ -7353,6 +8152,7 @@ async function runSelfCheck() {
         </div>
         <div class="task-card-meta">${escHtml(check.message || '')}</div>
         ${check.detail ? `<div class="task-card-progress">${escHtml(check.detail)}</div>` : ''}
+        ${actionHtml ? `<div class="task-card-actions">${actionHtml}</div>` : ''}
       </div>`;
     }).join('');
     showToast(data.status === 'fail' ? 'warning' : 'success', data.status === 'fail' ? '自检存在失败项，请按结果逐项修复' : '自检完成');
@@ -7369,6 +8169,7 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshTemplateFlowUi();
   loadConfig(true);
   fetchAccounts(true).then(() => updateWorkspaceContext()).catch(() => updateWorkspaceContext());
+  refreshSetupStatus({ showFirstRun: true });
   loadSelectedFields();
   loadTaskCenter();
   // Close dropdowns on outside click
@@ -7388,6 +8189,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('resize', () => {
     if (!isMobileViewport()) closeMobileSidebar();
+  });
+  ['cfgTextApiKey','cfgImageApiKey','cfgTextBaseUrl','cfgImageBaseUrl','cfgTextEndpoint','cfgImageEndpoint'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', validateAiConfigFields);
   });
   window.setInterval(loadTaskCenter, 5000);
   // Load existing files — restore from localStorage if available

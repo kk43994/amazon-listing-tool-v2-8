@@ -791,6 +791,96 @@ def test_config_endpoint_round_trips_general_settings(monkeypatch):
             temp_dir.rmdir()
 
 
+def test_recommended_ai_endpoint_resets_customer_safe_fields(monkeypatch):
+    temp_dir = Path(web_config.OUTPUT_DIR).resolve() / f'tmp_ai_recommended_{uuid4().hex[:8]}'
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    env_path = temp_dir / '.env'
+    env_path.write_text('AI_TEXT_API_KEY=keep-text\nAI_IMAGE_API_KEY=keep-image\nAI_TEXT_API_BASE=https://api.kk666.online/v1\n', encoding='utf-8')
+    tracked_keys = [
+        'AI_TEXT_API_KEY', 'AI_IMAGE_API_KEY',
+        'AI_TEXT_API_BASE', 'AI_IMAGE_API_BASE',
+        'AI_TEXT_ENDPOINT_TEMPLATE', 'AI_IMAGE_ENDPOINT_TEMPLATE',
+        'AI_TEXT_PROTOCOL', 'AI_IMAGE_PROTOCOL',
+        'AI_TEXT_MODEL', 'AI_IMAGE_MODEL',
+    ]
+    original_env = {key: os.environ.get(key) for key in tracked_keys}
+
+    try:
+        monkeypatch.setattr(web_app, '_env_file_path', lambda: str(env_path))
+        client = app.test_client()
+        response = client.post('/api/config/recommended-ai', json={})
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+
+        text = env_path.read_text(encoding='utf-8')
+        assert 'AI_TEXT_API_KEY=keep-text' in text
+        assert 'AI_IMAGE_API_KEY=keep-image' in text
+        assert 'AI_TEXT_API_BASE=https://api.kk666.best' in text
+        assert 'AI_IMAGE_API_BASE=https://api.kk666.best' in text
+        assert 'AI_TEXT_ENDPOINT_TEMPLATE=/v1beta/models/{model}:generateContent' in text
+        assert 'AI_IMAGE_PROTOCOL=gemini_generate_content' in text
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        from config import reload_config
+        reload_config()
+        if env_path.exists():
+            env_path.unlink()
+        if temp_dir.exists():
+            temp_dir.rmdir()
+
+
+def test_config_simple_mode_rejects_legacy_ai_base(monkeypatch):
+    temp_dir = Path(web_config.OUTPUT_DIR).resolve() / f'tmp_ai_bad_base_{uuid4().hex[:8]}'
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    env_path = temp_dir / '.env'
+    env_path.write_text('', encoding='utf-8')
+    tracked_keys = ['AI_TEXT_API_BASE', 'AI_IMAGE_API_BASE']
+    original_env = {key: os.environ.get(key) for key in tracked_keys}
+
+    try:
+        monkeypatch.setattr(web_app, '_env_file_path', lambda: str(env_path))
+        client = app.test_client()
+        response = client.post('/api/config', json={
+            'mode': 'simple',
+            'text_api_base': 'https://api.kk666.online',
+            'image_api_base': 'https://api.kk666.best',
+            'text_endpoint_template': '/v1beta/models/{model}:generateContent',
+            'image_endpoint_template': '/v1beta/models/{model}:generateContent',
+        })
+
+        assert response.status_code == 400
+        assert 'api.kk666.best' in response.get_json()['error']
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        from config import reload_config
+        reload_config()
+        if env_path.exists():
+            env_path.unlink()
+        if temp_dir.exists():
+            temp_dir.rmdir()
+
+
+def test_version_endpoint_exposes_runtime_metadata():
+    client = app.test_client()
+    response = client.get('/api/version')
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['version']
+    assert payload['runtime_dir']
+
+
 def test_process_single_rewrite_returns_ai_fields_and_persists(monkeypatch):
     input_dir = Path(web_config.INPUT_DIR).resolve()
     filename = f'test_process_single_{uuid4().hex[:8]}.xlsx'
@@ -1632,8 +1722,8 @@ def test_submit_endpoint_persists_results_to_excel(monkeypatch):
 
     wb = Workbook()
     ws = wb.active
-    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price'])
-    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99'])
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price', 'preview_status', 'preview_time', 'preview_account', 'preview_account_id', 'preview_marketplace_id'])
+    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99', 'VALID', time.strftime('%Y-%m-%d %H:%M:%S'), 'US Test', 'SELLER-1', 'ATVPDKIKX0DER'])
     wb.save(input_path)
     wb.close()
 
@@ -1713,8 +1803,8 @@ def test_submit_endpoint_blocks_when_precheck_fails(monkeypatch):
 
     wb = Workbook()
     ws = wb.active
-    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price'])
-    ws.append(['SKU-1', 'Blocked Product', 'https://example.com/demo.jpg', '19.99'])
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price', 'preview_status', 'preview_time', 'preview_account', 'preview_account_id', 'preview_marketplace_id'])
+    ws.append(['SKU-1', 'Blocked Product', 'https://example.com/demo.jpg', '19.99', 'VALID', time.strftime('%Y-%m-%d %H:%M:%S'), 'US Block', 'SELLER-BLOCK', 'ATVPDKIKX0DER'])
     wb.save(input_path)
     wb.close()
 
@@ -1792,8 +1882,8 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
 
     wb = Workbook()
     ws = wb.active
-    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price'])
-    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99'])
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price', 'preview_status', 'preview_time', 'preview_account', 'preview_account_id', 'preview_marketplace_id'])
+    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99', 'VALID', time.strftime('%Y-%m-%d %H:%M:%S'), 'US Warning', 'SELLER-WARN', 'ATVPDKIKX0DER'])
     wb.save(input_path)
     wb.close()
 
@@ -1848,6 +1938,8 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
         assert 'Review title formatting' in str(ws2.cell(row=2, column=header_map['preview_message']).value or '')
         assert 'item_name' in str(ws2.cell(row=2, column=header_map['preview_issue_payload']).value or '')
         assert ws2.cell(row=2, column=header_map['preview_account']).value == 'US Preview'
+        assert ws2.cell(row=2, column=header_map['preview_account_id']).value == 'SELLER-2'
+        assert ws2.cell(row=2, column=header_map['preview_marketplace_id']).value == 'ATVPDKIKX0DER'
         assert ws2.cell(row=2, column=header_map['preview_time']).value
         wb2.close()
 
@@ -1855,6 +1947,8 @@ def test_submit_preview_persists_results_to_excel(monkeypatch):
         sku_entry = products_response.get_json()['products'][0]['skus'][0]
         assert sku_entry['preview_status'] == 'VALID'
         assert sku_entry['preview_account'] == 'US Preview'
+        assert sku_entry['preview_account_id'] == 'SELLER-2'
+        assert sku_entry['preview_marketplace_id'] == 'ATVPDKIKX0DER'
         assert 'item_name' in sku_entry['preview_issue_payload']
     finally:
         if input_path.exists():
@@ -1868,8 +1962,8 @@ def test_submit_counts_accepted_with_warnings_as_success(monkeypatch):
 
     wb = Workbook()
     ws = wb.active
-    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price'])
-    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99'])
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price', 'preview_status', 'preview_time', 'preview_account', 'preview_account_id', 'preview_marketplace_id'])
+    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99', 'VALID', time.strftime('%Y-%m-%d %H:%M:%S'), 'US Warning', 'SELLER-WARN', 'ATVPDKIKX0DER'])
     wb.save(input_path)
     wb.close()
 
@@ -1926,6 +2020,58 @@ def test_submit_counts_accepted_with_warnings_as_success(monkeypatch):
         header_map = {header: idx + 1 for idx, header in enumerate(headers)}
         assert ws2.cell(row=2, column=header_map['submit_status']).value == 'ACCEPTED_WITH_WARNINGS'
         wb2.close()
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_submit_endpoint_blocks_without_recent_same_account_preview(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_submit_no_preview_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price', 'preview_status'])
+    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg', '19.99', ''])
+    wb.save(input_path)
+    wb.close()
+
+    submit_calls = {'count': 0}
+
+    try:
+        from amazon.accounts import AccountManager
+        from amazon.listings import ListingsAPI
+
+        monkeypatch.setattr(AccountManager, 'get_default_account', lambda self: {
+            'name': 'US Gate',
+            'seller_id': 'SELLER-GATE',
+            'marketplace_id': 'ATVPDKIKX0DER',
+            'lwa_client_id': 'client',
+            'lwa_client_secret': 'secret',
+            'refresh_token': 'refresh',
+        })
+
+        def fake_submit(self, sku, product, preview=False):
+            submit_calls['count'] += 1
+            return {'status': 'ACCEPTED'}
+
+        monkeypatch.setattr(ListingsAPI, 'put_listings_item', fake_submit)
+
+        client = app.test_client()
+        response = client.post('/api/submit', json={
+            'file': str(input_path),
+            'skus': ['SKU-1'],
+            'preview': False,
+        })
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['accepted'] == 0
+        assert payload['failed'] == 1
+        assert payload['results'][0]['status'] == 'PREVIEW_BLOCKED'
+        assert '同一账号/站点' in payload['results'][0]['message']
+        assert submit_calls['count'] == 0
     finally:
         if input_path.exists():
             input_path.unlink()
@@ -2080,6 +2226,38 @@ def test_persist_bulk_row_updates_serializes_same_file_writes(monkeypatch, tmp_p
     ws2 = wb2.active
     assert ws2['B2'].value == 'Name A'
     assert ws2['C2'].value == '99'
+    wb2.close()
+
+
+def test_persist_bulk_row_updates_reports_excel_locked_when_replace_fails(monkeypatch, tmp_path):
+    input_path = tmp_path / f'test_locked_{uuid4().hex[:8]}.xlsx'
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name'])
+    ws.append(['SKU-1', 'Old Name'])
+    wb.save(input_path)
+    wb.close()
+
+    real_replace = os.replace
+
+    def fake_replace(src, dst):
+        if Path(dst) == input_path.resolve():
+            raise PermissionError('file is being used by another process')
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(web_app.os, 'replace', fake_replace)
+
+    try:
+        web_app._persist_bulk_row_updates(str(input_path), {'SKU-1': {'item_name': 'New Name'}})
+    except RuntimeError as exc:
+        assert 'EXCEL_LOCKED' in str(exc)
+        assert '关闭表格后重试' in str(exc)
+    else:
+        raise AssertionError('Expected EXCEL_LOCKED RuntimeError')
+
+    wb2 = load_workbook(input_path)
+    assert wb2.active['B2'].value == 'Old Name'
     wb2.close()
 
 
@@ -2525,8 +2703,8 @@ def test_self_check_endpoint_reports_core_checks(monkeypatch):
     assert response.status_code == 200
     payload = response.get_json()
     names = {check['name'] for check in payload['checks']}
-    assert {'output_dir', 'text_ai', 'image_ai', 'amazon_account', 'xls_preserve', 'media_store'} <= names
-    assert payload['status'] == 'pass'
+    assert {'output_dir', 'ai_base_url', 'text_ai', 'image_ai', 'amazon_account', 'xls_preserve', 'media_store'} <= names
+    assert payload['status'] in {'pass', 'warn'}
 
 
 def test_cancel_endpoint_updates_status():

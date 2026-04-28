@@ -58,6 +58,41 @@
     <!-- ==================== Page 1: 工作台 ==================== -->
     <section class="page active" id="page-workspace">
 
+      <div class="setup-guide-card" id="setupGuideCard" style="display:none">
+        <div class="setup-guide-main">
+          <div class="setup-eyebrow">首次使用引导</div>
+          <h2>不用猜下一步，按下面 4 步走</h2>
+          <p id="setupGuideSummary">系统正在检查当前配置...</p>
+        </div>
+        <div class="setup-guide-steps" id="setupGuideSteps"></div>
+        <div class="setup-guide-actions">
+          <button class="btn btn-primary btn-sm" id="setupPrimaryAction" onclick="runSetupPrimaryAction()">继续下一步</button>
+          <button class="btn btn-outline btn-sm" onclick="createSampleExcel()">生成示例 Excel</button>
+          <button class="btn btn-outline btn-sm" onclick="openCustomerQuickStart()">查看客户版操作说明</button>
+          <button class="btn btn-ghost btn-sm" onclick="dismissSetupGuide()">暂时隐藏</button>
+        </div>
+      </div>
+
+      <div class="customer-flow-card" id="customerFlowCard">
+        <div class="customer-flow-head">
+          <div>
+            <div class="setup-eyebrow">傻瓜流程</div>
+            <h2 id="customerFlowTitle">按顺序做，不要跳步</h2>
+            <p id="customerFlowHint">系统会根据当前状态告诉你下一步该点什么。</p>
+          </div>
+          <button class="btn btn-primary btn-sm" id="customerFlowPrimaryBtn" onclick="runCustomerFlowPrimary()">按推荐执行</button>
+        </div>
+        <div class="customer-next-step" id="customerNextStepHero">
+          <div class="customer-next-step-main">
+            <div class="customer-next-step-label">只需点这个</div>
+            <strong id="customerNextStepTitle">系统正在判断下一步...</strong>
+            <p id="customerNextStepDesc">不要跳过当前步骤；下面的大按钮永远指向最安全的下一步。</p>
+          </div>
+          <button class="customer-next-step-btn" id="customerFlowHeroBtn" onclick="runCustomerFlowPrimary()">按推荐执行</button>
+        </div>
+        <div class="customer-flow-steps" id="customerFlowSteps"></div>
+      </div>
+
       <div class="context-bar" id="workspaceContextBar">
         <div class="context-item">
           <span class="context-label">当前文件</span>
@@ -406,6 +441,7 @@
             </svg>
             <p class="empty-title" data-t="no_data_title">暂无商品数据</p>
             <p class="empty-desc" data-t="no_data_desc">导入Excel文件或下载模板开始铺货</p>
+            <div class="empty-actions" id="emptyActions"></div>
           </div>
         </div>
 
@@ -469,44 +505,114 @@
 
     <!-- ==================== Page 2: 设置 ==================== -->
     <section class="page" id="page-settings">
+      <div class="settings-card setup-status-card" id="setupStatusPanel">
+        <div class="settings-title-row">
+          <h3 class="settings-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 6.8L22 9l-6 4.6 1.9 7.4L12 16.8 6.1 21 8 13.6 2 9l7.6-.2L12 2z"></path></svg>
+            <span>新手配置状态</span>
+          </h3>
+          <button class="btn btn-outline btn-sm" onclick="refreshSetupStatus({manual:true})">刷新状态</button>
+        </div>
+        <p class="settings-desc">客户只需要按顺序完成：AI 接口 -> Amazon 账号 -> 导入商品表 -> 一键自检。</p>
+        <div class="setup-status-grid" id="setupStatusGrid"></div>
+      </div>
+
+      <div class="settings-card config-nav-card">
+        <h3 class="settings-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          <span>配置网址导航</span>
+        </h3>
+        <p class="settings-desc">客户不知道去哪找资料时，直接从这里打开；找不到凭证就把这个区域截图发给客服。</p>
+        <div class="config-link-grid">
+          <a class="config-link-card" href="https://api.kk666.best" target="_blank" rel="noopener">
+            <strong>API 中转域名</strong>
+            <span>Base URL 固定填 https://api.kk666.best</span>
+          </a>
+          <a class="config-link-card" href="https://sellercentral.amazon.com" target="_blank" rel="noopener">
+            <strong>Seller Central</strong>
+            <span>查看 Seller ID / 账号信息 / Apps and Services</span>
+          </a>
+          <a class="config-link-card" href="https://developer.amazonservices.com/signin" target="_blank" rel="noopener">
+            <strong>Developer Console</strong>
+            <span>查看 LWA Client ID 和 Client Secret</span>
+          </a>
+          <a class="config-link-card" href="https://developer-docs.amazon.com/sp-api/docs/connecting-to-the-selling-partner-api" target="_blank" rel="noopener">
+            <strong>SP-API 连接文档</strong>
+            <span>不知道 Refresh Token 怎么来时看这里</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="settings-tabbar" id="settingsTabbar">
+        <button class="settings-tab active" data-settings-tab="ai" onclick="showSettingsSection('ai')">1. AI 接口</button>
+        <button class="settings-tab" data-settings-tab="amazon" onclick="showSettingsSection('amazon')">2. Amazon 账号</button>
+        <button class="settings-tab" data-settings-tab="self_check" onclick="showSettingsSection('self_check')">3. 环境自检</button>
+        <button class="settings-tab" data-settings-tab="advanced" onclick="showSettingsSection('advanced')">4. 高级设置</button>
+      </div>
+
       <!-- API Configuration -->
-      <div class="settings-card">
+      <div class="settings-card settings-section-card" data-settings-section="ai" id="aiSettingsCard">
         <h3 class="settings-title">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
           <span data-t="api_config">API配置</span>
         </h3>
+        <p class="settings-desc">客户只需要粘贴服务商给的 Key。不会填就点“一键恢复推荐”，系统会把域名、接口格式、模型自动写好。</p>
+        <div class="api-preset-box">
+          <div>
+            <strong>推荐配置</strong>
+            <p>Base URL：<code>https://api.kk666.best</code>；文字模型：<code>gemini-3.1-flash-lite-preview</code>；图片模型：<code>gemini-3.1-flash-image-preview</code></p>
+          </div>
+          <div class="api-preset-actions">
+            <button class="btn btn-outline btn-sm" onclick="copyText('https://api.kk666.best', '已复制 Base URL')">复制域名</button>
+            <button class="btn btn-outline btn-sm" onclick="fillRecommendedAiConfig()">填到页面</button>
+            <button class="btn btn-primary btn-sm" onclick="resetRecommendedAiConfig()">一键恢复推荐</button>
+          </div>
+        </div>
+        <div class="ai-mode-switch" id="aiModeSwitch">
+          <button class="active" data-ai-mode="simple" onclick="setAiConfigMode('simple')">简单模式（推荐客户）</button>
+          <button data-ai-mode="advanced" onclick="setAiConfigMode('advanced')">高级模式（技术支持）</button>
+          <span>简单模式只填 Key；域名、接口、模型由系统锁定推荐值。</span>
+        </div>
         <div class="settings-grid">
           <div class="form-group">
             <label>文字 API Key</label>
             <input type="password" id="cfgTextApiKey" placeholder="sk-...">
+            <div class="field-help">填服务商给你的“文字/聊天 Key”。如果文字和图片共用一个 Key，两边填同一个。</div>
           </div>
-          <div class="form-group">
+          <div class="form-group advanced-ai-field">
             <label>文字 Base URL</label>
-            <input type="text" id="cfgTextBaseUrl" placeholder="https://api.kk666.online">
+            <input type="text" id="cfgTextBaseUrl" placeholder="https://api.kk666.best">
+            <div class="field-help">固定填 <code>https://api.kk666.best</code>，不要填模型名，不要填接口路径。</div>
           </div>
-          <div class="form-group">
+          <div class="form-group advanced-ai-field">
             <label>文字接口格式</label>
             <input type="text" id="cfgTextEndpoint" placeholder="/v1beta/models/{model}:generateContent">
+            <div class="field-help">保持默认即可。这里必须保留 <code>{model}</code>，客户不要手改。</div>
           </div>
-          <div class="form-group">
+          <div class="form-group advanced-ai-field">
             <label data-t="ai_model">文字模型</label>
             <input type="text" id="cfgTextModel" placeholder="gemini-3.1-flash-lite-preview">
+            <div class="field-help">默认用 <code>gemini-3.1-flash-lite-preview</code>，用于标题、五点、描述、关键词。</div>
           </div>
           <div class="form-group">
             <label>图片 API Key</label>
             <input type="password" id="cfgImageApiKey" placeholder="sk-...">
+            <div class="field-help">填服务商给你的“图片/生图 Key”。没有单独图片 Key 时可填同一个 Key。</div>
           </div>
-          <div class="form-group">
+          <div class="form-group advanced-ai-field">
             <label>图片 Base URL</label>
-            <input type="text" id="cfgImageBaseUrl" placeholder="https://api.kk666.online">
+            <input type="text" id="cfgImageBaseUrl" placeholder="https://api.kk666.best">
+            <div class="field-help">固定填 <code>https://api.kk666.best</code>，和文字 Base URL 一样。</div>
           </div>
-          <div class="form-group">
+          <div class="form-group advanced-ai-field">
             <label>图片接口格式</label>
             <input type="text" id="cfgImageEndpoint" placeholder="/v1beta/models/{model}:generateContent">
+            <div class="field-help">保持默认即可。图片模型也走 Gemini generateContent 接口。</div>
           </div>
-          <div class="form-group">
+          <div class="form-group advanced-ai-field">
             <label data-t="img_model">图片模型</label>
             <input type="text" id="cfgImageModel" placeholder="gemini-3.1-flash-image-preview">
+            <div class="field-help">默认用 <code>gemini-3.1-flash-image-preview</code>，用于主图/附图生成。</div>
           </div>
         </div>
         <div class="settings-actions">
@@ -516,13 +622,22 @@
           <button class="btn btn-outline btn-sm" onclick="testConnection()">
             <span data-t="test_connection">测试连接</span>
           </button>
+          <button class="btn btn-outline btn-sm" onclick="testConnection('text')">
+            <span>只测文字 AI</span>
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="testConnection('image')">
+            <span>只测图片 AI</span>
+          </button>
           <button class="btn btn-ghost btn-sm" onclick="runSelfCheck()">
             <span>一键自检</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="copySupportInfo()">
+            <span>复制支持信息</span>
           </button>
         </div>
       </div>
 
-      <div class="settings-card">
+      <div class="settings-card settings-section-card" data-settings-section="self_check" id="selfCheckSettingsCard">
         <h3 class="settings-title">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"></path><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"></path></svg>
           <span>环境自检</span>
@@ -530,12 +645,15 @@
         <p class="settings-desc">检查文本 AI、图片 AI、默认亚马逊账号、输出目录与 `.xls` 兼容写回能力。</p>
         <div class="settings-actions">
           <button class="btn btn-primary btn-sm" onclick="runSelfCheck()">运行自检</button>
+          <button class="btn btn-outline btn-sm" onclick="downloadSupportBundle()">导出支持包</button>
+          <button class="btn btn-ghost btn-sm" onclick="copySupportInfo()">复制支持信息</button>
+          <button class="btn btn-ghost btn-sm" onclick="openRuntimeFolder('logs')">打开日志目录</button>
         </div>
         <div id="selfCheckResults" class="task-list"></div>
       </div>
 
       <!-- Amazon Accounts -->
-      <div class="settings-card">
+      <div class="settings-card settings-section-card" data-settings-section="amazon" id="amazonSettingsCard">
         <div class="settings-title-row">
           <h3 class="settings-title">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -545,6 +663,14 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             <span data-t="add">添加</span>
           </button>
+        </div>
+        <p class="settings-desc">这里决定 Amazon 预览和正式提交能不能用。状态必须显示“凭证完整”，否则不要让客户点正式提交。</p>
+        <div class="account-help-box">
+          <strong>每个输入框填什么</strong>
+          <span>账号名称：随便起名，例如“美国站主账号”。</span>
+          <span>Seller ID：卖家后台的 Seller ID / Merchant Token。</span>
+          <span>LWA Client ID / Secret：Developer Console 里 SP-API 应用的 Login with Amazon 凭证。</span>
+          <span>Refresh Token：授权后得到的长 token，通常以 <code>Atzr|</code> 开头。</span>
         </div>
         <div class="data-table-wrap">
           <table class="data-table data-table-compact" id="accountTable">
@@ -564,7 +690,7 @@
       </div>
 
       <!-- General Settings -->
-      <div class="settings-card">
+      <div class="settings-card settings-section-card" data-settings-section="advanced" id="advancedSettingsCard">
         <h3 class="settings-title">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 8.82a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1.08 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1.08z"></path></svg>
           <span data-t="general_settings">通用设置</span>
@@ -634,6 +760,8 @@
           <button class="btn btn-primary btn-sm" onclick="saveGeneralConfig()">
             <span data-t="save">保存</span>
           </button>
+          <button class="btn btn-outline btn-sm" onclick="openRuntimeFolder('output')">打开输出目录</button>
+          <button class="btn btn-ghost btn-sm" onclick="openRuntimeFolder('latest_backup')">打开最新备份</button>
         </div>
       </div>
     </section>

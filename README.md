@@ -83,9 +83,13 @@ http://127.0.0.1:5000
 - macOS Apple Silicon：`AmazonListingTool-darwin-arm64.zip`
 - Windows 64 位：`AmazonListingTool-windows-amd64.zip`
 
-客户解压后双击 `启动亚马逊2.8.command` / `启动亚马逊2.8.bat` 即可。启动脚本会先运行环境检测，自动创建 `.env`、`accounts.json`、`input/`、`output/`、`logs/`，并在端口被占用时自动切换到后续端口。
+客户解压后先看 `客户先看这里.txt`，再双击 `启动亚马逊2.8.command` / `启动亚马逊2.8.bat` 即可。启动脚本会先运行环境检测，自动创建 `.env`、`accounts.json`、`input/`、`output/`、`logs/`，并在端口被占用时自动切换到后续端口。为避免中文文件名在部分客户电脑上乱码，发行包同时提供 `Start-Amazon-2.8.command/.bat`、`Doctor.command/.bat`、`Env-Check.command/.bat`、`Support-Bundle.command/.bat` 和 `Read-Me-First.txt`。
 
-如果客户反馈打不开，让客户双击 `环境检测.command` / `环境检测.bat`，把检测结果截图发给技术支持。详细交付说明见 `docs/客户部署说明.md`。
+首次打开 Web 工作台会显示“首次使用引导”和一个醒目的“只需点这个”下一步按钮，客户按 `AI 接口 -> Amazon 账号 -> 导入商品表 -> 一键自检` 四步走即可。AI 中转 Base URL 统一使用 `https://api.kk666.best`，设置页默认是“简单模式”：只需要填文字 Key、图片 Key，然后点“一键恢复推荐/保存/测试连接”；高级模式才显示 endpoint 和模型字段。设置页已拆成 `AI 接口 / Amazon 账号 / 环境自检 / 高级设置`，Amazon 账号测试会分项显示 LWA Token、站点映射、Listings API 和权限结果。
+
+如果客户反馈打不开或功能异常，优先让客户双击 `一键检测修复.command` / `一键检测修复.bat`。Doctor 会自动补齐基础运行文件，检查内置依赖、端口、浏览器、运行路径、AI 中转域名和 Amazon LWA/SP-API 网络，并保存 `logs/doctor-report.txt` 供售后排查。如果客服需要完整排查材料，让客户双击 `导出支持包.command/.bat` 或网页设置页里的“导出支持包”，发送最新的 `logs/support-bundle-*.zip`。详细交付说明见 `docs/客户部署说明.md`。
+
+数据安全上，任何 Excel 写回前都会先复制一份到 `backups/`，再写临时文件、校验可读、原子替换；如果 Excel/WPS 正在占用表格，会提示 `EXCEL_LOCKED` 并让客户关闭表格后重试。网页设置页和发行包脚本都提供“打开输出目录 / 打开最新备份”。客户还可以先点“生成示例 Excel”，确认流程跑通后再导入真实表。发版前按 `docs/RELEASE_CHECKLIST.md` 逐项确认。
 
 ### 本地构建
 
@@ -100,6 +104,13 @@ python tools/build_release.py
 
 - `release/AmazonListingTool-<platform>/`
 - `release/AmazonListingTool-<platform>.zip`
+- `release/AmazonListingTool-<platform>.zip.sha256`
+
+发行目录根部会包含 `VERSION`、`release-manifest.json` 和 `dependency-inventory.json`，用于售后确认客户版本、可执行文件校验值、根目录文件和内置依赖清单。可用以下命令检查发行目录是否漏文件：
+
+```bash
+python tools/verify_release.py release/AmazonListingTool-<platform>
+```
 
 如需给内部售后准备源码离线依赖包：
 

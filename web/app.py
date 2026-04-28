@@ -61,6 +61,7 @@ RECOMMENDED_AI_ENDPOINT = '/v1beta/models/{model}:generateContent'
 RECOMMENDED_TEXT_MODEL = 'gemini-3.1-flash-lite-preview'
 RECOMMENDED_IMAGE_MODEL = 'gemini-3.1-flash-image-preview'
 RECENT_PREVIEW_MAX_AGE = timedelta(hours=24)
+MAX_SUBMISSION_PRICE = 10000.0
 
 
 # ===== 统一响应格式 =====
@@ -92,6 +93,30 @@ def _validate_file_path(filepath: str) -> str | None:
     allowed_dirs = [os.path.realpath(config.INPUT_DIR), os.path.realpath(config.OUTPUT_DIR)]
     if any(real.startswith(d + os.sep) or real == d for d in allowed_dirs):
         return real
+    return None
+
+
+def _file_version(filepath: str) -> float:
+    try:
+        return round(os.path.getmtime(filepath), 6)
+    except OSError:
+        return 0.0
+
+
+def _file_version_conflict_response(filepath: str, expected_version) -> tuple | None:
+    if expected_version in (None, ''):
+        return None
+    try:
+        expected = float(expected_version)
+    except (TypeError, ValueError):
+        return jsonify({'error': '文件版本号无效，请刷新页面后再保存', 'code': 'FILE_VERSION_BAD'}), 400
+    current = _file_version(filepath)
+    if current and abs(current - expected) > 0.0001:
+        return jsonify({
+            'error': '这个 Excel 已被另一个窗口或任务改动。为避免互相覆盖，请先刷新商品表后再保存。',
+            'code': 'FILE_VERSION_CONFLICT',
+            'file_version': current,
+        }), 409
     return None
 
 
@@ -338,6 +363,21 @@ def _validate_ai_updates(updates: dict, payload: dict) -> str:
             if 'generatecontent' in endpoint.lower() and '{model}' not in endpoint:
                 return f"{key} 必须保留 {{model}}，推荐填写 {RECOMMENDED_AI_ENDPOINT}"
             updates[key] = endpoint
+
+    provider_pairs = (
+        ('AI_TEXT_MODEL', 'AI_TEXT_ENDPOINT_TEMPLATE', '文字'),
+        ('AI_IMAGE_MODEL', 'AI_IMAGE_ENDPOINT_TEMPLATE', '图片'),
+    )
+    for model_key, endpoint_key, label in provider_pairs:
+        model = str(updates.get(model_key) or getattr(config, model_key, '') or '').strip().lower()
+        endpoint = str(updates.get(endpoint_key) or getattr(config, endpoint_key, '') or '').strip().lower()
+        looks_gemini_model = 'gemini' in model
+        looks_openai_model = bool(re.match(r'^(gpt|o\d|dall-e|gpt-image)', model))
+        uses_gemini_endpoint = 'generatecontent' in endpoint
+        if looks_gemini_model and not uses_gemini_endpoint:
+            return f"{label}模型看起来是 Gemini，但接口格式不是 generateContent；请点“一键恢复推荐”或改回 {RECOMMENDED_AI_ENDPOINT}"
+        if looks_openai_model and uses_gemini_endpoint:
+            return f"{label}模型看起来是 OpenAI/GPT，但接口格式仍是 Gemini generateContent；请同步模型和接口格式后再保存"
 
     customer_mode = str(payload.get('mode') or payload.get('ai_config_mode') or '').strip().lower()
     if customer_mode in {'simple', 'recommended', 'customer'}:
@@ -2457,6 +2497,7 @@ def upload_excel():
             'success': True,
             'filename': os.path.basename(filepath),
             'filepath': filepath,
+            'file_version': _file_version(filepath),
             'total_rows': len(data),
             'file_type': ext.lstrip('.'),
             'columns': [h for h in processor.headers],
@@ -4006,6 +4047,7 @@ def get_products():
         return jsonify({
             'total_products': len(groups),
             'total_skus': len(data),
+            'file_version': _file_version(filepath),
             'columns': headers[:30],
             'column_mapping': col_map,
             'template': template_summary,
@@ -4541,8 +4583,33 @@ def _normalize_parentage_level(value) -> str:
     return str(value or '').strip().lower()
 
 
+def _normalize_asin_value(value) -> str:
+    return re.sub(r'\s+', '', str(value or '').strip().upper())
+
+
+def _build_duplicate_asin_messages(products_by_sku: dict) -> dict:
+    by_asin = {}
+    for sku, product in products_by_sku.items():
+        asin = _normalize_asin_value(
+            product.get('asin', '')
+            or product.get('merchant_suggested_asin', '')
+            or product.get('source_asin', '')
+        )
+        if asin:
+            by_asin.setdefault(asin, []).append(sku)
+
+    messages = {}
+    for asin, sku_list in by_asin.items():
+        if len(sku_list) > 1:
+            joined = ', '.join(sku_list)
+            for sku in sku_list:
+                messages[sku] = f'ASIN {asin} 在表内被多个 SKU 共用：{joined}，请先拆分或确认匹配关系'
+    return messages
+
+
 def _prepare_submission_products(all_data: list, col_map: dict, skus: list, mapper,
-                                 template_definition: dict | None = None) -> tuple[list, list]:
+                                 template_definition: dict | None = None,
+                                 require_complete_families: bool = True) -> tuple[list, list]:
     rows_by_sku = {}
     products_by_sku = {}
     duplicate_skus = set()
@@ -4566,6 +4633,14 @@ def _prepare_submission_products(all_data: list, col_map: dict, skus: list, mapp
         })
     seen = set()
     family_issues = evaluate_template_families(all_data, template_definition, col_map=col_map)
+    requested_skus = {str(sku or '').strip() for sku in (skus or []) if str(sku or '').strip()}
+    duplicate_asin_messages = _build_duplicate_asin_messages(products_by_sku)
+    children_by_parent = {}
+    for sku, product in products_by_sku.items():
+        if _normalize_parentage_level(product.get('parentage_level')) == 'child':
+            parent_sku = str(product.get('parent_sku', '') or '').strip()
+            if parent_sku:
+                children_by_parent.setdefault(parent_sku, []).append(sku)
 
     def add_blocker(sku: str, message: str):
         message = str(message or '').strip()
@@ -4586,12 +4661,30 @@ def _prepare_submission_products(all_data: list, col_map: dict, skus: list, mapp
             add_blocker(requested_by or sku, f'未在文件中找到 SKU {sku}')
             return
 
+        duplicate_asin_message = duplicate_asin_messages.get(sku)
+        if duplicate_asin_message:
+            add_blocker(requested_by or sku, duplicate_asin_message)
+            return
+
         for issue in family_issues.get(sku, []) or []:
             add_blocker(requested_by or sku, issue)
         if family_issues.get(sku):
             return
 
         parentage_level = _normalize_parentage_level(product.get('parentage_level'))
+        if require_complete_families and parentage_level == 'parent':
+            child_skus = sorted(children_by_parent.get(sku, []))
+            if not child_skus:
+                add_blocker(sku, f'父体 SKU {sku} 没有任何子体行，不能单独提交变体父体')
+                return
+            missing_children = [child_sku for child_sku in child_skus if child_sku not in requested_skus]
+            if missing_children:
+                add_blocker(
+                    requested_by or sku,
+                    f'变体家族 {sku} 未完整选择，还缺子 SKU：{", ".join(missing_children[:8])}'
+                )
+                return
+
         if parentage_level == 'child':
             parent_sku = str(product.get('parent_sku', '') or '').strip()
             if not parent_sku:
@@ -4604,6 +4697,15 @@ def _prepare_submission_products(all_data: list, col_map: dict, skus: list, mapp
             if _normalize_parentage_level(parent_product.get('parentage_level')) != 'parent':
                 add_blocker(sku, f'父体 SKU {parent_sku} 未标记为 parent，无法进行父子变体提交')
                 return
+            if require_complete_families:
+                child_skus = sorted(children_by_parent.get(parent_sku, []))
+                missing_children = [child_sku for child_sku in child_skus if child_sku not in requested_skus]
+                if missing_children:
+                    add_blocker(
+                        sku,
+                        f'变体家族 {parent_sku} 必须整组提交，还缺子 SKU：{", ".join(missing_children[:8])}'
+                    )
+                    return
             add_product(parent_sku, requested_by=sku)
 
         seen.add(sku)
@@ -4682,6 +4784,71 @@ def _preview_gate_reasons(row: dict, account: dict) -> list[str]:
         reasons.append('未记录预览时间，请重新预览')
     elif datetime.now() - preview_time > RECENT_PREVIEW_MAX_AGE:
         reasons.append('预览结果已超过 24 小时，请重新预览')
+
+    return reasons
+
+
+def _parse_submission_amount(value) -> float:
+    text = str(value or '').strip()
+    if not text:
+        raise ValueError('empty amount')
+    text = re.sub(r'[$,¥￥€£\s]', '', text)
+    return float(text)
+
+
+def _submission_readiness_reasons(row: dict, product: dict, mapper) -> list[str]:
+    reasons = []
+    parentage_level = _normalize_parentage_level(product.get('parentage_level'))
+    is_parent = parentage_level == 'parent'
+    requirements = mapper._resolve_requirements(product) if hasattr(mapper, '_resolve_requirements') else 'LISTING'
+    is_offer_only = requirements == 'LISTING_OFFER_ONLY'
+
+    submit_status = _row_field(row, 'submit_status', '提交状态').upper()
+    existing_asin = _row_field(row, 'asin', 'ASIN')
+    submission_id = _row_field(row, 'submission_id', '提交ID')
+    if submit_status in _SUBMIT_SUCCESS_STATUSES:
+        suffix = f' ASIN={existing_asin}' if existing_asin else ''
+        reasons.append(f'该 SKU 已经上架成功({submit_status}{suffix})，不要重复提交；如确需重提请先清空提交状态')
+    elif submission_id and existing_asin and submit_status not in _SUBMIT_FAILURE_STATUSES:
+        reasons.append(f'该 SKU 已有提交记录和 ASIN({existing_asin})，请先确认不是重复创建')
+
+    validation_status = _row_field(row, 'validation_status', '校验状态').lower()
+    if validation_status in {'fail', 'failed', 'error', 'invalid'}:
+        detail = _row_field(row, 'validation_errors', '校验错误')
+        reasons.append('最近一次字段校验未通过' + (f'：{detail}' if detail else ''))
+
+    listing_status = _row_field(row, 'listing_check_status', '缺项诊断状态').lower()
+    if listing_status in {'fail', 'failed', 'error', 'invalid'}:
+        detail = _row_field(row, 'listing_check_summary', '缺项诊断摘要')
+        reasons.append('最近一次缺项诊断未通过' + (f'：{detail}' if detail else ''))
+
+    template_ready = _row_field(row, 'template_ready_to_submit', '模板提交就绪').lower()
+    template_blockers = _row_field(row, 'template_blocking_issues', '模板阻断问题')
+    template_missing = _row_field(row, 'template_required_missing_fields', '模板必填缺失字段')
+    if template_ready == 'no' or template_blockers or template_missing:
+        detail_parts = [part for part in (template_blockers, template_missing) if part]
+        reasons.append('模板必填/阻断项未清空' + (f'：{"；".join(detail_parts)}' if detail_parts else ''))
+
+    if not is_parent:
+        price = product.get('price')
+        if price in (None, '') or not str(price).strip():
+            reasons.append('缺少必填字段：价格')
+        else:
+            try:
+                amount = _parse_submission_amount(price)
+                if amount <= 0:
+                    reasons.append(f'价格必须大于 0，当前值：{price}')
+                elif amount > MAX_SUBMISSION_PRICE:
+                    reasons.append(f'价格疑似填错单位或小数点，当前值 {price} 超过 {MAX_SUBMISSION_PRICE:g}')
+            except (TypeError, ValueError):
+                reasons.append(f'价格格式错误：{price}')
+
+    if not is_parent and not is_offer_only:
+        main_image_url = str(product.get('main_image_url', '') or '').strip()
+        if not main_image_url:
+            reasons.append('缺少必填字段：主图URL')
+        elif not _is_media_locator(main_image_url):
+            reasons.append('主图媒体地址必须是 http(s) 或 s3:// 地址')
 
     return reasons
 
@@ -4849,6 +5016,24 @@ def _run_submit_operation(input_file: str, skus: list, preview: bool = True, acc
         })
 
     rows_by_sku = _build_source_rows_by_sku(all_data, col_map, mapper)
+    ready_products = []
+    for product in prepared_products:
+        sku = str(product.get('sku', '') or '').strip()
+        readiness_reasons = _submission_readiness_reasons(rows_by_sku.get(sku, {}), product, mapper)
+        if readiness_reasons:
+            result_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            results.append({
+                'sku': sku or 'N/A',
+                'status': 'PREVIEW_BLOCKED',
+                'submit_time': result_time,
+                'message': '正式提交前硬性检查未通过：' + '；'.join(readiness_reasons),
+                'issues': [{'severity': 'ERROR', 'message': reason} for reason in readiness_reasons],
+                'eligibility_reasons': readiness_reasons,
+            })
+        else:
+            ready_products.append(product)
+    prepared_products = ready_products
+
     gate_passed_products = []
     for product in prepared_products:
         sku = str(product.get('sku', '') or '').strip()
@@ -5599,13 +5784,20 @@ def update_field():
         validated = _validate_file_path(input_file)
         if not validated or not os.path.exists(validated):
             return jsonify({'error': '文件不存在或路径非法'}), 400
+        conflict = _file_version_conflict_response(validated, data.get('file_version'))
+        if conflict:
+            return conflict
 
         processor = ExcelProcessor()
         processor.read_input(input_file)
         col_map = processor.detect_columns()
         header_name = _logical_field_to_excel_header(field, col_map)
         _persist_row_updates(input_file, sku, {header_name: value})
-        return jsonify({'success': True, 'message': f'{sku}.{header_name} 已更新为 {value}'})
+        return jsonify({
+            'success': True,
+            'message': f'{sku}.{header_name} 已更新为 {value}',
+            'file_version': _file_version(validated),
+        })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -5625,6 +5817,9 @@ def update_product():
         validated = _validate_file_path(input_file)
         if not validated or not os.path.exists(validated):
             return jsonify({'error': '文件不存在或路径非法'}), 400
+        conflict = _file_version_conflict_response(validated, data.get('file_version'))
+        if conflict:
+            return conflict
 
         processor = ExcelProcessor()
         processor.read_input(input_file)
@@ -5636,7 +5831,11 @@ def update_product():
             return jsonify({'error': '没有可更新的字段'}), 400
 
         _persist_row_updates(input_file, sku, mapped_updates)
-        return jsonify({'success': True, 'updated_fields': list(mapped_updates.keys())})
+        return jsonify({
+            'success': True,
+            'updated_fields': list(mapped_updates.keys()),
+            'file_version': _file_version(validated),
+        })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -5675,6 +5874,9 @@ def update_family():
         validated = _validate_file_path(input_file)
         if not validated or not os.path.exists(validated):
             return jsonify({'error': '文件不存在或路径非法'}), 400
+        conflict = _file_version_conflict_response(validated, data.get('file_version'))
+        if conflict:
+            return conflict
 
         processor = ExcelProcessor()
         processor.read_input(input_file)
@@ -5693,7 +5895,11 @@ def update_family():
             return jsonify({'error': '没有可更新的字段'}), 400
 
         _persist_bulk_row_updates(input_file, mapped_by_sku)
-        return jsonify({'success': True, 'updated_skus': list(mapped_by_sku.keys())})
+        return jsonify({
+            'success': True,
+            'updated_skus': list(mapped_by_sku.keys()),
+            'file_version': _file_version(validated),
+        })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

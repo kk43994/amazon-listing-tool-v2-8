@@ -18,6 +18,24 @@ def _create_excel(path, prefix):
     wb.save(path)
 
 
+def test_stage1_autosave_uses_sidecar_workbook(monkeypatch):
+    pipeline = Stage1Pipeline()
+    output_file = str(Path('output') / 'stage1_result.xlsx')
+    autosave_file = pipeline._autosave_path(output_file)
+    calls = []
+
+    monkeypatch.setattr(
+        pipeline.excel,
+        'write_comparison_output',
+        lambda data, path, col_map: calls.append((data, path, col_map)),
+    )
+
+    pipeline._save_autosave_output([{'SKU': 'SKU-1', 'AI标题': 'Done'}], autosave_file, {'sku': 'SKU'})
+
+    assert autosave_file.endswith('_自动保存.xlsx')
+    assert calls == [([{'SKU': 'SKU-1', 'AI标题': 'Done'}], autosave_file, {'sku': 'SKU'})]
+
+
 def test_stage1_resume_ignores_progress_from_different_input(monkeypatch):
     output_dir = Path('output').resolve()
     suffix = uuid4().hex[:8]

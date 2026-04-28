@@ -153,6 +153,8 @@ let products = [];
 let filteredProducts = [];
 let currentFile = localStorage.getItem('amazon28_currentFile') || '';
 let currentFileMeta = { type: '', warning: '', xlsPreserveSupported: false };
+let currentFileVersion = 0;
+let pendingExcelUploadFile = null;
 let selectedSkus = new Set();
 let currentPage = 1;
 let pageSize = 50;
@@ -203,6 +205,7 @@ let templatePanelCollapsed = false;
 let variantGeneratorSkuRule = 'parent-values';
 let templateRecommendationState = null;
 let templateSelectionValidation = null;
+const MAX_SUBMISSION_PRICE = 10000;
 let recentSubmitHighlights = new Set();
 let recentSubmitToastTaskIds = new Set();
 let recentSubmitScrollPending = false;
@@ -262,6 +265,178 @@ const COMMON_FIELD_LABELS_ZH = {
   quantity: '库存',
   country_of_origin: '原产国',
 };
+
+// ===== 2.1 字段术语解释（傻瓜版 tooltip 文案） =====
+// key 与 COMMON_FIELD_LABELS_ZH 对齐；状态列用自定义 key
+const FIELD_TOOLTIPS_ZH = {
+  // 商品身份与变体
+  product_type:
+    '商品类型 = Amazon 把你的商品放到哪个货架上。\n例：鞋子=SHOES，T恤=SHIRT，水杯=DRINKING_CUP。\n不确定？点工具栏「识别类目」让 AI 推荐。',
+  parentage_level:
+    '告诉 Amazon 这一行是「父商品」还是「子商品」。\n• parent = 客户搜索时看到的总框（如「无线鼠标」）\n• child  = 同款的不同颜色/尺码（黑色款、白色款）\n• 没有变体的单品留空即可。',
+  parent_sku:
+    '只有「子商品」要填：写它对应的「父商品」SKU。\n父商品自己留空，所有子商品都填同一个父 SKU。',
+  variation_theme:
+    '告诉 Amazon 子商品按什么区分。\n常用：\n• COLOR_NAME = 只按颜色分（黑/白/灰）\n• SIZE_NAME  = 只按尺码分（S/M/L）\n• COLOR_SIZE = 按颜色 + 尺码 双维度分\n父子商品填的必须一致。',
+  merchant_suggested_asin:
+    '想跟卖某个已有商品时，在这里填它的 ASIN。\n留空 = 创建新 listing。',
+  external_product_id_type:
+    '你填的条码是哪种：UPC（美国 12 位）/ EAN（欧洲 13 位）/ GTIN / GCID。',
+  externally_assigned_product_identifier:
+    '外部商品标识，通常就是上面那个条码的具体数值。',
+  product_identity_mode:
+    '商品身份模式。一般保持默认，除非客服明确指引修改。',
+  // 内容
+  item_name:
+    '商品标题，亚马逊搜索结果展示的那行。\n建议 50-200 字符，开头放「品牌+核心词」，后面带关键卖点。',
+  bullet_point_1: '5 个卖点会显示在商品页主图右边。\n每条建议 80-200 字符，开头大写关键词更显眼。',
+  bullet_point_2: '5 个卖点会显示在商品页主图右边。\n每条建议 80-200 字符。',
+  bullet_point_3: '5 个卖点会显示在商品页主图右边。\n每条建议 80-200 字符。',
+  bullet_point_4: '5 个卖点会显示在商品页主图右边。\n每条建议 80-200 字符。',
+  bullet_point_5: '5 个卖点会显示在商品页主图右边。\n每条建议 80-200 字符。',
+  product_description:
+    '商品长描述，建议 1000-2000 字符。\n品牌备案的卖家通常用 A+ 模块代替这里。',
+  generic_keywords:
+    '搜索关键词（埋词）。买家看不到，但影响搜索排名。\n建议 200-250 字节，空格或逗号分隔，多用同义词、长尾词。',
+  // 图片
+  main_image_url:
+    '主图地址，必须公网可访问。\n要求：白底、商品占图 ≥85%、最短边 ≥1000px、JPG/PNG 格式。',
+  other_image_url_1: '副图地址，最多 8 张。建议放生活场景图、细节图、尺寸对比图。\n公网可访问、最短边 ≥1000px。',
+  other_image_url_2: '副图地址，最多 8 张。建议放生活场景图、细节图、尺寸对比图。',
+  other_image_url_3: '副图地址，最多 8 张。建议放生活场景图、细节图、尺寸对比图。',
+  // 价格库存
+  standard_price:
+    '销售价格（美金），不带美元符号。\n例：填 19.99，不要填 $19.99。',
+  list_price:
+    '建议零售价（划线价），用于显示折扣。\n要 ≥ 销售价格；留空就不显示划线。',
+  quantity:
+    '库存数量。\n• FBA 通常填 0（实际库存以 Amazon 仓为准）\n• 自发货填实际库存',
+  fulfillment_channel:
+    '配送方式：\n• MFN = 卖家自发货\n• AFN / FBA = 亚马逊仓发货\n不确定填 MFN。',
+  // 条码 / 标识
+  upc: 'UPC 条码（12 位数字），美国/加拿大常用。\n没有 GTIN 豁免的话必填。',
+  ean: 'EAN 条码（13 位数字），欧洲常用。',
+  asin: 'ASIN = Amazon 给商品的唯一编号（10 位字母数字）。\n新品上架成功后由 Amazon 自动分配并回填到这一列。',
+  // 属性
+  brand: '品牌名。建议品牌备案后保持完全一致，包括大小写。',
+  size: '尺寸值，例：M / L / 10oz / 250ml。',
+  color: '颜色值，例：Black / Navy Blue。子商品的颜色要和父体的 variation_theme 配套。',
+  closure: '闭合方式：拉链 zipper / 扣子 button / 魔术贴 hook & loop / 系带 lace-up。',
+  rise: '裤腰高度：低腰 low rise / 中腰 mid rise / 高腰 high rise。',
+  unit_count: '单位数量。一盒 3 支袜子就填 3。',
+  import_designation: '进口标识：Imported（进口）或 Domestic（国产）。',
+  target_gender: '目标性别：male（男）/ female（女）/ unisex（中性）。',
+  age_range_description: '适用年龄段：Adult / Teen / Child / Toddler / Baby。',
+  model_name: '型号名称，可自由填写，例：ProMax-2024。',
+  model_number: '型号编号，制造商给的型号代码。',
+  fabric_type: '面料成分。例：100% Cotton；80% Polyester, 20% Cotton。',
+  product_tax_code: '税码，决定 Amazon 怎么收销售税。\n普通商品填 A_GEN_TAX 即可。',
+  item_type_keyword: '细分品类关键词。\n比如商品类型选 SHIRT，再用这里区分「T恤 / 长袖 / Polo」。\n不确定可留空，让 Amazon 自动归类。',
+  country_of_origin: '原产国（2 字母代码）：CN（中国）/ US（美国）/ VN（越南）/ IN（印度）。',
+  bottoms_size: '裤装尺码，例：30W / 32L。',
+  // 账号字段
+  seller_id:
+    'Seller ID = 卖家后台账号唯一编号（不是店铺名！）。\n在 Seller Central → 设置 → 账户信息 → 商业地址 那里能看到，14 位字母数字。',
+  marketplace_id:
+    '上架到哪个国家的代码。\n• 美国 = ATVPDKIKX0DER\n• 加拿大 = A2EUQ1WTGCTBG2\n• 墨西哥 = A1AM78C64UM0Y8',
+  lwa_client_id:
+    '在 Amazon Developer Console 创建 SP-API 应用后获得。\n通常以 amzn1.application-oa2-client. 开头。',
+  lwa_client_secret:
+    '和 Client ID 同一个 SP-API 应用里的密钥。\n复制时注意不要带前后空格。',
+  refresh_token:
+    '在卖家后台或 Developer Console 完成授权后获得的长令牌。\n通常以 Atzr| 开头，长度几百字符。过期需重新授权。',
+  aws_access_key:
+    '（可选）AWS IAM 用户的 Access Key ID。\n仅老版 SP-API 鉴权需要，新版可不填。',
+  aws_secret_key:
+    '（可选）AWS IAM 用户的 Secret Access Key。\n仅老版 SP-API 鉴权需要，新版可不填。',
+  role_arn:
+    '（可选）AWS IAM Role ARN，格式 arn:aws:iam::账号ID:role/角色名。\n新版 SP-API 不再需要。',
+  // 状态列（自定义 key）
+  col_preview_status:
+    'Amazon 预览结果。\n✅ 通过 = 可以提交\n❌ 失败 = 有字段不符合 Amazon 要求\n⚪ 未运行 = 点「5 预览验证」先跑一次',
+  col_submit_status:
+    '正式提交结果。\n• 提交中 = 已发出，等 Amazon 处理\n• 成功 = 已生成 ASIN\n• 失败 = 被 Amazon 拒绝，看错误原因',
+  col_submission_id:
+    'Amazon 给这次提交的回执号。\n出问题让客服查这个号最快定位。',
+  col_route:
+    '上架路径：\n• putListingsItem = 逐条上架（小批量）\n• JSON_LISTINGS_FEED = 批量 Feed（>1500 条自动切换）',
+  col_final_status:
+    'Amazon 后台最终的商品状态：\n• ACCEPTED = 已接收\n• DISCOVERABLE = 可被搜到\n• SUPPRESSED = 被压制（需修复）',
+  col_listing_issues:
+    'Amazon 后台报出的问题数。\n>0 说明上架后还有合规/字段问题需要修。',
+};
+
+function tipFor(key) {
+  if (!FIELD_TOOLTIPS_ZH || !FIELD_TOOLTIPS_ZH[key]) return '';
+  return ` <span class="term-help" data-tip="${key}" tabindex="0" role="button" aria-label="术语解释">?</span>`;
+}
+
+(function setupTermTooltips() {
+  let tipEl = null;
+  let activeTrigger = null;
+
+  function ensureEl() {
+    if (!tipEl) {
+      tipEl = document.createElement('div');
+      tipEl.className = 'term-help-pop';
+      tipEl.setAttribute('role', 'tooltip');
+      document.body.appendChild(tipEl);
+    }
+    return tipEl;
+  }
+
+  function show(trigger) {
+    const key = trigger.getAttribute('data-tip');
+    const text = FIELD_TOOLTIPS_ZH[key];
+    if (!text) return;
+    const el = ensureEl();
+    el.textContent = text;
+    el.style.display = 'block';
+    el.style.visibility = 'hidden';
+    el.classList.remove('show');
+    const r = trigger.getBoundingClientRect();
+    const tw = el.offsetWidth;
+    const th = el.offsetHeight;
+    let left = r.left + r.width / 2 - tw / 2;
+    if (left < 8) left = 8;
+    if (left + tw > window.innerWidth - 8) left = window.innerWidth - 8 - tw;
+    let top = r.top - th - 8;
+    if (top < 8) top = r.bottom + 8;
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    el.style.visibility = 'visible';
+    el.classList.add('show');
+    activeTrigger = trigger;
+  }
+
+  function hide() {
+    if (tipEl) {
+      tipEl.classList.remove('show');
+      tipEl.style.display = 'none';
+    }
+    activeTrigger = null;
+  }
+
+  document.addEventListener('mouseover', e => {
+    const t = e.target.closest && e.target.closest('.term-help');
+    if (t && t !== activeTrigger) show(t);
+  });
+  document.addEventListener('mouseout', e => {
+    const t = e.target.closest && e.target.closest('.term-help');
+    if (!t) return;
+    if (e.relatedTarget && t.contains(e.relatedTarget)) return;
+    hide();
+  });
+  document.addEventListener('focusin', e => {
+    if (e.target.classList && e.target.classList.contains('term-help')) show(e.target);
+  });
+  document.addEventListener('focusout', e => {
+    if (e.target.classList && e.target.classList.contains('term-help')) hide();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hide(); });
+  document.addEventListener('scroll', hide, true);
+  window.addEventListener('resize', hide);
+})();
 
 // ===== 3. i18n Functions =====
 function t(key) { return (i18n[lang] && i18n[lang][key]) || key; }
@@ -603,8 +778,8 @@ function getCustomerFlowSnapshot() {
   const realProducts = products.filter(product => product.parentage_level !== 'parent' && !isRowDisabled(product));
   const total = realProducts.length;
   const processed = realProducts.filter(product => ['completed', 'done'].includes(String(product.ai_status || '').toLowerCase())).length;
-  const previewPassed = realProducts.filter(product => String(product.preview_status || '').toUpperCase() === 'VALID').length;
-  const submitted = realProducts.filter(product => product.submit_status && product.submit_status !== 'PENDING').length;
+  const previewPassed = realProducts.filter(product => isPreviewValidForSelectedAccount(product)).length;
+  const submitted = realProducts.filter(product => isAlreadySubmittedProduct(product)).length;
   const blocking = realProducts.filter(product => {
     const hasLocalErrors = Array.isArray(product._validErrors) && product._validErrors.length > 0;
     return hasLocalErrors || hasTemplateBlockingIssues(product);
@@ -782,9 +957,9 @@ async function ensureCustomerPrerequisite(kind, options = {}) {
       if (product.parentage_level === 'parent' || isRowDisabled(product)) return false;
       return targetSet.size === 0 || targetSet.has(product.sku);
     });
-    const notPreviewed = realProducts.filter(product => String(product.preview_status || '').toUpperCase() !== 'VALID');
+    const notPreviewed = realProducts.filter(product => !isPreviewValidForSelectedAccount(product));
     if (notPreviewed.length > 0) {
-      showCustomerBlock('先预览，别直接提交', `还有 ${notPreviewed.length} 个 SKU 没有 Amazon 预览通过。客户模式下先跑预览，预览通过后才允许正式提交。`, 'preview', '先跑预览');
+      showCustomerBlock('先预览，别直接提交', `还有 ${notPreviewed.length} 个 SKU 没有用当前账号完成 Amazon 预览。客户模式下先跑预览，预览通过后才允许正式提交。`, 'preview', '先跑预览');
       return false;
     }
   }
@@ -940,6 +1115,126 @@ function hasHttpUrl(value) {
   return /^https?:\/\//i.test(String(value || '').trim());
 }
 
+function hasMediaLocator(value) {
+  return /^(https?:\/\/|s3:\/\/)/i.test(String(value || '').trim());
+}
+
+function parsePriceAmount(value) {
+  const text = String(value ?? '').trim().replace(/[$,¥￥€£\s]/g, '');
+  if (!text) return null;
+  const amount = Number(text);
+  return Number.isFinite(amount) ? amount : NaN;
+}
+
+function getPriceBlockingReason(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '缺少价格';
+  const amount = parsePriceAmount(raw);
+  if (Number.isNaN(amount)) return `价格格式错误：${raw}`;
+  if (amount <= 0) return `价格必须大于 0：${raw}`;
+  if (amount > MAX_SUBMISSION_PRICE) return `价格疑似小数点/单位填错：${raw}`;
+  return '';
+}
+
+function getProductAsin(product) {
+  const raw = product?._raw || {};
+  return String(
+    product?.asin || product?.merchant_suggested_asin || product?.source_asin ||
+    raw.asin || raw.ASIN || raw.merchant_suggested_asin || raw.source_asin || ''
+  ).trim().toUpperCase();
+}
+
+function getDuplicateAsinMap() {
+  const grouped = new Map();
+  products.forEach(product => {
+    const asin = getProductAsin(product);
+    if (!asin) return;
+    if (!grouped.has(asin)) grouped.set(asin, []);
+    grouped.get(asin).push(product.sku || '-');
+  });
+  const duplicated = new Map();
+  grouped.forEach((skus, asin) => {
+    const uniqueSkus = Array.from(new Set(skus.filter(Boolean)));
+    if (uniqueSkus.length > 1) uniqueSkus.forEach(sku => duplicated.set(sku, { asin, skus: uniqueSkus }));
+  });
+  return duplicated;
+}
+
+function getIncompleteFamilyMessageForSkus(skus) {
+  const selected = new Set((skus || []).map(item => String(item || '').trim()).filter(Boolean));
+  for (const sku of selected) {
+    const product = products.find(item => item.sku === sku);
+    if (!product) continue;
+    const level = String(product.parentage_level || '').toLowerCase();
+    const parentSku = level === 'parent' ? product.sku : String(product.parent_sku || '').trim();
+    if (!parentSku) continue;
+    const children = products.filter(item => String(item.parent_sku || '').trim() === parentSku && String(item.parentage_level || '').toLowerCase() === 'child');
+    if (level === 'parent' && children.length === 0) return `父体 ${parentSku} 没有子体，不能单独提交`;
+    const missing = children.filter(child => !selected.has(child.sku)).map(child => child.sku).filter(Boolean);
+    if (missing.length > 0) return `变体家族 ${parentSku} 必须整组处理，还缺子 SKU：${missing.slice(0, 8).join('、')}`;
+  }
+  return '';
+}
+
+function isAlreadySubmittedProduct(product) {
+  const status = String(product?.submit_status || '').trim().toUpperCase();
+  return ['ACCEPTED', 'ACCEPTED_WITH_WARNINGS'].includes(status);
+}
+
+function getAccountById(accountId) {
+  const id = String(accountId || '').trim();
+  return amazonAccounts.find(account => String(account.seller_id || '').trim() === id) || null;
+}
+
+function isPreviewValidForSelectedAccount(product) {
+  if (String(product?.preview_status || '').trim().toUpperCase() !== 'VALID') return false;
+  if (!selectedAccountId) return true;
+  const account = getAccountById(selectedAccountId);
+  const previewAccountId = String(product.preview_account_id || '').trim();
+  const previewAccountName = String(product.preview_account || '').trim();
+  if (previewAccountId && previewAccountId !== selectedAccountId) return false;
+  if (!previewAccountId) {
+    const currentAccountName = String(account?.name || '').trim();
+    if (!previewAccountName) return false;
+    if (![selectedAccountId, currentAccountName].filter(Boolean).includes(previewAccountName)) return false;
+  }
+  const previewMarketplace = String(product.preview_marketplace_id || '').trim();
+  if (!previewMarketplace) return false;
+  if (account && previewMarketplace && previewMarketplace !== String(account.marketplace_id || '').trim()) return false;
+  return true;
+}
+
+function getPreviewDisplayStatus(product) {
+  const status = String(product?.preview_status || '').trim();
+  if (status.toUpperCase() === 'VALID' && !isPreviewValidForSelectedAccount(product)) return '需重新预览';
+  return status;
+}
+
+function refreshPreviewAccountHints(options = {}) {
+  let staleCount = 0;
+  products.forEach(product => {
+    product._previewStaleForAccount = String(product.preview_status || '').trim().toUpperCase() === 'VALID'
+      && !isPreviewValidForSelectedAccount(product);
+    if (product._previewStaleForAccount) staleCount += 1;
+  });
+  if (options.toast && staleCount > 0) {
+    showToast('warning', `已切换 Amazon 账号，${staleCount} 个 SKU 需要用当前账号重新预览`);
+  }
+  return staleCount;
+}
+
+function setSelectedAmazonAccount(accountId, options = {}) {
+  const next = String(accountId || '').trim();
+  const changed = next !== selectedAccountId;
+  selectedAccountId = next;
+  refreshPreviewAccountHints({ toast: changed && options.toast });
+  if (options.refreshUi) {
+    renderTable();
+    updateStats();
+    refreshTemplateFlowUi();
+  }
+}
+
 function getProductImageCandidates(product) {
   const urls = [];
   const pushUnique = (value) => {
@@ -1006,6 +1301,10 @@ function getSubmitEligibleSkus() {
   return products
     .filter(p => p.parentage_level !== 'parent' && !isRowDisabled(p))
     .filter(p => !hasTemplateBlockingIssues(p))
+    .filter(p => !isAlreadySubmittedProduct(p))
+    .filter(p => !!(p.title || p.item_name || '').trim())
+    .filter(p => !getPriceBlockingReason(p.price || p.standard_price || ''))
+    .filter(p => hasMediaLocator(p.main_image_url || ''))
     .map(p => p.sku)
     .filter(Boolean);
 }
@@ -1102,6 +1401,8 @@ function collectActionPlan(action, scope) {
   const skipped = [];
   const attention = [];
   const seen = new Set();
+  const requestedSkuSet = new Set(requestedProducts.map(product => product.sku).filter(Boolean));
+  const duplicateAsins = getDuplicateAsinMap();
 
   const addSkipped = (product, reason) => {
     skipped.push({ sku: product.sku || '-', reason });
@@ -1134,6 +1435,12 @@ function collectActionPlan(action, scope) {
       addSkipped(product, reasons[0] ? `父体未就绪：${reasons[0]}` : `父体 ${parentSku} 未就绪`);
       return false;
     }
+    const familyChildren = products.filter(p => String(p.parent_sku || '').trim() === parentSku && String(p.parentage_level || '').toLowerCase() === 'child');
+    const missingChildren = familyChildren.filter(child => !requestedSkuSet.has(child.sku)).map(child => child.sku).filter(Boolean);
+    if (missingChildren.length > 0) {
+      addSkipped(product, `变体家族必须整组提交，还缺子 SKU：${missingChildren.slice(0, 8).join('、')}`);
+      return false;
+    }
     if (!seen.has(parentSku)) {
       seen.add(parentSku);
       actionableSkus.push(parentSku);
@@ -1156,6 +1463,11 @@ function collectActionPlan(action, scope) {
     }
     if (isRowDisabled(product)) {
       addSkipped(product, '该行处于停用/禁用状态');
+      return;
+    }
+    if ((action === 'submit' || action === 'preview') && duplicateAsins.has(sku)) {
+      const info = duplicateAsins.get(sku);
+      addSkipped(product, `ASIN ${info.asin} 在表内重复：${info.skus.join('、')}`);
       return;
     }
 
@@ -1185,12 +1497,17 @@ function collectActionPlan(action, scope) {
 
     if (action === 'submit' || action === 'preview') {
       if (!ensureVariantParentQueued(product)) return;
+      if (action === 'submit' && isAlreadySubmittedProduct(product)) {
+        addSkipped(product, `已上架成功${product.asin ? ` ASIN ${product.asin}` : ''}，不要重复提交`);
+        return;
+      }
       const missing = [];
-      if (!title) missing.push('标题');
-      if (!price) missing.push('价格');
-      if (!hasHttpUrl(mainImage)) missing.push('主图');
+      if (!title) missing.push('缺少标题');
+      const priceReason = getPriceBlockingReason(price);
+      if (priceReason) missing.push(priceReason);
+      if (!hasMediaLocator(mainImage)) missing.push('缺少主图');
       if (missing.length > 0) {
-        addSkipped(product, `缺少${missing.join('、')}`);
+        addSkipped(product, missing.join('、'));
         return;
       }
       if (hasTemplateBlockingIssues(product)) {
@@ -1198,13 +1515,18 @@ function collectActionPlan(action, scope) {
         addSkipped(product, reasons[0] || '模板阻断项未修复');
         return;
       }
+      if (action === 'submit' && !isPreviewValidForSelectedAccount(product)) {
+        addSkipped(product, '当前账号未重新预览通过');
+        return;
+      }
     }
 
     if (action === 'validate') {
       const warnings = [];
       if (!title) warnings.push('缺少标题');
-      if (!price) warnings.push('缺少价格');
-      if (!hasHttpUrl(mainImage)) warnings.push('缺少主图');
+      const priceReason = getPriceBlockingReason(price);
+      if (priceReason) warnings.push(priceReason);
+      if (!hasMediaLocator(mainImage)) warnings.push('缺少主图');
       if (warnings.length > 0) {
         attention.push({ sku, reason: warnings.join('、') });
       }
@@ -1212,6 +1534,19 @@ function collectActionPlan(action, scope) {
 
     actionableSkus.push(sku);
   });
+
+  let finalActionableSkus = actionableSkus;
+  if (action === 'submit' || action === 'preview') {
+    const childSkusInPlan = new Set(actionableSkus.filter(sku => {
+      const product = products.find(item => item.sku === sku);
+      return product && String(product.parentage_level || '').toLowerCase() !== 'parent';
+    }));
+    finalActionableSkus = actionableSkus.filter(sku => {
+      const product = products.find(item => item.sku === sku);
+      if (!product || String(product.parentage_level || '').toLowerCase() !== 'parent') return true;
+      return products.some(child => String(child.parent_sku || '').trim() === sku && childSkusInPlan.has(child.sku));
+    });
+  }
 
   const reasonCounts = {};
   skipped.forEach(item => { reasonCounts[item.reason] = (reasonCounts[item.reason] || 0) + 1; });
@@ -1223,7 +1558,7 @@ function collectActionPlan(action, scope) {
     scope,
     selectedOnly,
     requestedCount: requestedProducts.length,
-    actionableSkus,
+    actionableSkus: finalActionableSkus,
     skipped,
     attention,
     reasonCounts,
@@ -1482,15 +1817,15 @@ async function fetchAccounts(force = false) {
   amazonAccounts = (data.accounts || []).filter(account => account.enabled !== false);
   if (data.current && data.current.account && data.current.kind === 'submit') {
     const currentAccount = amazonAccounts.find(account => (account.name || account.seller_id) === data.current.account || account.seller_id === data.current.account);
-    if (currentAccount) selectedAccountId = currentAccount.seller_id;
+    if (currentAccount) setSelectedAmazonAccount(currentAccount.seller_id);
   }
   if (amazonAccounts.length === 0) {
-    selectedAccountId = '';
+    setSelectedAmazonAccount('');
     return amazonAccounts;
   }
   if (!selectedAccountId || !amazonAccounts.some(account => account.seller_id === selectedAccountId)) {
     const defaultAccount = amazonAccounts.find(account => account.is_default) || amazonAccounts[0];
-    selectedAccountId = defaultAccount ? defaultAccount.seller_id : '';
+    setSelectedAmazonAccount(defaultAccount ? defaultAccount.seller_id : '');
   }
   return amazonAccounts;
 }
@@ -1531,10 +1866,9 @@ function computeTemplateFlowState() {
     || splitIssueText(product.template_required_missing_fields || '').length > 0
     || splitIssueText(product.template_recommended_missing_fields || '').length > 0
   );
-  const previewPassCount = actionableProducts.filter(product => String(product.preview_status || '').trim().toUpperCase() === 'VALID').length;
+  const previewPassCount = actionableProducts.filter(product => isPreviewValidForSelectedAccount(product)).length;
   const submitDoneCount = actionableProducts.filter(product => {
-    const status = String(product.submit_status || '').trim().toUpperCase();
-    return !!status && status !== 'PENDING';
+    return isAlreadySubmittedProduct(product);
   }).length;
   const previewReady = actionableProducts.length > 0 && previewPassCount === actionableProducts.length;
   const submitReady = actionableProducts.length > 0 && submitDoneCount === actionableProducts.length;
@@ -2009,8 +2343,50 @@ function uploadTemplateFile(file) {
 }
 
 // ===== 6. Excel Upload =====
-function uploadExcel(file) {
+function workspaceHasProtectedProgress() {
+  if (!currentFile) return false;
+  if (products.length === 0) return true;
+  return products.some(product => {
+    const hasAi = ['ai_title', 'ai_description', 'ai_keywords', 'ai_main_image', 'ai_image_url'].some(key => String(product[key] || '').trim());
+    const hasWorkflow = ['preview_status', 'submit_status', 'asin', 'listing_check_status', 'validation_status'].some(key => String(product[key] || '').trim() && String(product[key] || '').trim() !== 'PENDING');
+    return hasAi || hasWorkflow;
+  });
+}
+
+function confirmPendingExcelUpload() {
+  const file = pendingExcelUploadFile;
+  pendingExcelUploadFile = null;
+  closeModal();
+  if (file) uploadExcel(file, { confirmed: true });
+}
+
+function cancelPendingExcelUpload() {
+  pendingExcelUploadFile = null;
+  const input = document.getElementById('fileInput');
+  if (input) input.value = '';
+  closeModal();
+}
+
+function uploadExcel(file, options = {}) {
   if (!file) return;
+  if (!options.confirmed && workspaceHasProtectedProgress()) {
+    pendingExcelUploadFile = file;
+    const currentName = (document.getElementById('fileInfo')?.dataset.baseName || currentFile.split(/[\\/]/).pop() || currentFile);
+    showModal('确认切换商品表', `<div class="customer-quick-start">
+      <div class="quick-start-step">
+        <strong>你已经有正在处理的商品表</strong>
+        <p>当前表：${escHtml(currentName)}。新导入 ${escHtml(file.name)} 会切换工作区，不会自动合并旧表里的 AI 结果、预览结果和提交结果。</p>
+      </div>
+      <ul class="customer-block-list">
+        <li>如果只是想继续刚才的工作，请点“取消”，不要重复导入同一个 Excel。</li>
+        <li>如果确定要换一张新表，请点“确认导入”。旧文件仍在输入目录中，不会被物理覆盖。</li>
+      </ul>
+    </div>`);
+    document.getElementById('modalFooter').innerHTML = `
+      <button class="btn btn-primary btn-sm" onclick="confirmPendingExcelUpload()">确认导入新表</button>
+      <button class="btn btn-ghost btn-sm" onclick="cancelPendingExcelUpload()">取消</button>`;
+    return;
+  }
   setTemplatePanelCollapsed(true);
   const fd = new FormData();
   fd.append('file', file);
@@ -2020,6 +2396,7 @@ function uploadExcel(file) {
     .then(d => {
       if (d.error) return showToast('error', d.error);
       currentFile = d.filepath || d.filename || file.name;
+      currentFileVersion = Number(d.file_version || 0);
       localStorage.setItem('amazon28_currentFile', currentFile);
       currentFileMeta = {
         type: d.file_type || '',
@@ -2073,9 +2450,11 @@ function loadProducts() {
       if (loadingEl) loadingEl.style.display = 'none';
       if (tableWrap) tableWrap.style.display = '';
       if (d.error) return showToast('error', d.error);
+      currentFileVersion = Number(d.file_version || 0);
       products = flattenProducts(d.products || []);
       workspaceTemplateSummary = d.template || null;
       mergeListingStatusIntoProducts();
+      refreshPreviewAccountHints();
       if (!document.getElementById('fileInfo').dataset.baseName) {
         document.getElementById('fileInfo').dataset.baseName = currentFile.split(/[\\/]/).pop() || currentFile;
       }
@@ -2107,6 +2486,7 @@ function loadProducts() {
           p._validWarnings = saved._validWarnings || [];
         }
       });
+      refreshPreviewAccountHints();
       syncSelectionState();
       applyFilter();
       updateStats();
@@ -2428,8 +2808,8 @@ function matchFilter(p) {
   if (currentFilter === 'processed') return st === 'completed' || st === 'done';
   if (currentFilter === 'valid') return p._validPass === true;
   if (currentFilter === 'error') return (p._validErrors && p._validErrors.length > 0) || hasTemplateBlockingIssues(p);
-  if (currentFilter === 'previewPass') return previewStatus === 'VALID';
-  if (currentFilter === 'previewFail') return previewStatus && previewStatus !== 'VALID';
+  if (currentFilter === 'previewPass') return isPreviewValidForSelectedAccount(p);
+  if (currentFilter === 'previewFail') return previewStatus && !isPreviewValidForSelectedAccount(p);
   return true;
 }
 
@@ -2442,7 +2822,7 @@ function matchSearch(p) {
 
 function renderInlineSubmissionSummary(p) {
   const submitStatus = String(p.submit_status || '').trim();
-  const previewStatus = String(p.preview_status || '').trim().toUpperCase();
+  const previewStatus = getPreviewDisplayStatus(p);
   const submissionId = String(p.submission_id || '').trim();
   const route = String(p.submission_route || '').trim();
   const pills = [];
@@ -2660,7 +3040,7 @@ function buildOptionalCols(p) {
       case 'color': val = p.color || p.color_name || ''; break;
       case 'size': val = p.size || p.size_name || ''; break;
       case 'fulfillment': val = p.fulfillment_channel || ''; break;
-      case 'previewStatus': val = p.preview_status || ''; break;
+      case 'previewStatus': val = getPreviewDisplayStatus(p) || ''; break;
       case 'submitStatus': val = formatSubmitStatusLabel(p.submit_status || ''); break;
       case 'submissionId': val = compactMiddle(p.submission_id || '', 10, 8); break;
       case 'asin': val = p.live_asin || p.asin || ''; break;
@@ -2899,7 +3279,7 @@ function renderStatusOverview(p) {
   const localValidation = p._validErrors && p._validErrors.length > 0
     ? '本地校验失败'
     : (p._validWarnings && p._validWarnings.length > 0 ? '本地校验有警告' : (p._validPass ? '本地校验通过' : '本地校验未执行'));
-  const previewStatus = p.preview_status || '未预览';
+  const previewStatus = getPreviewDisplayStatus(p) || '未预览';
   const listingCheckStatus = p.listing_check_status || '';
   const routeText = formatSubmissionRoute(p.submission_route);
   const finalListingStatus = formatFinalListingStatus(p.final_listing_status);
@@ -2922,7 +3302,7 @@ function renderStatusOverview(p) {
     { label: '模板必填', value: templateHint, tone: requiredMissing > 0 ? 'danger' : (requiredTotal > 0 ? 'success' : 'default') },
     { label: 'AI', value: aiStatus, tone: aiStatus === 'completed' ? 'success' : (aiStatus === 'failed' ? 'danger' : 'default') },
     { label: '本地校验', value: localValidation, tone: p._validErrors && p._validErrors.length > 0 ? 'danger' : (p._validWarnings && p._validWarnings.length > 0 ? 'warn' : 'success') },
-    { label: 'Amazon预览', value: previewStatus, tone: String(previewStatus).toUpperCase() === 'VALID' ? 'success' : (previewStatus && previewStatus !== '未预览' ? 'warn' : 'default') },
+    { label: 'Amazon预览', value: previewStatus, tone: isPreviewValidForSelectedAccount(p) ? 'success' : (previewStatus && previewStatus !== '未预览' ? 'warn' : 'default') },
     { label: '提交', value: submitStatus, tone: String(p.submit_status).toUpperCase() === 'ACCEPTED' ? 'info' : (p.submit_status && p.submit_status !== 'PENDING' ? 'warn' : 'default') },
     { label: '上架路线', value: routeText, tone: routeText === '匹配已有 ASIN' ? 'info' : 'default' },
     { label: '最终 Amazon 状态', value: finalListingStatus, tone: p.final_listing_status === 'discoverable' ? 'success' : (p.final_listing_status === 'suppressed' ? 'danger' : 'default') },
@@ -3209,10 +3589,10 @@ function buildFamilyWorkflowState(product, diagnostics) {
   members.forEach(member => hydratePersistedDiagnosticData(member));
 
   const childCount = family.children.length;
-  const parentPreviewValid = !!parent && String(parent.preview_status || '').toUpperCase() === 'VALID';
-  const childPreviewValidCount = family.children.filter(item => String(item.preview_status || '').toUpperCase() === 'VALID').length;
-  const parentAccepted = !!parent && String(parent.submit_status || '').toUpperCase() === 'ACCEPTED';
-  const childAcceptedCount = family.children.filter(item => String(item.submit_status || '').toUpperCase() === 'ACCEPTED').length;
+  const parentPreviewValid = !!parent && isPreviewValidForSelectedAccount(parent);
+  const childPreviewValidCount = family.children.filter(item => isPreviewValidForSelectedAccount(item)).length;
+  const parentAccepted = !!parent && isAlreadySubmittedProduct(parent);
+  const childAcceptedCount = family.children.filter(item => isAlreadySubmittedProduct(item)).length;
   const allPreviewPassed = !!parent && childCount > 0 && parentPreviewValid && childPreviewValidCount === childCount;
   const allSubmitted = !!parent && childCount > 0 && parentAccepted && childAcceptedCount === childCount;
 
@@ -3840,10 +4220,10 @@ function renderVariantMatrix(product, diagnostics) {
         <thead>
           <tr>
             <th>SKU</th>
-            <th>${lang === 'zh' ? '颜色' : 'Color'}</th>
-            <th>${lang === 'zh' ? '尺码' : 'Size'}</th>
-            <th>${lang === 'zh' ? '价格' : 'Price'}</th>
-            <th>${lang === 'zh' ? '库存' : 'Qty'}</th>
+            <th>${lang === 'zh' ? '颜色' : 'Color'}${tipFor('color')}</th>
+            <th>${lang === 'zh' ? '尺码' : 'Size'}${tipFor('size')}</th>
+            <th>${lang === 'zh' ? '价格' : 'Price'}${tipFor('standard_price')}</th>
+            <th>${lang === 'zh' ? '库存' : 'Qty'}${tipFor('quantity')}</th>
             <th>${lang === 'zh' ? '问题' : 'Issues'}</th>
           </tr>
         </thead>
@@ -4090,11 +4470,11 @@ function renderWizardStep(stepNumber, title, status, summary, actionHtml, helper
 
 function renderSubmissionWizard(p) {
   const templateBlocked = hasTemplateBlockingIssues(p);
-  const previewStatus = String(p.preview_status || '').trim();
-  const previewValid = previewStatus.toUpperCase() === 'VALID';
+  const previewStatus = getPreviewDisplayStatus(p);
+  const previewValid = isPreviewValidForSelectedAccount(p);
   const previewAttempted = !!previewStatus && previewStatus !== '未预览';
   const submitStatus = String(p.submit_status || '').trim().toUpperCase();
-  const submitted = !!submitStatus && submitStatus !== 'PENDING';
+  const submitted = isAlreadySubmittedProduct(p);
   const templateReasons = getTemplateBlockingReasons(p);
 
   const step1Status = templateBlocked ? 'active' : 'done';
@@ -4123,7 +4503,9 @@ function renderSubmissionWizard(p) {
   const step2Action = templateBlocked
     ? `<button class="btn btn-outline btn-sm" disabled>${lang === 'zh' ? '先完成上一步' : 'Finish step 1 first'}</button>`
     : `<button class="btn btn-primary btn-sm" onclick="requestAmazonSubmission('preview', [drawerProduct.sku], { skipPreflight: true, customTitle: '新手向导 · Amazon预览', description: '系统将直接用当前商品跑一次 Amazon 预览验证。' })">${previewValid ? (lang === 'zh' ? '重新预览' : 'Preview again') : (lang === 'zh' ? '预览此商品' : 'Preview this SKU')}</button>`;
-  const step3Action = (templateBlocked || !previewValid)
+  const step3Action = submitted
+    ? `<button class="btn btn-outline btn-sm" disabled>${lang === 'zh' ? '已经提交成功' : 'Already submitted'}</button>`
+    : (templateBlocked || !previewValid)
     ? `<button class="btn btn-outline btn-sm" disabled>${lang === 'zh' ? '先通过预览' : 'Pass preview first'}</button>`
     : `<button class="btn btn-success btn-sm" onclick="requestAmazonSubmission('submit', [drawerProduct.sku], { skipPreflight: true, customTitle: '新手向导 · 正式提交', description: '系统将直接把当前商品正式提交到 Amazon。' })">${submitted ? (lang === 'zh' ? '再次提交' : 'Submit again') : (lang === 'zh' ? '正式提交此商品' : 'Submit this SKU')}</button>`;
 
@@ -4171,10 +4553,11 @@ async function applyVariantFamilyUpdates(updatesBySku, successMessage) {
     const response = await fetch('/api/update-family', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: currentFile, updates_by_sku: payload })
+      body: JSON.stringify({ file: currentFile, file_version: currentFileVersion, updates_by_sku: payload })
     });
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.error || ('HTTP ' + response.status));
+    if (data.file_version) currentFileVersion = Number(data.file_version || currentFileVersion);
 
     Object.entries(payload).forEach(([sku, updates]) => {
       const product = products.find(item => item.sku === sku);
@@ -4486,7 +4869,7 @@ function openVariantFamilyEditor() {
     <div class="family-edit-wrap">
       <table class="family-edit-table">
         <thead>
-          <tr><th>SKU</th><th>角色</th><th>父SKU</th><th>Theme</th><th>颜色</th><th>尺码</th></tr>
+          <tr><th>SKU</th><th>角色${tipFor('parentage_level')}</th><th>父SKU${tipFor('parent_sku')}</th><th>Theme${tipFor('variation_theme')}</th><th>颜色${tipFor('color')}</th><th>尺码${tipFor('size')}</th></tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
@@ -4537,7 +4920,7 @@ function renderCopyTab(p) {
     const orig = p[f.origKey] || (p._raw && (p._raw[f.origKey] || p._raw[f.key])) || p[f.key] || '';
     const ai = p[f.aiKey] || (p._raw && p._raw[f.aiKey]) || '';
     return `<div class="compare-group">
-      <div class="compare-label">${f.label}</div>
+      <div class="compare-label">${f.label}${tipFor(f.origKey)}</div>
       <div class="compare-row">
         <div class="compare-box">
           <div class="compare-box-label">${t('original')}</div>
@@ -4798,7 +5181,7 @@ function renderAttrsTab(p) {
   ];
   return `<div class="drawer-form-grid">${fields.map(([key, label, val]) =>
     `<div class="drawer-form-group">
-      <label class="drawer-form-label">${label}</label>
+      <label class="drawer-form-label">${label}${tipFor(key)}</label>
       <input class="drawer-form-input" data-field="${key}" value="${escHtml(val)}">
     </div>`
   ).join('')}</div>`;
@@ -4824,7 +5207,7 @@ function renderOfferTab(p) {
 
   return `<div class="drawer-form-grid">
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('price_usd')}</label>
+      <label class="drawer-form-label">${t('price_usd')}${tipFor('standard_price')}</label>
       <input class="drawer-form-input" type="number" step="0.01" min="0.01" data-field="price" value="${escHtml(price)}">
     </div>
     <div class="drawer-form-group">
@@ -4848,7 +5231,7 @@ function renderOfferTab(p) {
       </select>
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('list_price')}</label>
+      <label class="drawer-form-label">${t('list_price')}${tipFor('list_price')}</label>
       <input class="drawer-form-input" type="number" step="0.01" min="0" data-field="list_price" value="${escHtml(listPrice)}">
     </div>
     <div class="drawer-form-group">
@@ -4864,7 +5247,7 @@ function renderOfferTab(p) {
       <input class="drawer-form-input" type="date" data-field="sale_end_date" value="${escHtml(saleEnd)}">
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('inventory')}</label>
+      <label class="drawer-form-label">${t('inventory')}${tipFor('quantity')}</label>
       <input class="drawer-form-input" type="number" data-field="quantity" value="${escHtml(qty)}">
     </div>
     <div class="drawer-form-group">
@@ -4883,7 +5266,7 @@ function renderOfferTab(p) {
       </select>
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('fulfillment')}</label>
+      <label class="drawer-form-label">${t('fulfillment')}${tipFor('fulfillment_channel')}</label>
       <select class="drawer-form-select" data-field="fulfillment_channel">
         <option value="DEFAULT" ${fulfill==='DEFAULT'?'selected':''}>FBM</option>
         <option value="AMAZON_NA" ${fulfill==='AMAZON_NA'?'selected':''}>FBA (NA)</option>
@@ -4901,15 +5284,15 @@ function renderOfferTab(p) {
       <input class="drawer-form-input" data-field="merchant_shipping_group_name" value="${escHtml(shipGroup)}">
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('product_tax_code')}</label>
+      <label class="drawer-form-label">${t('product_tax_code')}${tipFor('product_tax_code')}</label>
       <input class="drawer-form-input" data-field="product_tax_code" value="${escHtml(taxCode)}">
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('upc_ean')}</label>
+      <label class="drawer-form-label">${t('upc_ean')}${tipFor('upc')}</label>
       <input class="drawer-form-input" data-field="upc" value="${escHtml(upc)}">
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('product_identity_mode')}</label>
+      <label class="drawer-form-label">${t('product_identity_mode')}${tipFor('product_identity_mode')}</label>
       <select class="drawer-form-select" data-field="product_identity_mode">
         <option value="" ${!identityMode?'selected':''}>-</option>
         <option value="real_gtin" ${identityMode==='real_gtin'?'selected':''}>${t('identity_real_gtin')}</option>
@@ -4918,7 +5301,7 @@ function renderOfferTab(p) {
       </select>
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('external_product_id_type')}</label>
+      <label class="drawer-form-label">${t('external_product_id_type')}${tipFor('external_product_id_type')}</label>
       <select class="drawer-form-select" data-field="external_product_id_type">
         <option value="UPC" ${idType==='UPC'?'selected':''}>UPC</option>
         <option value="EAN" ${idType==='EAN'?'selected':''}>EAN</option>
@@ -5033,7 +5416,7 @@ function renderShippingTab(p) {
   ];
   return `<div class="drawer-form-grid">${fields.map(([key, label, val]) =>
     `<div class="drawer-form-group">
-      <label class="drawer-form-label">${label}</label>
+      <label class="drawer-form-label">${label}${tipFor(key)}</label>
       <input class="drawer-form-input" data-field="${key}" value="${escHtml(val)}">
     </div>`
   ).join('')}</div>`;
@@ -5046,11 +5429,11 @@ function renderVariationTab(p) {
 
   return `<div class="drawer-form-grid">
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('parent_sku')}</label>
+      <label class="drawer-form-label">${t('parent_sku')}${tipFor('parent_sku')}</label>
       <input class="drawer-form-input" data-field="parent_sku" value="${escHtml(pSku)}">
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('parentage_level')}</label>
+      <label class="drawer-form-label">${t('parentage_level')}${tipFor('parentage_level')}</label>
       <select class="drawer-form-select" data-field="parentage_level">
         <option value="" ${!level?'selected':''}>-</option>
         <option value="parent" ${level==='parent'?'selected':''}>Parent</option>
@@ -5058,7 +5441,7 @@ function renderVariationTab(p) {
       </select>
     </div>
     <div class="drawer-form-group">
-      <label class="drawer-form-label">${t('variation_theme')}</label>
+      <label class="drawer-form-label">${t('variation_theme')}${tipFor('variation_theme')}</label>
       <select class="drawer-form-select" data-field="variation_theme">
         <option value="" ${!theme?'selected':''}>-</option>
         <option value="Color" ${theme==='Color'?'selected':''}>Color</option>
@@ -6352,10 +6735,11 @@ async function saveDrawerChanges() {
       const response = await fetch('/api/update-product', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file: currentFile, sku: drawerProduct.sku, updates })
+        body: JSON.stringify({ file: currentFile, file_version: currentFileVersion, sku: drawerProduct.sku, updates })
       });
       const data = await response.json();
       if (data.error) return showToast('error', data.error);
+      if (data.file_version) currentFileVersion = Number(data.file_version || currentFileVersion);
     } catch (e) {
       return showToast('error', '保存失败: ' + e.message);
     }
@@ -6661,12 +7045,13 @@ async function adoptImage(sku, scope) {
         const response = await fetch('/api/update-product', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file: currentFile, sku, updates })
+          body: JSON.stringify({ file: currentFile, file_version: currentFileVersion, sku, updates })
         });
         const data = await response.json();
         if (!response.ok || data.error) {
           throw new Error(data.error || ('HTTP ' + response.status));
         }
+        if (data.file_version) currentFileVersion = Number(data.file_version || currentFileVersion);
       } catch (err) {
         p.main_image_url = snapshot.main_image_url;
         p.main_image_preview_url = snapshot.main_image_preview_url;
@@ -7010,6 +7395,23 @@ async function requestAmazonSubmission(mode, skus, options = {}) {
   if (!await ensureCustomerPrerequisite('amazon')) return;
   if (mode === 'submit' && !await ensureCustomerPrerequisite('preview_before_submit', { skus: targetSkus })) return;
   if (targetSkus.length === 0) return showToast('warning', '没有可提交的商品');
+  const targetProducts = products.filter(product => targetSkus.includes(product.sku));
+  const familyMessage = getIncompleteFamilyMessageForSkus(targetSkus);
+  if (familyMessage) {
+    return showCustomerBlock('变体家族不完整', familyMessage + '。系统已经拦住，避免只提交一半 family。', 'check', '去诊断');
+  }
+  const duplicateAsins = getDuplicateAsinMap();
+  const duplicateProduct = targetProducts.find(product => duplicateAsins.has(product.sku));
+  if (duplicateProduct) {
+    const info = duplicateAsins.get(duplicateProduct.sku);
+    return showCustomerBlock('ASIN 重复', `ASIN ${info.asin} 被多个 SKU 共用：${info.skus.join('、')}。先改 Excel，不能直接提交。`, 'check', '去校验');
+  }
+  if (mode === 'submit') {
+    const submittedProduct = targetProducts.find(product => isAlreadySubmittedProduct(product));
+    if (submittedProduct) {
+      return showCustomerBlock('已经上架过', `${submittedProduct.sku || '-'} 已经提交成功${submittedProduct.asin ? `，ASIN ${submittedProduct.asin}` : ''}。系统禁止再次提交，避免重复创建。`, 'check', '看提交结果');
+    }
+  }
   closeAllDropdowns();
 
   let accounts = [];
@@ -7037,14 +7439,14 @@ async function requestAmazonSubmission(mode, skus, options = {}) {
   };
 
   if (readyAccounts.length === 1) {
-    selectedAccountId = readyAccounts[0].seller_id;
+    setSelectedAmazonAccount(readyAccounts[0].seller_id, { toast: mode === 'submit', refreshUi: true });
     return executeWithAccount(selectedAccountId);
   }
 
   const preferredId = readyAccounts.some(account => account.seller_id === selectedAccountId)
     ? selectedAccountId
     : ((readyAccounts.find(account => account.is_default) || readyAccounts[0] || {}).seller_id || '');
-  selectedAccountId = preferredId;
+  setSelectedAmazonAccount(preferredId, { toast: mode === 'submit', refreshUi: true });
   pendingSubmitPayload = {
     mode,
     skus: targetSkus,
@@ -7084,8 +7486,8 @@ function confirmFormalSubmitIfNeeded(mode, accountId, skus, onConfirm) {
   const accountMeta = getAccountMeta(accountId) || { name: accountId || '-', site: '-' };
   const targetSet = new Set((skus || []).map(item => String(item || '').trim()).filter(Boolean));
   const targetProducts = products.filter(product => targetSet.has(product.sku));
-  const previewPassed = targetProducts.filter(product => String(product.preview_status || '').toUpperCase() === 'VALID').length;
-  const blockedRows = targetProducts.filter(product => String(product.preview_status || '').toUpperCase() !== 'VALID').slice(0, 8);
+  const previewPassed = targetProducts.filter(product => isPreviewValidForSelectedAccount(product)).length;
+  const blockedRows = targetProducts.filter(product => !isPreviewValidForSelectedAccount(product)).slice(0, 8);
   showModal('正式提交前最后确认', `
     <div class="preflight-panel danger">
       <div class="preflight-stat-grid">
@@ -7122,7 +7524,7 @@ function confirmSubmitAccount() {
   if (!pendingSubmitPayload) return;
   const checked = document.querySelector('input[name="submitAccountRadio"]:checked');
   if (!checked) return showToast('warning', '请选择一个账号');
-  selectedAccountId = checked.value;
+  setSelectedAmazonAccount(checked.value, { toast: payload.mode === 'submit', refreshUi: true });
   const payload = pendingSubmitPayload;
   pendingSubmitPayload = null;
   closeModal();
@@ -7354,16 +7756,39 @@ function setFieldValidity(id, ok, message = '') {
 function validateAiConfigFields() {
   const baseOk = value => String(value || '').trim().replace(/\/$/, '') === RECOMMENDED_AI_CONFIG.baseUrl;
   const endpointOk = value => /\{model\}/.test(String(value || '')) && /generateContent/i.test(String(value || ''));
+  const provider = model => /gemini/i.test(String(model || '')) ? 'gemini' : (/^(gpt|o\d|dall-e|gpt-image)/i.test(String(model || '').trim()) ? 'openai' : '');
   const keyOk = id => {
     const el = document.getElementById(id);
     return !!el?.value || String(el?.placeholder || '').startsWith('***');
   };
+  const textProvider = provider(document.getElementById('cfgTextModel')?.value);
+  const imageProvider = provider(document.getElementById('cfgImageModel')?.value);
+  const textEndpoint = document.getElementById('cfgTextEndpoint')?.value || '';
+  const imageEndpoint = document.getElementById('cfgImageEndpoint')?.value || '';
   setFieldValidity('cfgTextApiKey', keyOk('cfgTextApiKey'), '文字 Key 不能为空');
   setFieldValidity('cfgImageApiKey', keyOk('cfgImageApiKey'), '图片 Key 不能为空');
   setFieldValidity('cfgTextBaseUrl', baseOk(document.getElementById('cfgTextBaseUrl')?.value), 'Base URL 固定填 https://api.kk666.best');
   setFieldValidity('cfgImageBaseUrl', baseOk(document.getElementById('cfgImageBaseUrl')?.value), 'Base URL 固定填 https://api.kk666.best');
-  setFieldValidity('cfgTextEndpoint', endpointOk(document.getElementById('cfgTextEndpoint')?.value), '接口格式必须保留 {model}');
-  setFieldValidity('cfgImageEndpoint', endpointOk(document.getElementById('cfgImageEndpoint')?.value), '接口格式必须保留 {model}');
+  setFieldValidity('cfgTextEndpoint', textProvider === 'openai' ? !/generateContent/i.test(textEndpoint) : endpointOk(textEndpoint), '接口格式必须和文字模型类型一致');
+  setFieldValidity('cfgImageEndpoint', imageProvider === 'openai' ? !/generateContent/i.test(imageEndpoint) : endpointOk(imageEndpoint), '接口格式必须和图片模型类型一致');
+  setFieldValidity('cfgTextModel', !(textProvider === 'openai' && /generateContent/i.test(textEndpoint)), 'GPT/OpenAI 模型不能配 Gemini 接口');
+  setFieldValidity('cfgImageModel', !(imageProvider === 'openai' && /generateContent/i.test(imageEndpoint)), 'GPT/OpenAI 图片模型不能配 Gemini 接口');
+}
+
+function syncAiEndpointForModel(kind, options = {}) {
+  const modelEl = document.getElementById(kind === 'image' ? 'cfgImageModel' : 'cfgTextModel');
+  const endpointEl = document.getElementById(kind === 'image' ? 'cfgImageEndpoint' : 'cfgTextEndpoint');
+  if (!modelEl || !endpointEl) return;
+  const model = String(modelEl.value || '').trim();
+  if (/gemini/i.test(model)) {
+    endpointEl.value = RECOMMENDED_AI_CONFIG.endpoint;
+  } else if (/^(gpt|o\d)/i.test(model)) {
+    endpointEl.value = '/v1/chat/completions';
+  } else if (/^(dall-e|gpt-image)/i.test(model)) {
+    endpointEl.value = '/v1/images/edits';
+  }
+  validateAiConfigFields();
+  if (!options.silent) showToast('info', '已根据模型类型同步接口格式；保存前可以点“测试连接”确认');
 }
 
 function fillRecommendedAiConfig() {
@@ -7628,10 +8053,10 @@ function loadAccounts() {
     const accounts = d.accounts || [];
     amazonAccounts = accounts.filter(account => account.enabled !== false);
     if (amazonAccounts.length === 0) {
-      selectedAccountId = '';
+      setSelectedAmazonAccount('');
     } else if (!selectedAccountId || !amazonAccounts.some(account => account.seller_id === selectedAccountId)) {
       const defaultAccount = amazonAccounts.find(account => account.is_default) || amazonAccounts[0];
-      selectedAccountId = defaultAccount ? defaultAccount.seller_id : '';
+      setSelectedAmazonAccount(defaultAccount ? defaultAccount.seller_id : '');
     }
     const tbody = document.getElementById('accountBody');
     if (accounts.length === 0) {
@@ -7675,15 +8100,15 @@ function showAddAccount() {
     </div>
     <div class="settings-grid">
       <div class="form-group"><label>账号名称</label><input type="text" id="newAccName" placeholder="如: 主账号-美国站"><div class="field-help">给客户自己看的名字，不影响提交。</div></div>
-      <div class="form-group"><label>Seller ID</label><input type="text" id="newAccSellerId" placeholder="A1B2C3D4E5F6G7"><div class="field-help">不要填店铺名，填 Seller ID / Merchant Token。</div></div>
-      <div class="form-group"><label>站点</label><select id="newAccMarket">
+      <div class="form-group"><label>Seller ID${tipFor('seller_id')}</label><input type="text" id="newAccSellerId" placeholder="A1B2C3D4E5F6G7"><div class="field-help">不要填店铺名，填 Seller ID / Merchant Token。</div></div>
+      <div class="form-group"><label>站点${tipFor('marketplace_id')}</label><select id="newAccMarket">
         <option value="US">🇺🇸 US</option><option value="CA">🇨🇦 CA</option><option value="MX">🇲🇽 MX</option>
         <option value="UK">🇬🇧 UK</option><option value="DE">🇩🇪 DE</option><option value="FR">🇫🇷 FR</option>
         <option value="JP">🇯🇵 JP</option><option value="AU">🇦🇺 AU</option>
       </select><div class="field-help">美国站选 US；加拿大/墨西哥按实际店铺选。</div></div>
-      <div class="form-group"><label>LWA Client ID</label><input type="text" id="newAccClientId" placeholder="amzn1.application-oa2-client.xxx"><div class="field-help">一般以 amzn1.application-oa2-client 开头。</div></div>
-      <div class="form-group"><label>LWA Client Secret</label><input type="password" id="newAccClientSecret" placeholder="Client Secret"><div class="field-help">和 Client ID 同一应用里的 Secret，注意不要多复制空格。</div></div>
-      <div class="form-group"><label>Refresh Token</label><input type="password" id="newAccRefreshToken" placeholder="Atzr|xxx"><div class="field-help">通常以 Atzr| 开头，是授权后得到的刷新令牌。</div></div>
+      <div class="form-group"><label>LWA Client ID${tipFor('lwa_client_id')}</label><input type="text" id="newAccClientId" placeholder="amzn1.application-oa2-client.xxx"><div class="field-help">一般以 amzn1.application-oa2-client 开头。</div></div>
+      <div class="form-group"><label>LWA Client Secret${tipFor('lwa_client_secret')}</label><input type="password" id="newAccClientSecret" placeholder="Client Secret"><div class="field-help">和 Client ID 同一应用里的 Secret，注意不要多复制空格。</div></div>
+      <div class="form-group"><label>Refresh Token${tipFor('refresh_token')}</label><input type="password" id="newAccRefreshToken" placeholder="Atzr|xxx"><div class="field-help">通常以 Atzr| 开头，是授权后得到的刷新令牌。</div></div>
     </div>
     <p style="font-size:12px;color:var(--text-muted);margin-top:8px;">
       以上凭证从 Amazon Seller Central 和 Developer Console 获取：
@@ -7775,6 +8200,9 @@ function customerFriendlyMessage(msg) {
   if (text.includes('AI_BASE_BAD')) {
     return 'AI 接口域名不正确：请点“一键恢复推荐”，Base URL 固定用 https://api.kk666.best。错误码：AI_BASE_BAD';
   }
+  if (text.includes('FILE_VERSION_CONFLICT')) {
+    return '这个 Excel 已被另一个窗口或任务改动：请先刷新商品表，再重新保存，避免互相覆盖。错误码：FILE_VERSION_CONFLICT';
+  }
   if (text.includes('AMAZON_ACCOUNT_BAD')) {
     return 'Amazon 账号信息格式不完整：请按示例重新填写 Seller ID、LWA 和 Refresh Token。错误码：AMAZON_ACCOUNT_BAD';
   }
@@ -7817,6 +8245,129 @@ function showModal(title, body) {
   document.getElementById('modalBody').innerHTML = body;
   document.getElementById('modalFooter').innerHTML = '<button class="btn btn-ghost btn-sm" onclick="closeModal()">关闭</button>';
   document.getElementById('modal').classList.add('show');
+}
+
+// Amazon SP-API 8 字段傻瓜级图文教程
+// 教用户从零拿到 Seller ID / Marketplace / LWA Client ID/Secret / Refresh Token
+function showAmazonCredsTutorial() {
+  const body = `
+    <div class="amz-tutorial">
+      <div class="amz-tutorial-intro">
+        亚马逊预览/上架需要从你的卖家后台拿 <strong>4 个凭证</strong>。下面 5 步走完大约 10-15 分钟，每步打勾后再做下一步。
+        遇到看不懂的地方，<a href="javascript:void(0)" onclick="showVendorQr()">点这里找客服远程帮你做</a>。
+      </div>
+
+      <div class="amz-tutorial-step" data-step="1">
+        <label class="amz-step-check"><input type="checkbox" onchange="toggleAmzStep(this,1)"> <span class="amz-step-num">1</span> <strong>登录你的亚马逊卖家后台 Seller Central</strong></label>
+        <div class="amz-step-body">
+          打开浏览器访问：<a href="https://sellercentral.amazon.com" target="_blank" rel="noopener"><code>https://sellercentral.amazon.com</code></a>（美国站）<br>
+          用平时上架/发货的那个账号密码登录，<strong>必须有"管理用户/开发者权限"</strong>，否则后面拿不到 Client ID。
+          <div class="amz-step-tip">⚠️ 如果你只有运营子账号，请找老板/主账号开通"开发者中心"权限。</div>
+        </div>
+      </div>
+
+      <div class="amz-tutorial-step" data-step="2">
+        <label class="amz-step-check"><input type="checkbox" onchange="toggleAmzStep(this,2)"> <span class="amz-step-num">2</span> <strong>拿到 Seller ID</strong>（最简单的一个）</label>
+        <div class="amz-step-body">
+          后台右上角 <strong>设置（Settings）→ 账户信息（Account Info）→ 商业地址（Business Address）</strong>，找到下面这一项：
+          <div class="amz-step-find">
+            "<strong>Your Merchant Token</strong>"（你的商家令牌） — 长得像 <code>A1B2C3D4E5F6G7</code> 的 14 位字母数字
+          </div>
+          这个值就是后面要填的 <strong>Seller ID</strong>，复制下来。
+        </div>
+      </div>
+
+      <div class="amz-tutorial-step" data-step="3">
+        <label class="amz-step-check"><input type="checkbox" onchange="toggleAmzStep(this,3)"> <span class="amz-step-num">3</span> <strong>注册"开发者应用"拿到 Client ID 和 Client Secret</strong></label>
+        <div class="amz-step-body">
+          后台顶部菜单 <strong>合作伙伴网络（Partner Network）→ 开发者中心（Develop apps for amazon）</strong>。<br>
+          首次进入会让你<strong>注册成开发者</strong>（Become a Developer），按提示填公司信息+用途说明（用途填"自用上架工具"即可），1-2 个工作日内审批通过。<br>
+          通过后回到开发者中心：
+          <ol class="amz-step-ol">
+            <li>点 <strong>Add new app client（添加应用）</strong></li>
+            <li>App name 随便填，比如 <code>my-listing-tool</code></li>
+            <li>API Type 选 <strong>SP API</strong>；Roles 勾上 <strong>Product Listing</strong>、<strong>Inventory and Order Tracking</strong> 这两个</li>
+            <li>提交后会得到一对：</li>
+          </ol>
+          <div class="amz-step-find">
+            <strong>LWA credentials</strong>：<br>
+            • <code>Client identifier</code> → 后面填到 <strong>LWA Client ID</strong>（以 <code>amzn1.application-oa2-client.</code> 开头）<br>
+            • <code>Client secret</code> → 后面填到 <strong>LWA Client Secret</strong>（点"View"才显示，<strong>只显示一次</strong>，立刻复制）
+          </div>
+          <div class="amz-step-tip">⚠️ Client Secret 一定要在创建后立刻复制保存，关掉就再也看不到了，要重新生成。</div>
+        </div>
+      </div>
+
+      <div class="amz-tutorial-step" data-step="4">
+        <label class="amz-step-check"><input type="checkbox" onchange="toggleAmzStep(this,4)"> <span class="amz-step-num">4</span> <strong>给应用做"自我授权"拿到 Refresh Token</strong></label>
+        <div class="amz-step-body">
+          回到开发者中心，找到刚才创建的应用：
+          <ol class="amz-step-ol">
+            <li>点应用右边的 <strong>Edit App（编辑应用）→ 下方 OAuth 设置</strong>，把状态改成 <strong>Draft</strong>（草稿）即可（不需要发布）</li>
+            <li>回到应用列表，点应用名旁边的 <strong>… 三个点 → Authorize（授权）</strong></li>
+            <li>页面会提示"授权给自己的卖家账号"，点 <strong>Authorize App（授权）</strong></li>
+            <li>跳转的浏览器地址栏里会出现一长串字符，找到 <code>spapi_oauth_code=ANXXxxxx...</code></li>
+            <li>系统会显示一段 <strong>refresh_token</strong>（以 <code>Atzr|</code> 开头，几百个字符），<strong>立刻全选复制</strong></li>
+          </ol>
+          <div class="amz-step-tip">💡 这个长 Token 永久有效，但只在授权完成那一瞬间显示，关掉浏览器就丢了。</div>
+        </div>
+      </div>
+
+      <div class="amz-tutorial-step" data-step="5">
+        <label class="amz-step-check"><input type="checkbox" onchange="toggleAmzStep(this,5)"> <span class="amz-step-num">5</span> <strong>把 4 个值填到下面"添加账号"弹窗</strong></label>
+        <div class="amz-step-body">
+          关掉这个教程，点 <strong>右上角「添加」按钮</strong>，按下面对照填：
+          <div class="amz-step-find amz-step-table">
+            <div><strong>账号名称</strong> → 自己起，比如"美国站主账号"</div>
+            <div><strong>Seller ID</strong> → 第 2 步拿到的 Merchant Token</div>
+            <div><strong>站点</strong> → 选 🇺🇸 US（美国站）</div>
+            <div><strong>LWA Client ID</strong> → 第 3 步的 Client identifier</div>
+            <div><strong>LWA Client Secret</strong> → 第 3 步的 Client secret</div>
+            <div><strong>Refresh Token</strong> → 第 4 步的 refresh_token</div>
+          </div>
+          填完点 <strong>「测试连接」</strong>，每一项都显示绿色对勾就成了。<br>
+          有红色 ❌ 的话，对照下面常见错误自查：
+          <div class="amz-step-faq">
+            <div>❌ <strong>"凭证不完整"</strong> → 4 个字段哪个还空着？或多复制了空格？</div>
+            <div>❌ <strong>"LWA token 失效"</strong> → Refresh Token 可能复制错或已过期，回第 4 步重新授权一次</div>
+            <div>❌ <strong>"Listings API 拒绝"</strong> → 应用 Roles 没勾对，回第 3 步重新编辑应用，把 Product Listing 加上</div>
+            <div>❌ <strong>"无法连接 amazon.com"</strong> → 公司网防火墙拦了，去 <strong>设置 → API配置</strong> 顶部"还没有 Key？"卡片下方设置代理</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="amz-tutorial-foot">
+        <button class="btn btn-primary btn-sm" onclick="closeModal(); showAddAccount();">5 步都做完了，去填账号 →</button>
+        <button class="btn btn-outline btn-sm" onclick="showVendorQr()">卡住了，找客服</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeModal()">关闭教程</button>
+      </div>
+    </div>`;
+  document.getElementById('modalTitle').textContent = '亚马逊凭证 5 步获取教程';
+  document.getElementById('modalBody').innerHTML = body;
+  document.getElementById('modalFooter').innerHTML = '';
+  document.getElementById('modal').classList.add('show');
+}
+
+function toggleAmzStep(checkbox, stepNum) {
+  const step = checkbox.closest('.amz-tutorial-step');
+  if (step) step.classList.toggle('done', checkbox.checked);
+}
+
+// 客服二维码弹窗（傻瓜买 Key 入口）
+// ★★★ 售后请把 /static/img/vendor-qr.png 替换成你们自己的客服微信二维码图 ★★★
+function showVendorQr() {
+  const body = `
+    <div style="text-align:center; padding:8px 0;">
+      <p style="margin:0 0 12px; color:#374151; font-size:14px;">手机微信打开「扫一扫」，对准下面的二维码加客服好友</p>
+      <img src="/static/img/vendor-qr.png" alt="客服微信二维码"
+           style="width:240px; height:240px; border:1px solid #e5e7eb; border-radius:8px; object-fit:contain; background:#f9fafb;"
+           onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+      <div style="display:none; padding:60px 20px; color:#6b7280; background:#f9fafb; border:1px dashed #d1d5db; border-radius:8px;">
+        二维码图片还没配置。<br>请售后把客服二维码放到 <code>web/static/img/vendor-qr.png</code>。
+      </div>
+      <p style="margin:14px 0 0; color:#6b7280; font-size:12px;">扫码后告诉客服「我要买 AI Key 用于亚马逊上架工具」即可</p>
+    </div>`;
+  showModal('客服微信二维码', body);
 }
 function closeModal() {
   pendingSubmitPayload = null;
@@ -8190,9 +8741,11 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', () => {
     if (!isMobileViewport()) closeMobileSidebar();
   });
-  ['cfgTextApiKey','cfgImageApiKey','cfgTextBaseUrl','cfgImageBaseUrl','cfgTextEndpoint','cfgImageEndpoint'].forEach(id => {
+  ['cfgTextApiKey','cfgImageApiKey','cfgTextBaseUrl','cfgImageBaseUrl','cfgTextEndpoint','cfgImageEndpoint','cfgTextModel','cfgImageModel'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', validateAiConfigFields);
   });
+  document.getElementById('cfgTextModel')?.addEventListener('change', () => syncAiEndpointForModel('text'));
+  document.getElementById('cfgImageModel')?.addEventListener('change', () => syncAiEndpointForModel('image'));
   window.setInterval(loadTaskCenter, 5000);
   // Load existing files — restore from localStorage if available
   if (currentFile) {

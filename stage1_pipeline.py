@@ -75,6 +75,7 @@ class Stage1Pipeline:
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             output_file = os.path.join(self.config.OUTPUT_DIR,
                                        f'对比结果_{timestamp}.xlsx')
+        autosave_file = self._autosave_path(output_file)
 
         logger.info("🚀 第一阶段启动 (V2 前后对比模式)")
         logger.info(f"  输入: {input_file}")
@@ -188,6 +189,7 @@ class Stage1Pipeline:
                                 contiguous_completed += 1
 
                             self._save_progress(progress_file, input_file, rows, contiguous_completed)
+                            self._save_autosave_output(data, autosave_file, col_map)
                             progress_message = (
                                 f"已完成 {contiguous_completed}/{len(data)}"
                                 f" (成功:{self.stats['success']} 失败:{self.stats['failed']})"
@@ -262,6 +264,18 @@ class Stage1Pipeline:
             slots += image_limit
         worker_count = max(1, min(pending_count or 1, slots or 1))
         return text_limit, image_limit, worker_count
+
+    def _autosave_path(self, output_file: str) -> str:
+        stem, ext = os.path.splitext(output_file)
+        return f'{stem}_自动保存{ext or ".xlsx"}'
+
+    def _save_autosave_output(self, data: List[Dict], autosave_file: str, col_map: Dict):
+        """每完成一个 SKU 写一次自动保存，避免浏览器/应用崩溃后丢掉已生成结果。"""
+        try:
+            os.makedirs(os.path.dirname(autosave_file) or '.', exist_ok=True)
+            self.excel.write_comparison_output(data, autosave_file, col_map)
+        except Exception as exc:
+            logger.warning(f"⚠️ 自动保存失败: {exc}")
 
     def _submit_next_future(self, executor, future_map: Dict, pending_iter, total: int, col_map: Dict,
                             process_text: bool, process_images: bool,

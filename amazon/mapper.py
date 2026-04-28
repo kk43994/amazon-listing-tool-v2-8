@@ -91,6 +91,8 @@ SEARCH_TERM_BYTE_LIMIT = {
     'A21TJRUUN4KGV': 200,   # IN
 }
 
+MAX_SUBMISSION_PRICE = 10000.0
+
 GENERIC_ATTRIBUTE_EXCLUDE = {
     'sku', 'title', 'brand', 'description', 'keywords', 'price', 'list_price', 'currency',
     'quantity', 'condition_type', 'fulfillment_channel', 'product_type', 'item_type',
@@ -288,7 +290,7 @@ class FieldMapper:
         # === Offer ===
         if not is_parent and product.get('price'):
             try:
-                price_val = float(product['price'])
+                price_val = self._parse_numeric(product['price'])
                 currency = product.get('currency') or self.default_currency
                 attrs['purchasable_offer'] = [{
                     'marketplace_id': mp,
@@ -305,7 +307,7 @@ class FieldMapper:
         if not is_parent and product.get('list_price'):
             try:
                 attrs['list_price'] = [{
-                    'value': float(product['list_price']),
+                    'value': self._parse_numeric(product['list_price']),
                     'currency': product.get('currency') or self.default_currency,
                     'marketplace_id': mp,
                 }]
@@ -484,13 +486,24 @@ class FieldMapper:
         is_parent = parentage_level == 'parent'
         is_child = parentage_level == 'child'
 
-        # 上架必填(有offer时)
-        if not is_parent and product.get('price'):
+        # 上架必填：客户模式下不允许空价格进入预览/提交。
+        if not is_parent:
             required['price'] = '价格'
 
         for field, label in required.items():
             if not product.get(field):
                 result['errors'].append(f"缺少必填字段: {label}")
+                result['valid'] = False
+
+        if not is_parent and product.get('price'):
+            price_error = self._validate_price_value(product.get('price'), label='价格')
+            if price_error:
+                result['errors'].append(price_error)
+                result['valid'] = False
+        if not is_parent and product.get('list_price'):
+            list_price_error = self._validate_price_value(product.get('list_price'), label='建议零售价')
+            if list_price_error:
+                result['errors'].append(list_price_error)
                 result['valid'] = False
 
         # 强烈推荐
@@ -586,11 +599,12 @@ class FieldMapper:
                 f"您填写的是 {user_currency}，请确认是否正确"
             )
 
-        # 检查图片
-        if not is_offer_only:
+        # 检查图片：新建商品/子体必须有可提交主图；父体和 offer-only 不强制。
+        if not is_offer_only and not is_parent:
             main_image_url = product.get('main_image_url')
             if not main_image_url:
-                result['warnings'].append("缺少主图URL")
+                result['errors'].append("缺少必填字段: 主图URL")
+                result['valid'] = False
             elif not self._is_media_locator(main_image_url):
                 result['errors'].append("主图媒体地址必须是 http(s) 或 s3:// 地址")
                 result['valid'] = False
@@ -598,6 +612,9 @@ class FieldMapper:
                 result['warnings'].append(
                     "AI主图仅保存在本地，当前回退为原始远程图；如需提交 AI 图，请启用媒体存储并完成上传"
                 )
+        elif not is_offer_only and product.get('main_image_url') and not self._is_media_locator(product.get('main_image_url')):
+            result['errors'].append("主图媒体地址必须是 http(s) 或 s3:// 地址")
+            result['valid'] = False
 
         # 检查合规字段
         if self._coerce_bool(product.get('batteries_required')):
@@ -640,6 +657,24 @@ class FieldMapper:
         if text in ('parent', 'child'):
             return text
         return text
+
+    def _parse_numeric(self, value) -> float:
+        text = self._clean_value(value)
+        if text == '':
+            raise ValueError('empty numeric value')
+        text = re.sub(r'[$,¥￥€£\s]', '', text)
+        return float(text)
+
+    def _validate_price_value(self, value, label: str = '价格') -> str:
+        try:
+            amount = self._parse_numeric(value)
+        except (ValueError, TypeError):
+            return f"{label}格式错误({value})"
+        if amount <= 0:
+            return f"{label}必须大于 0，当前值: {value}"
+        if amount > MAX_SUBMISSION_PRICE:
+            return f"{label}疑似填错单位或小数点({value})，超过 {MAX_SUBMISSION_PRICE:g}，请确认不是把美分/分写成了金额"
+        return ''
 
     def _variation_size_value(self, product: Dict) -> str:
         return self._clean_value(product.get('size') or product.get('bottoms_size'))

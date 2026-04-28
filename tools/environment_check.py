@@ -621,6 +621,27 @@ def _tls_probe(host: str, port: int, timeout: float = 3.5) -> tuple[bool, str]:
 
 
 def _check_network(report: CheckReport, strict_network: bool) -> None:
+    # 先报告当前代理配置（傻瓜在公司网时常见）
+    proxy_http = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
+    proxy_https = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    if proxy_http or proxy_https:
+        report.add(
+            "网络：代理配置",
+            "OK",
+            "已配置 HTTP/HTTPS 代理",
+            f"HTTP_PROXY={proxy_http or '(空)'}; HTTPS_PROXY={proxy_https or '(空)'}; NO_PROXY={no_proxy or '(空)'}",
+        )
+    else:
+        report.add(
+            "网络：代理配置",
+            "OK",
+            "未配置代理（直连）",
+            "公司网络/防火墙拦截外网时，可在 .env 里填 HTTP_PROXY / HTTPS_PROXY",
+        )
+
+    network_failed_any = False
+
     targets = list(OPTIONAL_NETWORK_TARGETS)
     target_urls = {url for _, url in targets}
     for label, env_name in (("当前文字 AI Base URL", "AI_TEXT_API_BASE"), ("当前图片 AI Base URL", "AI_IMAGE_API_BASE")):
@@ -643,6 +664,7 @@ def _check_network(report: CheckReport, strict_network: bool) -> None:
             report.add(f"网络：{name} DNS", "OK", f"{host} 可解析", ", ".join(unique_addresses[:4]))
         except OSError as exc:
             report.add(f"网络：{name} DNS", _network_status(strict_network), f"{host} 无法解析", str(exc))
+            network_failed_any = True
             continue
 
         start = time.monotonic()
@@ -652,6 +674,7 @@ def _check_network(report: CheckReport, strict_network: bool) -> None:
             report.add(f"网络：{name} TCP", "OK", f"可连接 {host}:{port} ({elapsed_ms}ms)")
         else:
             report.add(f"网络：{name} TCP", _network_status(strict_network), f"无法连接 {host}:{port}", detail)
+            network_failed_any = True
             continue
 
         if parsed.scheme == "https":
@@ -660,6 +683,7 @@ def _check_network(report: CheckReport, strict_network: bool) -> None:
                 report.add(f"网络：{name} TLS", "OK", "TLS 握手成功", detail)
             else:
                 report.add(f"网络：{name} TLS", _network_status(strict_network), "TLS 握手失败", detail)
+                network_failed_any = True
                 continue
 
         ok, detail = _http_probe(url)
@@ -667,6 +691,16 @@ def _check_network(report: CheckReport, strict_network: bool) -> None:
             report.add(f"网络：{name} HTTP", "OK", "HTTP 可达", detail)
         else:
             report.add(f"网络：{name} HTTP", _network_status(strict_network), "HTTP 请求失败", detail)
+            network_failed_any = True
+
+    # 网络失败时给傻瓜级建议
+    if network_failed_any and not (proxy_http or proxy_https):
+        report.add(
+            "网络：建议",
+            "WARN",
+            "外网检查有失败，且未配代理",
+            "如果是在公司/学校网络里，请联系 IT 拿到代理地址，填到 .env 的 HTTP_PROXY / HTTPS_PROXY；如果在家可以试试 VPN",
+        )
 
 
 def run_checks(

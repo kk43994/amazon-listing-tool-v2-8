@@ -1369,6 +1369,55 @@ body.drawer-open .drawer { transform: translateX(0); }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
 }
+
+/* 术语解释小问号 + 浮动气泡 */
+.term-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: #d9e3ec;
+  color: #4b5563;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
+  user-select: none;
+  flex-shrink: 0;
+  border: none;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+.term-help:hover,
+.term-help:focus {
+  background: #2563eb;
+  color: #fff;
+  outline: none;
+}
+.term-help-pop {
+  position: fixed;
+  display: none;
+  background: #1f2937;
+  color: #fff;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: normal;
+  line-height: 1.55;
+  white-space: pre-line;
+  max-width: 300px;
+  z-index: 10001;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  text-align: left;
+}
+.term-help-pop.show { opacity: 1; }
 .settings-actions { display: flex; gap: 8px; margin-top: 16px; }
 
 .config-link-grid {
@@ -1406,6 +1455,182 @@ body.drawer-open .drawer { transform: translateX(0); }
   border: 1px solid #bfdbfe;
   border-radius: 12px;
   background: #f8fbff;
+}
+
+/* Amazon 凭证 5 步傻瓜教程 */
+.amz-tutorial { font-size: 13px; color: var(--text-primary); }
+.amz-tutorial-intro {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: #eff6ff;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+  color: #1e40af;
+  line-height: 1.6;
+}
+.amz-tutorial-intro a { color: #1d4ed8; text-decoration: underline; }
+.amz-tutorial-step {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  transition: opacity 0.2s, background 0.2s;
+}
+.amz-tutorial-step.done {
+  background: #f0fdf4;
+  border-color: #86efac;
+  opacity: 0.7;
+}
+.amz-tutorial-step.done .amz-step-num {
+  background: #16a34a;
+}
+.amz-step-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #111827;
+}
+.amz-step-check input { width: 16px; height: 16px; cursor: pointer; }
+.amz-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.amz-step-body {
+  margin-top: 10px;
+  padding-left: 30px;
+  color: #4b5563;
+  line-height: 1.7;
+}
+.amz-step-body code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(37,99,235,0.08);
+  color: #1d4ed8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.amz-step-body a { color: #1d4ed8; text-decoration: underline; }
+.amz-step-find {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid #f59e0b;
+  background: #fffbeb;
+  border-radius: 6px;
+  color: #78350f;
+}
+.amz-step-tip {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: #fef2f2;
+  border-radius: 6px;
+  color: #991b1b;
+  font-size: 12px;
+}
+.amz-step-ol { margin: 6px 0 6px 16px; padding: 0; }
+.amz-step-ol li { margin: 4px 0; }
+.amz-step-table { display: grid; gap: 5px; }
+.amz-step-faq { margin-top: 10px; display: grid; gap: 5px; }
+.amz-step-faq div {
+  padding: 5px 8px;
+  background: #f9fafb;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #374151;
+}
+.amz-tutorial-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* 客户向"获取 AI Key"卡片 - 傻瓜级买 Key 入口 */
+.vendor-cta {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 2px solid #fbbf24;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+}
+.vendor-cta-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.vendor-cta-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f59e0b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.vendor-cta-head strong {
+  color: #78350f;
+  font-size: 15px;
+}
+.vendor-cta-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.vendor-cta-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.vendor-cta-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #f59e0b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vendor-cta-step-title {
+  color: #78350f;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+.vendor-cta-step-desc {
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.vendor-cta-step-desc code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(217,119,6,0.12);
+  color: #92400e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.vendor-cta-contacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }
 .api-preset-box p {
   margin: 4px 0 0;

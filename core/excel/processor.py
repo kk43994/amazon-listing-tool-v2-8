@@ -709,11 +709,15 @@ class ExcelProcessor:
             price = row.get('standard_price')
         if price is None:
             price = ''
-        if price != '' and price is not None:
+        if price == '' or price is None:
+            issues.append('缺少价格')
+        else:
             try:
-                price_val = float(price)
+                price_val = float(str(price).replace(',', '').replace('$', '').strip())
                 if price_val <= 0:
                     issues.append(f'价格无效({price})')
+                elif price_val > 10000:
+                    issues.append(f'价格疑似填错单位或小数点({price})')
             except (ValueError, TypeError):
                 issues.append(f'价格格式错误({price})')
 
@@ -730,10 +734,11 @@ class ExcelProcessor:
 
         # 图片URL格式
         img_url = row.get('main_image_url') or row.get('image_url') or row.get('main_image') or ''
-        if img_url:
-            img_url = str(img_url).strip()
-            if img_url and not img_url.startswith('http'):
-                issues.append('主图URL格式无效(需以http开头)')
+        img_url = str(img_url).strip() if img_url else ''
+        if not img_url:
+            issues.append('缺少主图URL')
+        elif not img_url.startswith(('http://', 'https://', 's3://')):
+            issues.append('主图URL格式无效(需以http(s)或s3://开头)')
 
         # --- 推荐字段缺失(警告级别，标记但不影响valid) ---
         # 这里只检查硬性校验，推荐字段由validate_required_fields处理

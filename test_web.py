@@ -64,6 +64,13 @@ def _wait_for_task(client, task_id, timeout=3.0):
     raise AssertionError(f'任务未在 {timeout} 秒内完成: {task_id}, last={last_payload}')
 
 
+def _set_template_cell(ws, header_map, row_idx, header, value):
+    if header not in header_map:
+        header_map[header] = ws.max_column + 1
+        ws.cell(row=2, column=header_map[header], value=header)
+    ws.cell(row=row_idx, column=header_map[header], value=value)
+
+
 def test_web_upload_endpoint_reads_excel(monkeypatch):
     input_dir = Path(web_config.INPUT_DIR).resolve()
     output_dir = Path(web_config.OUTPUT_DIR).resolve()
@@ -556,6 +563,8 @@ def test_template_diagnose_persists_preview_status_fields(monkeypatch):
     ws.cell(row=3, column=header_map['product_type'], value='INPUT_MOUSE')
     ws.cell(row=3, column=header_map['item_name'], value='Demo Mouse')
     ws.cell(row=3, column=header_map['product_identity_mode'], value='gtin_exemption')
+    _set_template_cell(ws, header_map, 3, 'standard_price', '19.99')
+    _set_template_cell(ws, header_map, 3, 'main_image_url', 'https://example.com/mouse.jpg')
     wb.save(input_path)
     wb.close()
 
@@ -621,6 +630,8 @@ def test_template_diagnose_uses_template_labels_for_preview_missing_fields(monke
     ws.cell(row=3, column=header_map['product_type'], value='INPUT_MOUSE')
     ws.cell(row=3, column=header_map['item_name'], value='Demo Mouse')
     ws.cell(row=3, column=header_map['product_identity_mode'], value='gtin_exemption')
+    _set_template_cell(ws, header_map, 3, 'standard_price', '19.99')
+    _set_template_cell(ws, header_map, 3, 'main_image_url', 'https://example.com/mouse.jpg')
     wb.save(input_path)
     wb.close()
 
@@ -1352,6 +1363,45 @@ def test_update_product_invalidates_stale_workflow_statuses(monkeypatch):
             input_path.unlink()
 
 
+def test_update_product_rejects_stale_file_version(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_update_product_conflict_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name'])
+    ws.append(['SKU-1', 'Original Product'])
+    wb.save(input_path)
+    wb.close()
+
+    try:
+        monkeypatch.setattr(web_config, 'INPUT_DIR', str(input_dir))
+
+        client = app.test_client()
+        response = client.post(
+            '/api/update-product',
+            json={
+                'file': str(input_path),
+                'sku': 'SKU-1',
+                'file_version': 1,
+                'updates': {'title': 'Should Not Save'},
+            },
+        )
+
+        assert response.status_code == 409
+        payload = response.get_json()
+        assert payload['code'] == 'FILE_VERSION_CONFLICT'
+
+        wb2 = load_workbook(input_path)
+        ws2 = wb2.active
+        assert ws2.cell(row=2, column=2).value == 'Original Product'
+        wb2.close()
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
 def test_update_product_endpoint_persists_multiple_fields_xls(monkeypatch):
     input_dir = Path(web_config.INPUT_DIR).resolve()
     filename = f'test_update_product_{uuid4().hex[:8]}.xls'
@@ -2071,6 +2121,121 @@ def test_submit_endpoint_blocks_without_recent_same_account_preview(monkeypatch)
         assert payload['failed'] == 1
         assert payload['results'][0]['status'] == 'PREVIEW_BLOCKED'
         assert '同一账号/站点' in payload['results'][0]['message']
+        assert submit_calls['count'] == 0
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_submit_endpoint_blocks_already_accepted_row(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_submit_already_done_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append([
+        'SKU', 'item_name', 'main_image_url', 'standard_price',
+        'preview_status', 'preview_time', 'preview_account', 'preview_account_id', 'preview_marketplace_id',
+        'submit_status', 'submission_id', 'asin',
+    ])
+    ws.append([
+        'SKU-1', 'Done Product', 'https://example.com/demo.jpg', '19.99',
+        'VALID', time.strftime('%Y-%m-%d %H:%M:%S'), 'US Done', 'SELLER-DONE', 'ATVPDKIKX0DER',
+        'ACCEPTED', 'SUB-DONE', 'B00DONE123',
+    ])
+    wb.save(input_path)
+    wb.close()
+
+    submit_calls = {'count': 0}
+
+    try:
+        from amazon.accounts import AccountManager
+        from amazon.listings import ListingsAPI
+
+        monkeypatch.setattr(AccountManager, 'get_default_account', lambda self: {
+            'name': 'US Done',
+            'seller_id': 'SELLER-DONE',
+            'marketplace_id': 'ATVPDKIKX0DER',
+            'lwa_client_id': 'client',
+            'lwa_client_secret': 'secret',
+            'refresh_token': 'refresh',
+        })
+
+        def fake_submit(self, sku, product, preview=False):
+            submit_calls['count'] += 1
+            return {'status': 'ACCEPTED'}
+
+        monkeypatch.setattr(ListingsAPI, 'put_listings_item', fake_submit)
+
+        client = app.test_client()
+        response = client.post('/api/submit', json={
+            'file': str(input_path),
+            'skus': ['SKU-1'],
+            'preview': False,
+        })
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['accepted'] == 0
+        assert payload['failed'] == 1
+        assert payload['results'][0]['status'] == 'PREVIEW_BLOCKED'
+        assert '已经上架成功' in payload['results'][0]['message']
+        assert 'B00DONE123' in payload['results'][0]['message']
+        assert submit_calls['count'] == 0
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_submit_endpoint_blocks_missing_required_price_and_image(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    filename = f'test_submit_missing_required_{uuid4().hex[:8]}.xlsx'
+    input_path = input_dir / filename
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name', 'main_image_url', 'standard_price', 'preview_status', 'preview_time', 'preview_account', 'preview_account_id', 'preview_marketplace_id'])
+    ws.append(['SKU-NO-PRICE', 'No Price Product', 'https://example.com/demo.jpg', '', 'VALID', time.strftime('%Y-%m-%d %H:%M:%S'), 'US Required', 'SELLER-REQ', 'ATVPDKIKX0DER'])
+    ws.append(['SKU-NO-IMAGE', 'No Image Product', '', '19.99', 'VALID', time.strftime('%Y-%m-%d %H:%M:%S'), 'US Required', 'SELLER-REQ', 'ATVPDKIKX0DER'])
+    wb.save(input_path)
+    wb.close()
+
+    submit_calls = {'count': 0}
+
+    try:
+        from amazon.accounts import AccountManager
+        from amazon.listings import ListingsAPI
+
+        monkeypatch.setattr(AccountManager, 'get_default_account', lambda self: {
+            'name': 'US Required',
+            'seller_id': 'SELLER-REQ',
+            'marketplace_id': 'ATVPDKIKX0DER',
+            'lwa_client_id': 'client',
+            'lwa_client_secret': 'secret',
+            'refresh_token': 'refresh',
+        })
+
+        def fake_submit(self, sku, product, preview=False):
+            submit_calls['count'] += 1
+            return {'status': 'ACCEPTED'}
+
+        monkeypatch.setattr(ListingsAPI, 'put_listings_item', fake_submit)
+
+        client = app.test_client()
+        response = client.post('/api/submit', json={
+            'file': str(input_path),
+            'skus': ['SKU-NO-PRICE', 'SKU-NO-IMAGE'],
+            'preview': False,
+        })
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['accepted'] == 0
+        assert payload['failed'] == 2
+        messages = {item['sku']: item['message'] for item in payload['results']}
+        assert '缺少必填字段：价格' in messages['SKU-NO-PRICE']
+        assert '缺少必填字段：主图URL' in messages['SKU-NO-IMAGE']
         assert submit_calls['count'] == 0
     finally:
         if input_path.exists():

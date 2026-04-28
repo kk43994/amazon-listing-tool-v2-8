@@ -331,20 +331,20 @@
           <!-- Column Settings Dropdown -->
           <div class="col-settings-panel" id="colSettingsPanel">
             <div class="col-settings-title" data-t="column_settings">列设置</div>
-            <label class="col-opt"><input type="checkbox" data-col="brand" onchange="toggleColumn('brand',this.checked)"> <span>brand（品牌）</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="productType" onchange="toggleColumn('productType',this.checked)"> <span>product_type（商品类型）</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="variantType" onchange="toggleColumn('variantType',this.checked)"> <span>parentage_level（父子关系）</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="upc" onchange="toggleColumn('upc',this.checked)"> <span>upc / ean（商品条码）</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="color" onchange="toggleColumn('color',this.checked)"> <span>color（颜色）</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="size" onchange="toggleColumn('size',this.checked)"> <span>size（尺寸）</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="fulfillment" onchange="toggleColumn('fulfillment',this.checked)"> <span>fulfillment_channel（配送方式）</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="previewStatus" onchange="toggleColumn('previewStatus',this.checked)"> <span>预览状态</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="submitStatus" onchange="toggleColumn('submitStatus',this.checked)" checked> <span data-t="submit_status">上架状态</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="submissionId" onchange="toggleColumn('submissionId',this.checked)"> <span>提交ID</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="asin" onchange="toggleColumn('asin',this.checked)"> <span>ASIN</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="route" onchange="toggleColumn('route',this.checked)"> <span>上架路线</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="finalStatus" onchange="toggleColumn('finalStatus',this.checked)"> <span>最终状态</span></label>
-            <label class="col-opt"><input type="checkbox" data-col="listingIssues" onchange="toggleColumn('listingIssues',this.checked)"> <span>后台问题数</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="brand" onchange="toggleColumn('brand',this.checked)"> <span>brand（品牌）<span class="term-help" data-tip="brand" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="productType" onchange="toggleColumn('productType',this.checked)"> <span>product_type（商品类型）<span class="term-help" data-tip="product_type" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="variantType" onchange="toggleColumn('variantType',this.checked)"> <span>parentage_level（父子关系）<span class="term-help" data-tip="parentage_level" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="upc" onchange="toggleColumn('upc',this.checked)"> <span>upc / ean（商品条码）<span class="term-help" data-tip="upc" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="color" onchange="toggleColumn('color',this.checked)"> <span>color（颜色）<span class="term-help" data-tip="color" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="size" onchange="toggleColumn('size',this.checked)"> <span>size（尺寸）<span class="term-help" data-tip="size" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="fulfillment" onchange="toggleColumn('fulfillment',this.checked)"> <span>fulfillment_channel（配送方式）<span class="term-help" data-tip="fulfillment_channel" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="previewStatus" onchange="toggleColumn('previewStatus',this.checked)"> <span>预览状态<span class="term-help" data-tip="col_preview_status" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="submitStatus" onchange="toggleColumn('submitStatus',this.checked)" checked> <span data-t="submit_status">上架状态</span><span class="term-help" data-tip="col_submit_status" tabindex="0" role="button" aria-label="术语解释">?</span></label>
+            <label class="col-opt"><input type="checkbox" data-col="submissionId" onchange="toggleColumn('submissionId',this.checked)"> <span>提交ID<span class="term-help" data-tip="col_submission_id" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="asin" onchange="toggleColumn('asin',this.checked)"> <span>ASIN<span class="term-help" data-tip="asin" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="route" onchange="toggleColumn('route',this.checked)"> <span>上架路线<span class="term-help" data-tip="col_route" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="finalStatus" onchange="toggleColumn('finalStatus',this.checked)"> <span>最终状态<span class="term-help" data-tip="col_final_status" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
+            <label class="col-opt"><input type="checkbox" data-col="listingIssues" onchange="toggleColumn('listingIssues',this.checked)"> <span>后台问题数<span class="term-help" data-tip="col_listing_issues" tabindex="0" role="button" aria-label="术语解释">?</span></span></label>
           </div>
         </div>
       </div>
@@ -407,20 +407,20 @@
                 <th class="col-img" data-t="main_image">主图</th>
                 <th class="col-price" data-t="price">价格</th>
                 <th class="col-stock" data-t="stock">库存</th>
-                <th class="col-brand col-optional" data-col="brand" style="display:none">brand（品牌）</th>
-                <th class="col-ptype col-optional" data-col="productType" style="display:none">product_type（商品类型）</th>
-                <th class="col-vtype col-optional" data-col="variantType" style="display:none">parentage_level（父子关系）</th>
-                <th class="col-upc col-optional" data-col="upc" style="display:none">upc / ean（商品条码）</th>
-                <th class="col-color col-optional" data-col="color" style="display:none">color（颜色）</th>
-                <th class="col-size col-optional" data-col="size" style="display:none">size（尺寸）</th>
-                <th class="col-fulfill col-optional" data-col="fulfillment" style="display:none">fulfillment_channel（配送方式）</th>
-                <th class="col-preview col-optional" data-col="previewStatus" style="display:none">预览状态</th>
-                <th class="col-substatus col-optional" data-col="submitStatus" data-t="submit_status">上架</th>
-                <th class="col-subid col-optional" data-col="submissionId" style="display:none">提交ID</th>
-                <th class="col-asin col-optional" data-col="asin" style="display:none">ASIN</th>
-                <th class="col-route col-optional" data-col="route" style="display:none">上架路线</th>
-                <th class="col-final col-optional" data-col="finalStatus" style="display:none">最终状态</th>
-                <th class="col-lissues col-optional" data-col="listingIssues" style="display:none">后台问题数</th>
+                <th class="col-brand col-optional" data-col="brand" style="display:none">brand（品牌）<span class="term-help" data-tip="brand" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-ptype col-optional" data-col="productType" style="display:none">product_type（商品类型）<span class="term-help" data-tip="product_type" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-vtype col-optional" data-col="variantType" style="display:none">parentage_level（父子关系）<span class="term-help" data-tip="parentage_level" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-upc col-optional" data-col="upc" style="display:none">upc / ean（商品条码）<span class="term-help" data-tip="upc" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-color col-optional" data-col="color" style="display:none">color（颜色）<span class="term-help" data-tip="color" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-size col-optional" data-col="size" style="display:none">size（尺寸）<span class="term-help" data-tip="size" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-fulfill col-optional" data-col="fulfillment" style="display:none">fulfillment_channel（配送方式）<span class="term-help" data-tip="fulfillment_channel" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-preview col-optional" data-col="previewStatus" style="display:none">预览状态<span class="term-help" data-tip="col_preview_status" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-substatus col-optional" data-col="submitStatus"><span data-t="submit_status">上架</span><span class="term-help" data-tip="col_submit_status" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-subid col-optional" data-col="submissionId" style="display:none">提交ID<span class="term-help" data-tip="col_submission_id" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-asin col-optional" data-col="asin" style="display:none">ASIN<span class="term-help" data-tip="asin" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-route col-optional" data-col="route" style="display:none">上架路线<span class="term-help" data-tip="col_route" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-final col-optional" data-col="finalStatus" style="display:none">最终状态<span class="term-help" data-tip="col_final_status" tabindex="0" role="button" aria-label="术语解释">?</span></th>
+                <th class="col-lissues col-optional" data-col="listingIssues" style="display:none">后台问题数<span class="term-help" data-tip="col_listing_issues" tabindex="0" role="button" aria-label="术语解释">?</span></th>
                 <th class="col-ai" data-t="ai_status">AI状态</th>
                 <th class="col-valid" data-t="validation">校验</th>
                 <th class="col-actions col-fixed-right" data-t="actions">操作</th>
@@ -557,6 +557,43 @@
           <span data-t="api_config">API配置</span>
         </h3>
         <p class="settings-desc">客户只需要粘贴服务商给的 Key。不会填就点“一键恢复推荐”，系统会把域名、接口格式、模型自动写好。</p>
+
+        <!-- ★★★ 售后请把下面"获取 Key"卡片里的占位内容（VENDOR_NAME、VENDOR_BUY_URL、客服微信号、客服微信二维码图片）改成你们自己的，傻子客户才知道去哪买 ★★★ -->
+        <div class="vendor-cta" id="vendorCtaCard">
+          <div class="vendor-cta-head">
+            <span class="vendor-cta-badge">还没有 Key？</span>
+            <strong>跟客服买一个，几分钟就能拿到</strong>
+          </div>
+          <div class="vendor-cta-body">
+            <div class="vendor-cta-step">
+              <span class="vendor-cta-num">1</span>
+              <div>
+                <div class="vendor-cta-step-title">联系客服（任选一种方式）</div>
+                <div class="vendor-cta-step-desc">告诉客服"我要买 AI Key 用于亚马逊上架工具"，对方会发一段以 <code>sk-</code> 开头的 Key 给你。</div>
+                <div class="vendor-cta-contacts">
+                  <button class="btn btn-primary btn-sm" onclick="copyText('VENDOR_WECHAT_ID_PLACEHOLDER', '已复制客服微信号，去微信里搜')">📱 复制客服微信号</button>
+                  <button class="btn btn-outline btn-sm" onclick="showVendorQr()">📷 查看微信二维码</button>
+                  <a class="btn btn-outline btn-sm" href="VENDOR_BUY_URL_PLACEHOLDER" target="_blank" rel="noopener">🛒 在线购买页</a>
+                </div>
+              </div>
+            </div>
+            <div class="vendor-cta-step">
+              <span class="vendor-cta-num">2</span>
+              <div>
+                <div class="vendor-cta-step-title">把 Key 粘贴到下面"文字 API Key"和"图片 API Key"两个框</div>
+                <div class="vendor-cta-step-desc">如果客服只给了一个 Key，文字和图片两边粘同一个就行；其他选项点"一键恢复推荐"自动填好。</div>
+              </div>
+            </div>
+            <div class="vendor-cta-step">
+              <span class="vendor-cta-num">3</span>
+              <div>
+                <div class="vendor-cta-step-title">点"测试连接"出现绿色对勾就成功了</div>
+                <div class="vendor-cta-step-desc">如果失败：① 检查 Key 有没有多复制空格 ② 公司网络拦了请配代理（设置 → 高级 → HTTP_PROXY） ③ 上面方式发客服找他帮看。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="api-preset-box">
           <div>
             <strong>推荐配置</strong>
@@ -659,18 +696,24 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
             <span data-t="amazon_accounts">亚马逊账号</span>
           </h3>
-          <button class="btn btn-primary btn-sm" onclick="showAddAccount()">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            <span data-t="add">添加</span>
-          </button>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-outline btn-sm" onclick="showAmazonCredsTutorial()">
+              📖 不会拿凭证？看图文教程
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="showAddAccount()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span data-t="add">添加</span>
+            </button>
+          </div>
         </div>
-        <p class="settings-desc">这里决定 Amazon 预览和正式提交能不能用。状态必须显示“凭证完整”，否则不要让客户点正式提交。</p>
+        <p class="settings-desc">这里决定 Amazon 预览和正式提交能不能用。状态必须显示“凭证完整”，否则不要让客户点正式提交。<strong>第一次配置请先点上面的「图文教程」按钮，照着步骤拿到 4 个凭证再回来填。</strong></p>
         <div class="account-help-box">
-          <strong>每个输入框填什么</strong>
+          <strong>每个输入框填什么（鼠标悬停 ? 看详细解释）</strong>
           <span>账号名称：随便起名，例如“美国站主账号”。</span>
-          <span>Seller ID：卖家后台的 Seller ID / Merchant Token。</span>
-          <span>LWA Client ID / Secret：Developer Console 里 SP-API 应用的 Login with Amazon 凭证。</span>
-          <span>Refresh Token：授权后得到的长 token，通常以 <code>Atzr|</code> 开头。</span>
+          <span>Seller ID<span class="term-help" data-tip="seller_id" tabindex="0" role="button" aria-label="术语解释">?</span>：卖家后台的 Seller ID / Merchant Token。</span>
+          <span>Marketplace<span class="term-help" data-tip="marketplace_id" tabindex="0" role="button" aria-label="术语解释">?</span>：上架到哪个国家。美国选 US。</span>
+          <span>LWA Client ID<span class="term-help" data-tip="lwa_client_id" tabindex="0" role="button" aria-label="术语解释">?</span> / Secret<span class="term-help" data-tip="lwa_client_secret" tabindex="0" role="button" aria-label="术语解释">?</span>：Developer Console 里 SP-API 应用的 Login with Amazon 凭证。</span>
+          <span>Refresh Token<span class="term-help" data-tip="refresh_token" tabindex="0" role="button" aria-label="术语解释">?</span>：授权后得到的长 token，通常以 <code>Atzr|</code> 开头。</span>
         </div>
         <div class="data-table-wrap">
           <table class="data-table data-table-compact" id="accountTable">

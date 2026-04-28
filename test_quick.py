@@ -371,7 +371,7 @@ def test_excel_processor_keeps_ean_column_separate_from_upc(monkeypatch):
     reload_config()
 
     processor = ExcelProcessor()
-    processor.headers = ['SKU', 'EAN', 'item_name', 'main_image_url']
+    processor.headers = ['SKU', 'EAN', 'item_name', 'main_image_url', 'standard_price']
     col_map = processor.detect_columns()
 
     mapper = FieldMapper()
@@ -380,6 +380,7 @@ def test_excel_processor_keeps_ean_column_separate_from_upc(monkeypatch):
         'EAN': '4006381333931',
         'item_name': 'Demo Product',
         'main_image_url': 'https://example.com/demo.jpg',
+        'standard_price': '19.99',
     }, col_map)
     validation = mapper.validate_required_fields(product)
 
@@ -394,7 +395,7 @@ def test_excel_processor_keeps_gtin_column_separate_from_upc(monkeypatch):
     reload_config()
 
     processor = ExcelProcessor()
-    processor.headers = ['SKU', 'GTIN', 'item_name', 'main_image_url']
+    processor.headers = ['SKU', 'GTIN', 'item_name', 'main_image_url', 'standard_price']
     col_map = processor.detect_columns()
 
     mapper = FieldMapper()
@@ -403,6 +404,7 @@ def test_excel_processor_keeps_gtin_column_separate_from_upc(monkeypatch):
         'GTIN': '01234567890128',
         'item_name': 'Demo Product',
         'main_image_url': 'https://example.com/demo.jpg',
+        'standard_price': '19.99',
     }, col_map)
     validation = mapper.validate_required_fields(product)
 
@@ -542,11 +544,45 @@ def test_mapper_variant_validation_accepts_pants_bottoms_size(monkeypatch):
         'variation_theme': 'SIZE_NAME',
         'bottoms_size': 'L',
         'price': '21.99',
+        'main_image_url': 'https://example.com/pants.jpg',
         'product_identity_mode': 'gtin_exemption',
     })
 
     assert validation['valid'] is True
     assert not any('颜色或尺寸' in msg for msg in validation['errors'])
+
+
+def test_mapper_blocks_missing_price_and_main_image(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    base = {
+        'sku': 'SKU-REQUIRED',
+        'title': 'Required Product',
+        'product_identity_mode': 'gtin_exemption',
+    }
+
+    missing = mapper.validate_required_fields(base)
+    assert missing['valid'] is False
+    assert any('价格' in msg for msg in missing['errors'])
+    assert any('主图' in msg for msg in missing['errors'])
+
+    zero_price = mapper.validate_required_fields({
+        **base,
+        'price': '0',
+        'main_image_url': 'https://example.com/required.jpg',
+    })
+    assert zero_price['valid'] is False
+    assert any('大于 0' in msg for msg in zero_price['errors'])
+
+    oversized_price = mapper.validate_required_fields({
+        **base,
+        'price': '1999900',
+        'main_image_url': 'https://example.com/required.jpg',
+    })
+    assert oversized_price['valid'] is False
+    assert any('小数点' in msg or '超过' in msg for msg in oversized_price['errors'])
 
 
 def test_prepare_submission_products_auto_includes_parent_and_blocks_missing_parent(monkeypatch):
@@ -595,6 +631,59 @@ def test_prepare_submission_products_auto_includes_parent_and_blocks_missing_par
 
     assert [product['sku'] for product in ordered] == ['PARENT-3', 'CHILD-3-RED']
     assert any(item['sku'] == 'CHILD-ORPHAN' and '父体' in item['message'] for item in blockers)
+
+
+def test_prepare_submission_products_blocks_incomplete_variant_family(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    col_map = {
+        'sku': 'SKU',
+        'title': 'item_name',
+        'product_type': 'product_type',
+        'parentage_level': 'parentage_level',
+        'parent_sku': 'parent_sku',
+        'variation_theme': 'variation_theme',
+        'color': 'color',
+        'price': 'standard_price',
+        'image_url': 'main_image_url',
+        'product_identity_mode': 'product_identity_mode',
+    }
+    rows = [
+        {'SKU': 'PARENT-4', 'item_name': 'Parent Shirt', 'product_type': 'SHIRT', 'parentage_level': 'parent', 'variation_theme': 'COLOR_NAME'},
+        {'SKU': 'CHILD-4-RED', 'item_name': 'Child Shirt Red', 'product_type': 'SHIRT', 'parentage_level': 'child', 'parent_sku': 'PARENT-4', 'variation_theme': 'COLOR_NAME', 'color': 'Red', 'standard_price': '19.99', 'main_image_url': 'https://example.com/red.jpg', 'product_identity_mode': 'gtin_exemption'},
+        {'SKU': 'CHILD-4-BLUE', 'item_name': 'Child Shirt Blue', 'product_type': 'SHIRT', 'parentage_level': 'child', 'parent_sku': 'PARENT-4', 'variation_theme': 'COLOR_NAME', 'color': 'Blue', 'standard_price': '19.99', 'main_image_url': 'https://example.com/blue.jpg', 'product_identity_mode': 'gtin_exemption'},
+    ]
+
+    ordered, blockers = _prepare_submission_products(rows, col_map, ['CHILD-4-RED'], mapper)
+
+    assert ordered == []
+    assert any('PARENT-4' in item['message'] and 'CHILD-4-BLUE' in item['message'] for item in blockers)
+
+
+def test_prepare_submission_products_blocks_duplicate_asin(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    col_map = {
+        'sku': 'SKU',
+        'title': 'item_name',
+        'asin': 'ASIN',
+        'price': 'standard_price',
+        'image_url': 'main_image_url',
+        'product_identity_mode': 'product_identity_mode',
+    }
+    rows = [
+        {'SKU': 'SKU-ASIN-1', 'item_name': 'First Product', 'ASIN': 'B00DUPLIC1', 'standard_price': '19.99', 'main_image_url': 'https://example.com/1.jpg', 'product_identity_mode': 'gtin_exemption'},
+        {'SKU': 'SKU-ASIN-2', 'item_name': 'Second Product', 'ASIN': ' B00DUPLIC1 ', 'standard_price': '21.99', 'main_image_url': 'https://example.com/2.jpg', 'product_identity_mode': 'gtin_exemption'},
+    ]
+
+    ordered, blockers = _prepare_submission_products(rows, col_map, ['SKU-ASIN-1'], mapper)
+
+    assert ordered == []
+    assert any('B00DUPLIC1' in item['message'] and 'SKU-ASIN-2' in item['message'] for item in blockers)
 
 
 def test_evaluate_template_families_detects_theme_mismatch_and_duplicate_children():

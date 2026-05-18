@@ -132,6 +132,7 @@ class AccountManager:
                 'last_test_at': acc.get('last_test_at', ''),
                 'last_test_success': acc.get('last_test_success'),
                 'last_test_message': acc.get('last_test_message', ''),
+                'last_test_readiness': acc.get('last_test_readiness', ''),
                 'last_test_checks': acc.get('last_test_checks', []),
             }
             safe_list.append(safe)
@@ -210,6 +211,7 @@ class AccountManager:
         account['last_test_at'] = datetime.now(timezone.utc).isoformat()
         account['last_test_success'] = bool(result.get('success'))
         account['last_test_message'] = str(result.get('message', ''))[:500]
+        account['last_test_readiness'] = str(result.get('readiness', '') or '')[:50]
         account['last_test_checks'] = list(result.get('checks') or [])[:10]
         try:
             self.save_accounts()
@@ -285,17 +287,40 @@ class AccountManager:
             probe = listings.probe_connection()
             if not probe.get('success'):
                 status_code = probe.get('status_code')
-                checks.append(_account_test_check('listings_api', 'Listings API', 'fail', probe.get('message', 'Listings API 探测失败'), 'AMAZON_LISTINGS_FAIL'))
+                listings_message = probe.get('message', 'Listings API 探测失败')
                 if status_code in (401, 403):
+                    checks.append(_account_test_check('listings_api', 'Listings API', 'fail', listings_message, 'AMAZON_LISTINGS_FAIL'))
                     checks.append(_account_test_check('permission', '账号权限', 'fail', f'Amazon 返回 {status_code}，通常是授权/权限/站点不匹配', 'AMAZON_PERMISSION_FAIL'))
-                else:
-                    checks.append(_account_test_check('permission', '账号权限', 'warn', 'Token 可用，但 Listings API 探测未通过，请检查站点和权限', 'AMAZON_PERMISSION_UNKNOWN'))
+                    return finish(
+                        False,
+                        probe.get('message', 'Listings API 探测失败'),
+                        token_ok=True,
+                        probe_status=status_code,
+                        readiness='failed',
+                        code='AMAZON_LISTINGS_FAIL',
+                    )
+
+                checks.append(_account_test_check(
+                    'listings_api',
+                    'Listings API',
+                    'warn',
+                    f'{listings_message}。基础账号通信已通过；上架能力请在导入真实商品后通过预览验证。',
+                    'AMAZON_LISTINGS_PENDING',
+                ))
+                checks.append(_account_test_check(
+                    'permission',
+                    '账号权限',
+                    'warn',
+                    '当前只完成基础通信检测，Listings 权限/真实 SKU/商品数据将在预览或提交前继续校验。',
+                    'AMAZON_PERMISSION_PENDING',
+                ))
                 return finish(
-                    False,
-                    probe.get('message', 'Listings API 探测失败'),
+                    True,
+                    '账号基础连接通过；Listings 上架能力待导入商品后验证',
                     token_ok=True,
                     probe_status=status_code,
-                    code='AMAZON_LISTINGS_FAIL',
+                    readiness='basic_ok',
+                    code='AMAZON_BASIC_OK_LISTINGS_PENDING',
                 )
 
             checks.append(_account_test_check('listings_api', 'Listings API', 'pass', f"Listings API 可访问（HTTP {probe.get('status_code')}）"))
@@ -305,6 +330,7 @@ class AccountManager:
                 True,
                 f"连接成功! 账号: {acc.get('name')}",
                 probe_status=probe.get('status_code'),
+                readiness='submit_ready',
             )
         except AmazonTokenError as e:
             checks.append(_account_test_check('lwa_token', 'LWA Token', 'fail', f'凭证错误: {e}', 'AMAZON_TOKEN_FAIL'))

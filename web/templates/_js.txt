@@ -8018,8 +8018,22 @@ function formatAccountCheckStatus(status) {
   return ['失败', 'danger'];
 }
 
+function getAccountTestTone(result) {
+  if (!result?.success) return 'danger';
+  return result?.readiness === 'basic_ok' ? 'warning' : 'success';
+}
+
+function getAccountTestTitle(result) {
+  if (!result?.success) return 'Amazon 账号测试失败';
+  return result?.readiness === 'basic_ok' ? 'Amazon 账号基础连接通过' : 'Amazon 账号测试通过';
+}
+
 function showAccountTestResult(result) {
   const checks = Array.isArray(result?.checks) ? result.checks : [];
+  const tone = getAccountTestTone(result);
+  const summaryText = result?.readiness === 'basic_ok'
+    ? '系统已确认 LWA Token 和站点基础通信正常；Listings 上架能力会在导入真实商品后的预览/提交阶段继续校验。'
+    : '系统会分别检查：LWA Token、站点映射、Listings API、账号权限。失败时按红色项处理。';
   const checkHtml = checks.length > 0
     ? checks.map(check => {
         const [label, tone] = formatAccountCheckStatus(check.status);
@@ -8034,10 +8048,10 @@ function showAccountTestResult(result) {
         </div>`;
       }).join('')
     : '<div class="task-empty">当前版本没有返回分项结果，请把弹窗截图发给客服。</div>';
-  showModal(result?.success ? 'Amazon 账号测试通过' : 'Amazon 账号测试失败', `
-    <div class="account-test-summary ${result?.success ? 'success' : 'danger'}">
+  showModal(getAccountTestTitle(result), `
+    <div class="account-test-summary ${tone}">
       <strong>${escHtml(result?.message || (result?.success ? '连接成功' : '连接失败'))}</strong>
-      <p>系统会分别检查：LWA Token、站点映射、Listings API、账号权限。失败时按红色项处理。</p>
+      <p>${escHtml(summaryText)}</p>
     </div>
     <div class="account-test-checks">${checkHtml}</div>
   `);
@@ -8064,8 +8078,11 @@ function loadAccounts() {
       return;
     }
     tbody.innerHTML = accounts.map(a => {
+      const lastReadiness = String(a.last_test_readiness || '').trim();
+      const lastTestBadgeClass = !a.last_test_success ? 'badge-danger' : (lastReadiness === 'basic_ok' ? 'badge-warning' : 'badge-success');
+      const lastTestLabel = !a.last_test_success ? '失败' : (lastReadiness === 'basic_ok' ? '基础通过' : '通过');
       const lastTest = a.last_test_at
-        ? `<span class="badge ${a.last_test_success ? 'badge-success' : 'badge-danger'}" title="${escHtml(a.last_test_message || '')}">上次测试${a.last_test_success ? '通过' : '失败'}</span>`
+        ? `<span class="badge ${lastTestBadgeClass}" title="${escHtml(a.last_test_message || '')}">上次测试${lastTestLabel}</span>`
         : '<span class="badge badge-default">未测试</span>';
       return `<tr>
       <td>${escHtml(a.name)}</td>

@@ -1655,6 +1655,7 @@ body.drawer-open .drawer { transform: translateX(0); }
   background: #f8fafc;
 }
 .account-test-summary.success { border-color: var(--success-border); background: var(--success-bg); }
+.account-test-summary.warning { border-color: var(--warning-border); background: var(--warning-bg); }
 .account-test-summary.danger { border-color: var(--danger-border); background: var(--danger-bg); }
 .account-test-summary p {
   margin: 6px 0 0;

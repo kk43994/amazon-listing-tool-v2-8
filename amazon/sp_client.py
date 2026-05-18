@@ -64,13 +64,30 @@ class SPClient:
     def get_schema(self, product_type: str) -> Dict:
         """获取产品类型的 JSON Schema 定义"""
         client = self._make_client(ProductTypeDefinitions)
-        resp = client.get_definitions_product_type(
-            product_type,
+        params = dict(
             marketplaceIds=[self.marketplace_id],
             requirements='LISTING',
             locale='en_US',
-            sellerId=self.seller_id,
         )
+
+        try:
+            resp = client.get_definitions_product_type(
+                product_type,
+                **params,
+                sellerId=self.seller_id,
+            )
+        except Exception as exc:
+            # Some seller accounts reject seller-specific Product Type Definitions
+            # with a generic InvalidInput even though the public marketplace schema is available.
+            message = str(exc)
+            if 'InvalidInput' not in message and 'Invalid parameters provided' not in message:
+                raise
+            logger.warning(
+                "Seller-specific product type schema failed for %s, falling back to marketplace schema: %s",
+                product_type,
+                exc,
+            )
+            resp = client.get_definitions_product_type(product_type, **params)
         return resp.payload
 
     def put_listing(self, sku: str, body: Dict) -> Dict:

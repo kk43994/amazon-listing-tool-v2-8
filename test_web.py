@@ -2684,6 +2684,51 @@ def test_account_manager_test_connection_uses_listings_probe(monkeypatch):
             accounts_path.unlink()
 
 
+def test_account_manager_treats_probe_400_as_basic_connection_ok(monkeypatch):
+    output_dir = Path(web_config.OUTPUT_DIR).resolve()
+    accounts_path = output_dir / f'test_accounts_soft_probe_{uuid4().hex[:8]}.json'
+    accounts_path.write_text(json.dumps({
+        'accounts': [{
+            'name': 'US Test',
+            'seller_id': 'SELLER-1',
+            'marketplace_id': 'ATVPDKIKX0DER',
+            'marketplace_name': 'Amazon US',
+            'lwa_client_id': 'client',
+            'lwa_client_secret': 'secret',
+            'refresh_token': 'refresh',
+            'is_default': True,
+            'enabled': True,
+        }]
+    }), encoding='utf-8')
+
+    try:
+        from amazon.accounts import AccountManager
+        from amazon.auth import AmazonAuth
+        from amazon.listings import ListingsAPI
+
+        monkeypatch.setattr(AmazonAuth, 'get_access_token', lambda self: 'token')
+        monkeypatch.setattr(ListingsAPI, 'probe_connection', lambda self: {
+            'success': False,
+            'status_code': 400,
+            'message': 'Listings API 探测失败(400): Invalid parameters provided',
+        })
+
+        manager = AccountManager(str(accounts_path))
+        result = manager.test_connection('SELLER-1')
+
+        assert result['success'] is True
+        assert result['readiness'] == 'basic_ok'
+        assert result['code'] == 'AMAZON_BASIC_OK_LISTINGS_PENDING'
+        assert result['probe_status'] == 400
+        assert any(check['name'] == 'listings_api' and check['status'] == 'warn' for check in result['checks'])
+        listed = manager.list_accounts()[0]
+        assert listed['last_test_success'] is True
+        assert listed['last_test_readiness'] == 'basic_ok'
+    finally:
+        if accounts_path.exists():
+            accounts_path.unlink()
+
+
 def test_account_manager_test_connection_rejects_placeholder_credentials():
     output_dir = Path(web_config.OUTPUT_DIR).resolve()
     accounts_path = output_dir / f'test_accounts_placeholder_{uuid4().hex[:8]}.json'
@@ -2712,6 +2757,34 @@ def test_account_manager_test_connection_rejects_placeholder_credentials():
     finally:
         if accounts_path.exists():
             accounts_path.unlink()
+
+
+def test_sp_client_get_schema_falls_back_without_seller_id():
+    from amazon.sp_client import SPClient
+
+    calls = []
+
+    class FakeResponse:
+        payload = {'productType': 'CELLULAR_PHONE', 'schema': {'link': {'resource': 'https://example.com/schema.json'}}}
+
+    class FakeProductTypeDefinitions:
+        def get_definitions_product_type(self, product_type, **kwargs):
+            calls.append((product_type, kwargs))
+            if 'sellerId' in kwargs:
+                raise Exception("[{'code': 'InvalidInput', 'message': 'Invalid parameters provided.'}]")
+            return FakeResponse()
+
+    client = SPClient.__new__(SPClient)
+    client.seller_id = 'SELLER-1'
+    client.marketplace_id = 'ATVPDKIKX0DER'
+    client._make_client = lambda cls: FakeProductTypeDefinitions()
+
+    result = client.get_schema('CELLULAR_PHONE')
+
+    assert result['productType'] == 'CELLULAR_PHONE'
+    assert len(calls) == 2
+    assert calls[0][1]['sellerId'] == 'SELLER-1'
+    assert 'sellerId' not in calls[1][1]
 
 
 def test_build_listing_api_context_skips_placeholder_credentials(monkeypatch):

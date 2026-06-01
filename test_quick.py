@@ -167,6 +167,158 @@ def test_mapper_sets_gtin_exemption_boolean(monkeypatch):
     assert attrs['supplier_declared_has_product_identifier_exemption'][0]['value'] is True
 
 
+def test_mapper_builds_minimal_existing_asin_offer_body(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    product = {
+        'sku': 'SKU-ASIN-OFFER',
+        'asin': 'B0FT2W95F8',
+        'product_type': 'ARTIFICIAL_TREE',
+        'title': 'Existing catalog title should not force full listing validation',
+        'brand': 'Existing Brand',
+        'main_image_url': 'https://example.com/full-listing-image.jpg',
+        'description': 'Existing ASIN offer only.',
+        'product_identity_mode': 'gtin_exemption',
+        'price': '19.99',
+        'quantity': '3',
+        'condition_type': 'new_new',
+        'currency': 'USD',
+    }
+
+    body = mapper.build_put_body(product)
+
+    assert body['productType'] == 'PRODUCT'
+    assert body['requirements'] == 'LISTING_OFFER_ONLY'
+    assert body['attributes']['merchant_suggested_asin'][0]['value'] == 'B0FT2W95F8'
+    assert body['attributes']['purchasable_offer'][0]['audience'] == 'ALL'
+    assert body['attributes']['fulfillment_availability'][0]['quantity'] == 3
+    assert 'item_name' not in body['attributes']
+    assert 'main_product_image_locator' not in body['attributes']
+    assert 'product_description' not in body['attributes']
+
+    validation = mapper.validate_required_fields(product)
+    assert validation['valid'] is True
+
+
+def test_mapper_existing_asin_route_overrides_real_gtin_variant(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    product = {
+        'sku': 'SKU-ASIN-CHILD',
+        'asin': 'B0FT2W95F8',
+        'upc': '724462149823',
+        'product_identity_mode': 'real_gtin',
+        'submission_route': 'existing_asin',
+        'product_type': 'ARTIFICIAL_TREE',
+        'parentage_level': 'child',
+        'parent_sku': 'PARENT-SKU',
+        'variation_theme': 'EDITION',
+        'color': 'Red',
+        'title': 'Existing ASIN title should not be resubmitted',
+        'main_image_url': 'https://example.com/image.jpg',
+        'price': '14.99',
+        'quantity': '50',
+        'condition_type': 'new_new',
+        'currency': 'USD',
+    }
+
+    body = mapper.build_put_body(product)
+    validation = mapper.validate_required_fields(product)
+
+    assert body['productType'] == 'PRODUCT'
+    assert body['requirements'] == 'LISTING_OFFER_ONLY'
+    assert validation['valid'] is True
+    assert body['attributes']['merchant_suggested_asin'][0]['value'] == 'B0FT2W95F8'
+    assert body['attributes']['purchasable_offer'][0]['our_price'][0]['schedule'][0]['value_with_tax'] == 14.99
+    assert body['attributes']['fulfillment_availability'][0]['quantity'] == 50
+    assert 'externally_assigned_product_identifier' not in body['attributes']
+    assert 'item_name' not in body['attributes']
+    assert 'main_product_image_locator' not in body['attributes']
+    assert 'parentage_level' not in body['attributes']
+
+
+def test_mapper_variant_child_with_persisted_asin_keeps_full_listing(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    product = {
+        'sku': 'SKU-ASIN-CHILD-FULL',
+        'asin': 'B0FT2W95F8',
+        'upc': '724462149823',
+        'product_identity_mode': 'real_gtin',
+        'product_type': 'ARTIFICIAL_TREE',
+        'parentage_level': 'child',
+        'parent_sku': 'PARENT-SKU',
+        'variation_theme': 'EDITION',
+        'color': 'Red',
+        'title': 'Child listing should keep variation attributes',
+        'main_image_url': 'https://example.com/image.jpg',
+        'price': '14.99',
+        'quantity': '50',
+        'condition_type': 'new_new',
+        'currency': 'USD',
+    }
+
+    body = mapper.build_put_body(product)
+
+    assert body['requirements'] == 'LISTING'
+    assert body['attributes']['parentage_level'][0]['value'] == 'child'
+    assert body['attributes']['child_parent_sku_relationship'][0]['parent_sku'] == 'PARENT-SKU'
+    assert body['attributes']['variation_theme'][0]['name'] == 'EDITION'
+    assert body['attributes']['color'][0]['value'] == 'Red'
+    assert body['attributes']['main_product_image_locator'][0]['media_location'] == 'https://example.com/image.jpg'
+    assert 'merchant_suggested_asin' in body['attributes']
+
+
+def test_mapper_ignores_persisted_submission_route_from_excel_rows(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    row = {
+        'SKU': 'SKU-ROW-1',
+        'item_name': 'Child row with stale route',
+        'product_type': 'ARTIFICIAL_TREE',
+        'asin': 'B0FT2W95F8',
+        'submission_route': 'existing_asin',
+        'parentage_level': 'child',
+        'parent_sku': 'PARENT-SKU',
+        'variation_theme': 'EDITION',
+        'color': 'Red',
+        'standard_price': '14.99',
+        'main_image_url': 'https://example.com/image.jpg',
+        'product_identity_mode': 'real_gtin',
+        'UPC': '724462149823',
+    }
+    col_map = {
+        'sku': 'SKU',
+        'title': 'item_name',
+        'product_type': 'product_type',
+        'asin': 'asin',
+        'parentage_level': 'parentage_level',
+        'parent_sku': 'parent_sku',
+        'variation_theme': 'variation_theme',
+        'color': 'color',
+        'price': 'standard_price',
+        'image_url': 'main_image_url',
+        'product_identity_mode': 'product_identity_mode',
+        'upc': 'UPC',
+        'submission_route': 'submission_route',
+    }
+
+    product = mapper.map_excel_row(row, col_map)
+    body = mapper.build_put_body(product)
+
+    assert 'submission_route' not in product
+    assert body['requirements'] == 'LISTING'
+    assert 'child_parent_sku_relationship' in body['attributes']
+
+
 def test_mapper_preserves_dynamic_schema_fields_and_battery_alias(monkeypatch):
     monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
     reload_config()
@@ -412,6 +564,92 @@ def test_excel_processor_keeps_gtin_column_separate_from_upc(monkeypatch):
     assert 'upc' not in col_map
     assert product['gtin'] == '01234567890128'
     assert validation['valid'] is True
+
+
+def test_excel_processor_maps_water_bottle_attribute_columns(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    processor = ExcelProcessor()
+    processor.headers = [
+        'SKU', 'item_name', 'main_image_url', 'standard_price',
+        'capacity', 'included_components', 'care_instructions', 'special_feature',
+    ]
+    col_map = processor.detect_columns()
+
+    mapper = FieldMapper()
+    product = mapper.map_excel_row({
+        'SKU': 'SKU-BOTTLE',
+        'item_name': 'Demo Bottle',
+        'main_image_url': 'https://example.com/demo.jpg',
+        'standard_price': '19.99',
+        'capacity': '20 fluid ounces',
+        'included_components': 'Water bottle, screw lid',
+        'care_instructions': 'Hand Wash Only',
+        'special_feature': 'Leak Proof',
+    }, col_map)
+
+    assert col_map['capacity'] == 'capacity'
+    assert col_map['included_components'] == 'included_components'
+    assert col_map['care_instructions'] == 'care_instructions'
+    assert col_map['special_feature'] == 'special_feature'
+    assert product['capacity'] == '20 fluid ounces'
+    assert product['included_components'] == 'Water bottle, screw lid'
+    assert product['care_instructions'] == 'Hand Wash Only'
+    assert product['special_feature'] == 'Leak Proof'
+
+
+def test_mapper_does_not_leak_pants_or_unit_helper_fields_for_bottle(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    product = {
+        'sku': 'SKU-BOTTLE',
+        'title': 'Demo Bottle',
+        'brand': 'DemoBrand',
+        'product_type': 'BOTTLE',
+        'size': '20 Ounces',
+        'price': '19.99',
+        'main_image_url': 'https://example.com/bottle.jpg',
+        'product_identity_mode': 'gtin_exemption',
+        'unit_count': '1',
+        'unit_count_type': 'Count',
+        'weight': '0.75',
+        'weight_unit': 'pounds',
+        'item_weight_unit': 'pounds',
+    }
+
+    attrs = mapper.build_listing_attributes(product)
+
+    assert 'size' in attrs
+    assert 'bottoms_size' not in attrs
+    assert 'unit_count_type' not in attrs
+    assert 'item_weight_unit' not in attrs
+
+
+def test_mapper_uses_bottle_width_height_and_model_name_fallback(monkeypatch):
+    monkeypatch.delenv('OUTPUT_IMAGE_PUBLIC_BASE', raising=False)
+    reload_config()
+
+    mapper = FieldMapper()
+    attrs = mapper.build_listing_attributes({
+        'sku': 'SKU-BOTTLE-DIMS',
+        'title': 'Demo Bottle',
+        'brand': 'DemoBrand',
+        'product_type': 'BOTTLE',
+        'model_number': 'DB-WB-20-BLK',
+        'item_length': '3',
+        'item_width': '3',
+        'item_height': '10',
+        'dimension_unit': 'inches',
+    })
+
+    assert attrs['model_name'][0]['value'] == 'DB-WB-20-BLK'
+    assert attrs['item_width_height'][0]['width']['value'] == 3.0
+    assert attrs['item_width_height'][0]['height']['unit'] == 'inches'
+    assert 'item_dimensions' not in attrs
+    assert 'item_depth_width_height' not in attrs
 
 
 def test_mapper_allows_offer_only_submission_without_title_or_gtin(monkeypatch):
@@ -768,6 +1006,8 @@ def test_config_supports_separate_text_and_image_settings(monkeypatch):
     monkeypatch.setattr(config_module, 'load_dotenv', lambda override=True: None)
     monkeypatch.setenv('AI_API_KEY', '')
     monkeypatch.setenv('AI_API_BASE', '')
+    monkeypatch.delenv('AI_TEXT_PROTOCOL', raising=False)
+    monkeypatch.delenv('AI_IMAGE_PROTOCOL', raising=False)
     monkeypatch.setenv('AI_TEXT_API_KEY', 'text-key')
     monkeypatch.setenv('AI_TEXT_API_BASE', 'api.kk666.online')
     monkeypatch.setenv('AI_TEXT_ENDPOINT_TEMPLATE', '/v1beta/models/{model}:generateContent')

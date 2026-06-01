@@ -92,6 +92,7 @@ SEARCH_TERM_BYTE_LIMIT = {
 }
 
 MAX_SUBMISSION_PRICE = 10000.0
+BOTTLE_WIDTH_HEIGHT_PRODUCT_TYPES = {'BOTTLE', 'DRINKING_CUP'}
 
 GENERIC_ATTRIBUTE_EXCLUDE = {
     'sku', 'title', 'brand', 'description', 'keywords', 'price', 'list_price', 'currency',
@@ -117,7 +118,8 @@ GENERIC_ATTRIBUTE_EXCLUDE = {
     'submission_id', 'submission_route',
     'other_image_url_1', 'other_image_url_2', 'other_image_url_3', 'other_image_url_4',
     'other_image_url_5', 'other_image_url_6', 'other_image_url_7', 'other_image_url_8',
-    'item_weight', 'item_weight_unit_of_measure', 'item_dimensions_unit_of_measure',
+    'item_weight', 'item_weight_unit', 'item_weight_unit_of_measure',
+    'item_dimensions_unit_of_measure', 'unit_count_type',
     'target_audience_keywords', 'source_asin', 'source_color', 'source_marketplace',
     'source_parent_asin', 'source_price_usd', 'source_size', 'source_url',
 }
@@ -167,7 +169,12 @@ class FieldMapper:
         self._set_text_attr(attrs, 'brand', product.get('brand'), mp)
         self._set_text_attr(attrs, 'manufacturer', product.get('manufacturer'), mp)
         self._set_text_attr(attrs, 'model_number', product.get('model_number'), mp)
-        self._set_text_attr(attrs, 'model_name', product.get('model_name'), mp)
+        self._set_text_attr(
+            attrs,
+            'model_name',
+            product.get('model_name') or product.get('model_number') or product.get('part_number'),
+            mp,
+        )
         self._set_text_attr(attrs, 'item_type_keyword', product.get('item_type'), mp)
 
         # 产品标识(UPC/EAN/GTIN)
@@ -336,12 +343,17 @@ class FieldMapper:
             }]
 
         # === Shipping ===
-        dims = self._build_dimensions(product)
-        if dims:
-            attrs['item_dimensions'] = [dims]
-        depth_width_height = self._build_item_depth_width_height(product)
-        if depth_width_height:
-            attrs['item_depth_width_height'] = [depth_width_height]
+        if self._uses_item_width_height(product):
+            width_height = self._build_item_width_height(product)
+            if width_height:
+                attrs['item_width_height'] = [width_height]
+        else:
+            dims = self._build_dimensions(product)
+            if dims:
+                attrs['item_dimensions'] = [dims]
+            depth_width_height = self._build_item_depth_width_height(product)
+            if depth_width_height:
+                attrs['item_depth_width_height'] = [depth_width_height]
 
         pkg_dims = self._build_package_dimensions(product)
         if pkg_dims:
@@ -372,12 +384,12 @@ class FieldMapper:
         # === Safety & Compliance ===
         self._set_text_attr(attrs, 'country_of_origin', product.get('country_of_origin'), mp)
 
-        if product.get('batteries_required') is not None:
-            val = self._coerce_bool(product['batteries_required'])
-            attrs['batteries_required'] = [{
-                'value': val,
-                'marketplace_id': mp,
-            }]
+        battery_required_value = product.get('batteries_required')
+        val = self._coerce_bool(battery_required_value)
+        attrs['batteries_required'] = [{
+            'value': val,
+            'marketplace_id': mp,
+        }]
 
         if product.get('batteries_included') is not None:
             val = self._coerce_bool(product['batteries_included'])
@@ -402,7 +414,7 @@ class FieldMapper:
                 'value': declared_dg_regulation,
                 'marketplace_id': mp,
             }]
-        elif not self._coerce_bool(product.get('batteries_required')):
+        elif not val:
             attrs['supplier_declared_dg_hz_regulation'] = [{
                 'value': 'not_applicable',
                 'marketplace_id': mp,
@@ -445,11 +457,16 @@ class FieldMapper:
         """
         product_type = product.get('product_type', 'PRODUCT')
         requirements = self._resolve_requirements(product)
+        if requirements == 'LISTING_OFFER_ONLY':
+            product_type = 'PRODUCT'
+            attributes = self._build_offer_only_attributes(product)
+        else:
+            attributes = self.build_listing_attributes(product)
 
         return {
             'productType': product_type,
             'requirements': requirements,
-            'attributes': self.build_listing_attributes(product),
+            'attributes': attributes,
         }
 
     def validate_required_fields(self, product: Dict, schema_fields: Dict = None) -> Dict:
@@ -648,9 +665,78 @@ class FieldMapper:
         parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
         if parentage_level == 'parent':
             return 'LISTING_PRODUCT_ONLY'
-        if product.get('asin') and not product.get('title'):
+        if self._clean_value(product.get('asin')) and self._is_existing_asin_offer(product):
             return 'LISTING_OFFER_ONLY'
         return 'LISTING'
+
+    def _is_existing_asin_offer(self, product: Dict) -> bool:
+        route = self._clean_value(product.get('submission_route')).lower()
+        if route in ('new_listing', 'new', 'full_listing', 'listing'):
+            return False
+        if route in ('existing_asin', 'asin', 'offer_only', 'match_existing_asin'):
+            return True
+
+        mode = self._resolve_product_identity_mode(product)
+        if mode in ('existing_asin', 'asin', 'offer_only', 'match_existing_asin'):
+            return True
+        parentage_level = self._normalize_parentage_level(product.get('parentage_level'))
+        if parentage_level or self._clean_value(product.get('parent_sku')) or self._clean_value(product.get('variation_theme')):
+            return False
+        if self._clean_value(product.get('asin')):
+            if not self._clean_value(product.get('title')):
+                return True
+            if self._clean_value(product.get('merchant_suggested_asin')) or self._clean_value(product.get('source_asin')):
+                return True
+        if self._clean_value(product.get('asin')):
+            return True
+        identifier_type, identifier_value = self._resolve_external_product_identifier(product)
+        if mode == 'real_gtin' and identifier_type and identifier_value:
+            return False
+        return True
+
+    def _build_offer_only_attributes(self, product: Dict) -> Dict:
+        attrs = {}
+        mp = self.marketplace_id
+
+        asin = self._clean_value(product.get('asin'))
+        if asin:
+            attrs['merchant_suggested_asin'] = [{
+                'value': asin,
+                'marketplace_id': mp,
+            }]
+
+        if product.get('price'):
+            try:
+                price_val = self._parse_numeric(product['price'])
+                attrs['purchasable_offer'] = [{
+                    'marketplace_id': mp,
+                    'currency': product.get('currency') or self.default_currency,
+                    'audience': 'ALL',
+                    'our_price': [{
+                        'schedule': [{
+                            'value_with_tax': price_val
+                        }]
+                    }],
+                }]
+            except (ValueError, TypeError):
+                logger.warning(f"  ⚠️ 无效价格: {product.get('price')}")
+
+        if product.get('quantity'):
+            try:
+                attrs['fulfillment_availability'] = [{
+                    'fulfillment_channel_code': product.get('fulfillment_channel', 'DEFAULT'),
+                    'quantity': int(product['quantity']),
+                }]
+            except (ValueError, TypeError):
+                pass
+
+        condition = self._normalize_condition_type(product.get('condition_type', 'new_new'))
+        attrs['condition_type'] = [{
+            'value': condition,
+            'marketplace_id': mp,
+        }]
+
+        return attrs
 
     def _normalize_parentage_level(self, value) -> str:
         text = self._clean_value(value).lower()
@@ -756,7 +842,7 @@ class FieldMapper:
             'parent_sku': ['parent_sku'],
             'parentage_level': ['parentage_level'],
             'variation_theme': ['variation_theme'],
-            'bottoms_size': ['bottoms_size', 'size'],
+            'bottoms_size': ['bottoms_size'],
             'capacity': ['capacity'],
             'special_feature': ['AI特殊功能', 'special_feature'],
             'included_components': ['included_components'],
@@ -1246,6 +1332,10 @@ class FieldMapper:
             if entry:
                 dims['height'] = entry
         return dims if len(dims) > 1 else None
+
+    def _uses_item_width_height(self, product: Dict) -> bool:
+        product_type = self._clean_value(product.get('product_type')).upper()
+        return product_type in BOTTLE_WIDTH_HEIGHT_PRODUCT_TYPES
 
     def _build_item_width_height(self, product: Dict) -> Optional[Dict]:
         """构建 Item Dimensions W x H。"""

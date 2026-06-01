@@ -249,6 +249,55 @@ def test_ai_text_openai_sends_system_prompt(monkeypatch):
     assert captured_messages[1]['content'] == 'Write a title'
 
 
+def test_ai_text_openai_responses_sends_input_payload(monkeypatch):
+    """验证 ai_text 通过 OpenAI Responses 协议时发送 system/user input。"""
+    monkeypatch.setenv('AI_API_KEY', 'test-key')
+    monkeypatch.setenv('AI_TEXT_API_KEY', 'test-key')
+    monkeypatch.setenv('AI_TEXT_API_BASE', 'https://api.kk666.best')
+    monkeypatch.setenv('AI_TEXT_ENDPOINT_TEMPLATE', '/v1/responses')
+    monkeypatch.setenv('AI_TEXT_PROTOCOL', 'openai_responses')
+    monkeypatch.setenv('AI_TEXT_MODEL', 'gpt-5.5')
+    from config import reload_config
+    reload_config()
+
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {'output_text': 'Generated Title'}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            captured['url'] = url
+            captured['headers'] = headers
+            captured['json'] = json
+            return FakeResponse()
+
+    monkeypatch.setattr('httpx.Client', FakeClient)
+
+    result = ai_text('Write a title', temperature=0.5, max_tokens=32)
+    assert result == 'Generated Title'
+    assert captured['url'] == 'https://api.kk666.best/v1/responses'
+    assert captured['json']['model'] == 'gpt-5.5'
+    assert captured['json']['input'][0]['role'] == 'system'
+    assert 'Amazon' in captured['json']['input'][0]['content'][0]['text']
+    assert captured['json']['input'][1]['role'] == 'user'
+    assert captured['json']['input'][1]['content'][0]['text'] == 'Write a title'
+    assert captured['json']['max_output_tokens'] == 32
+
+
 def test_ai_text_custom_system_prompt(monkeypatch):
     """验证自定义 system_prompt 覆盖默认值。"""
     monkeypatch.setenv('AI_API_KEY', 'test-key')

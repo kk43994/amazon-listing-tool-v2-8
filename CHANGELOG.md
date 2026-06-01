@@ -4,6 +4,37 @@
 
 ## Unreleased
 
+## v0.5.2 - 2026-06-01
+
+### 新增
+
+- 新增 Amazon 官方模板导入识别：支持直接上传 Seller Central 导出的 `.xlsm/.xlsx` 官方模板，自动解析 `product_type`、站点、变体模式和字段预览，再回填到 2.8 模板流程中。
+- 新增模板流程的“直接使用 product_type”入口：商家拿到官方模板 ID 后，不必先搜关键词，可以直接填写并校验。
+- 新增“查看 Excel”按钮和 `/api/open-current-excel` 接口，方便商家从工作台直接打开当前正在处理的工作簿。
+- 新增 Amazon issue 中文解释层 `core/amazon_issue_notes.py`，把常见 `InvalidInput`、图片读取失败、标题主图不匹配、缺失字段等报错转成商家可读的中英双语提示。
+
+### 优化
+
+- AI 默认推荐配置从 Gemini generateContent 切换为 `https://api.kk666.best` + `gpt-5.5`（文本/多模态）和 `gpt-image-2`（图片），文字默认走 `/v1/responses`，图片默认走 `/v1/images/generations`。
+- `core/ai_client.py` 新增 OpenAI Responses API 支持，并把图片生成/编辑的 endpoint 构建拆开，兼容文字与图片分别走不同协议。
+- Amazon 账号检测增强：当 Listings API 返回 `400 Invalid parameters provided` 且实为 Seller ID / Token / 站点不匹配时，明确标记为 `AMAZON_SELLER_SCOPE_INVALID`，避免误判成“基础连接通过”。
+- 官方模板搜索/选择流程优化：手动搜索框支持直接粘贴官方模板 ID，模板面板支持同时显示“关键词搜索 / 直接指定 / 官方模板导入”三种来源。
+- 示例模板升级为更完整的 `BOTTLE` 示例，包含容量、组件、护理说明、特殊功能、尺寸/重量、免码和合规字段，减少客户第一次套模板时的试错。
+
+### 修复
+
+- 修复带历史 ASIN 的子体 SKU 在正式提交时被错误降级成 `LISTING_OFFER_ONLY` 跟卖路径、导致父子关系和变体字段没有进入 Amazon payload 的问题。
+- 修复正式提交结果回写不完整时，某些工作簿只写进 `submission_id`，却漏掉 `submit_status / submit_time / submit_message` 列的问题；现在缺失列会自动补齐并写值。
+- 修复变体家族真实提交流程中的阻断项暴露不清问题：本次已验证并补齐 `is_refurbished` 等 Amazon 必填字段后，可重新预览并继续提交剩余子体。
+- 修复 `BOTTLE` / `DRINKING_CUP` 等类目尺寸映射不准确的问题，补充 `item_width_height`、`model_name` 回退和辅助字段过滤，避免把服饰类字段错误泄漏到水杯类目。
+- 修复 `batteries_required`、危化品声明、容量、组件、护理说明、特殊功能、`submission_route` 等字段在 Excel 导入/映射中的兼容性缺口，减少“前端看得到、提交时丢字段”的情况。
+- 修复 Amazon 预览/提交报错在前端只显示英文原文的问题；现在结果中心、诊断面板、提交通知会优先显示更可执行的商家说明。
+
+### 验证
+
+- 已补充 OpenAI Responses、Amazon issue 中文说明、官方模板导入、offer-only 路由判定、缺失提交状态列自动补齐等自动化测试。
+- 已在真实变体家族工作簿上完成链路验证：整组预览恢复为 `4/4 VALID`，父体与剩余子体可继续正式提交，提交记录已落到 `output/submissions/submit_20260601_131544.json`、`submit_20260601_134922.json`、`submit_20260601_135804.json`。
+
 ## v0.5.1 - 2026-05-18
 
 ### 修复

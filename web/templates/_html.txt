@@ -188,8 +188,8 @@
             <input type="text" id="templateKeywordInput" placeholder="如 wireless mouse / tumbler / phone case" oninput="resetTemplateRecommendationState()" onkeydown="if(event.key==='Enter'){recommendTemplate()}">
           </div>
           <div class="form-group">
-            <label>模板产品类型</label>
-            <input type="text" id="templateProductTypeInput" placeholder="自动推荐后可修改，例：DRINKING_CUP" oninput="refreshTemplateFlowUi()">
+            <label>已选 product_type，可直接填写官方模板ID</label>
+            <input type="text" id="templateProductTypeInput" placeholder="例：DRINKING_CUP / INSTRUMENT_PARTS_AND_ACCESSORIES" oninput="refreshTemplateFlowUi()">
           </div>
           <div class="form-group">
             <label>模板结构</label>
@@ -201,14 +201,25 @@
         </div>
         <div class="template-manual-row">
           <div class="form-group">
-            <label>手动搜索官方类目</label>
-            <input type="text" id="templateManualSearchInput" placeholder="比如 storage rack / drinking cup / phone case" onkeydown="if(event.key==='Enter'){searchOfficialTemplate()}">
+            <label>按商品关键词搜索类目</label>
+            <input type="text" id="templateManualSearchInput" placeholder="如 running shoes / shoe / cup；也可粘贴官方模板ID" onkeydown="if(event.key==='Enter'){searchOfficialTemplate()}">
           </div>
           <div class="template-manual-actions">
-            <button class="btn btn-outline btn-sm" onclick="searchOfficialTemplate()">搜索官方类目</button>
-            <button class="btn btn-outline btn-sm" onclick="validateSelectedTemplate()">检查当前模板</button>
+            <button class="btn btn-outline btn-sm" onclick="searchOfficialTemplate()">按关键词搜索</button>
+            <button class="btn btn-outline btn-sm" onclick="useManualInputAsProductType()">直接使用这个 product_type</button>
+            <button class="btn btn-outline btn-sm" onclick="validateSelectedTemplate()">检查已选 product_type</button>
           </div>
         </div>
+        <div class="template-official-import-row">
+          <div class="form-group">
+            <label>已有 Amazon 官方 .xlsm 模板</label>
+            <input type="file" id="officialTemplateFileInput" accept=".xlsm,.xlsx">
+          </div>
+          <div class="template-manual-actions">
+            <button class="btn btn-outline btn-sm" onclick="importOfficialAmazonTemplate()">上传识别 product_type</button>
+          </div>
+        </div>
+        <div id="officialTemplateImportSummary" class="template-hint-box"></div>
         <div id="templateRecommendationSummary" class="template-hint-box"></div>
         <div id="templateSelectionStatus" class="template-selection-status"></div>
         <div id="templateCandidates" class="template-candidate-list"></div>
@@ -261,6 +272,11 @@
           <button class="btn btn-ghost btn-sm" onclick="downloadTemplate()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
             <span data-t="download_template">下载模板</span>
+          </button>
+
+          <button class="btn btn-ghost btn-sm" onclick="openCurrentExcel()" id="btnOpenExcel" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"></path><polyline points="14 2 14 8 20 8"></polyline><path d="M10 12h4"></path><path d="M10 16h4"></path></svg>
+            <span data-t="open_excel">查看Excel</span>
           </button>
 
           <button class="btn btn-ghost btn-sm" onclick="exportData()" id="btnExport" disabled>
@@ -581,9 +597,9 @@
               <div>
                 <div class="vendor-cta-step-title">进「模型广场」找两个模型，看接口路径</div>
                 <div class="vendor-cta-step-desc">
-                  登录后左侧菜单点 <strong>「模型广场」</strong>，搜下面两个模型名，点进去看「接口」字段（一般是 <code>/v1beta/models/{model}:generateContent</code>）：<br>
-                  • 文字模型：<code>gemini-3.1-flash-lite-preview</code><br>
-                  • 图片模型：<code>gemini-3.1-flash-image-preview</code><br>
+                  登录后左侧菜单点 <strong>「模型广场」</strong>，搜下面两个模型名，点进去看「接口」字段：<br>
+                  • 文字/多模态模型：<code>gpt-5.5</code>，接口：<code>/v1/responses</code><br>
+                  • 图片模型：<code>gpt-image-2</code>，接口：<code>/v1/images/generations</code><br>
                   <strong>看到的接口要和下面"文字接口格式"/"图片接口格式"一致</strong>。如果对得上，点下面"一键恢复推荐"就行；如果不一样，把广场上看到的接口截图发给客服。
                 </div>
               </div>
@@ -624,7 +640,7 @@
         <div class="api-preset-box">
           <div>
             <strong>推荐配置</strong>
-            <p>Base URL：<code>https://api.kk666.best</code>；文字模型：<code>gemini-3.1-flash-lite-preview</code>；图片模型：<code>gemini-3.1-flash-image-preview</code></p>
+            <p>Base URL：<code>https://api.kk666.best</code>；文字/多模态模型：<code>gpt-5.5</code>；图片模型：<code>gpt-image-2</code></p>
           </div>
           <div class="api-preset-actions">
             <button class="btn btn-outline btn-sm" onclick="copyText('https://api.kk666.best', '已复制 Base URL')">复制域名</button>
@@ -650,13 +666,13 @@
           </div>
           <div class="form-group advanced-ai-field">
             <label>文字接口格式</label>
-            <input type="text" id="cfgTextEndpoint" placeholder="/v1beta/models/{model}:generateContent">
-            <div class="field-help">保持默认即可。这里必须保留 <code>{model}</code>，客户不要手改。</div>
+            <input type="text" id="cfgTextEndpoint" placeholder="/v1/responses">
+            <div class="field-help">保持默认 <code>/v1/responses</code> 即可，客户不要手改。</div>
           </div>
           <div class="form-group advanced-ai-field">
             <label data-t="ai_model">文字模型</label>
-            <input type="text" id="cfgTextModel" placeholder="gemini-3.1-flash-lite-preview">
-            <div class="field-help">默认用 <code>gemini-3.1-flash-lite-preview</code>，用于标题、五点、描述、关键词。</div>
+            <input type="text" id="cfgTextModel" placeholder="gpt-5.5">
+            <div class="field-help">默认用 <code>gpt-5.5</code>，用于标题、五点、描述、关键词和多模态理解。</div>
           </div>
           <div class="form-group">
             <label>图片 API Key</label>
@@ -670,13 +686,13 @@
           </div>
           <div class="form-group advanced-ai-field">
             <label>图片接口格式</label>
-            <input type="text" id="cfgImageEndpoint" placeholder="/v1beta/models/{model}:generateContent">
-            <div class="field-help">保持默认即可。图片模型也走 Gemini generateContent 接口。</div>
+            <input type="text" id="cfgImageEndpoint" placeholder="/v1/images/generations">
+            <div class="field-help">保持默认 <code>/v1/images/generations</code> 即可。</div>
           </div>
           <div class="form-group advanced-ai-field">
             <label data-t="img_model">图片模型</label>
-            <input type="text" id="cfgImageModel" placeholder="gemini-3.1-flash-image-preview">
-            <div class="field-help">默认用 <code>gemini-3.1-flash-image-preview</code>，用于主图/附图生成。</div>
+            <input type="text" id="cfgImageModel" placeholder="gpt-image-2">
+            <div class="field-help">默认用 <code>gpt-image-2</code>，用于主图/附图生成。</div>
           </div>
         </div>
         <div class="settings-actions">

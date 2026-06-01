@@ -7,6 +7,7 @@ import requests
 import time
 from typing import Dict, Optional, List
 
+from core.amazon_issue_notes import annotate_amazon_issue
 from amazon.mapper import FieldMapper, ENDPOINTS, MARKETPLACE_REGION
 
 logger = logging.getLogger(__name__)
@@ -304,6 +305,7 @@ class ListingsAPI:
             attrs = issue.get('attributeNames', [])
             if attrs and 'hint' not in issue:
                 issue['hint'] = f"相关字段: {', '.join(attrs)}"
+            annotate_amazon_issue(issue)
 
         return payload
 

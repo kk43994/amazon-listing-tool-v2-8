@@ -13,6 +13,7 @@ import time
 import logging
 import threading
 import requests
+from io import BytesIO
 from datetime import datetime
 from datetime import timedelta
 from uuid import uuid4
@@ -24,6 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_config, reload_config
 from core.excel.processor import ExcelProcessor
+from core.amazon_issue_notes import annotate_amazon_issue, explain_amazon_issue
+from core.amazon_official_template import looks_like_product_type, parse_official_amazon_template
 from core.media_store import get_media_store
 from core.runtime_paths import resource_path, runtime_path
 from core.utils import sanitize_filename as _sanitize_filename, filter_rows as _filter_rows
@@ -57,9 +60,10 @@ config = get_config()
 _SUBMIT_SUCCESS_STATUSES = {'ACCEPTED', 'ACCEPTED_WITH_WARNINGS'}
 _SUBMIT_FAILURE_STATUSES = {'ERROR', 'INVALID', 'SKIPPED', 'PREVIEW_BLOCKED'}
 RECOMMENDED_AI_BASE = 'https://api.kk666.best'
-RECOMMENDED_AI_ENDPOINT = '/v1beta/models/{model}:generateContent'
-RECOMMENDED_TEXT_MODEL = 'gemini-3.1-flash-lite-preview'
-RECOMMENDED_IMAGE_MODEL = 'gemini-3.1-flash-image-preview'
+RECOMMENDED_TEXT_ENDPOINT = '/v1/responses'
+RECOMMENDED_IMAGE_ENDPOINT = '/v1/images/generations'
+RECOMMENDED_TEXT_MODEL = 'gpt-5.5'
+RECOMMENDED_IMAGE_MODEL = 'gpt-image-2'
 RECENT_PREVIEW_MAX_AGE = timedelta(hours=24)
 MAX_SUBMISSION_PRICE = 10000.0
 
@@ -340,10 +344,10 @@ def _recommended_ai_updates() -> dict:
     return {
         'AI_TEXT_API_BASE': RECOMMENDED_AI_BASE,
         'AI_IMAGE_API_BASE': RECOMMENDED_AI_BASE,
-        'AI_TEXT_ENDPOINT_TEMPLATE': RECOMMENDED_AI_ENDPOINT,
-        'AI_IMAGE_ENDPOINT_TEMPLATE': RECOMMENDED_AI_ENDPOINT,
-        'AI_TEXT_PROTOCOL': 'gemini_generate_content',
-        'AI_IMAGE_PROTOCOL': 'gemini_generate_content',
+        'AI_TEXT_ENDPOINT_TEMPLATE': RECOMMENDED_TEXT_ENDPOINT,
+        'AI_IMAGE_ENDPOINT_TEMPLATE': RECOMMENDED_IMAGE_ENDPOINT,
+        'AI_TEXT_PROTOCOL': 'openai_responses',
+        'AI_IMAGE_PROTOCOL': 'openai_images',
         'AI_TEXT_MODEL': RECOMMENDED_TEXT_MODEL,
         'AI_IMAGE_MODEL': RECOMMENDED_IMAGE_MODEL,
     }
@@ -361,7 +365,7 @@ def _validate_ai_updates(updates: dict, payload: dict) -> str:
         if key in updates:
             endpoint = _normalize_endpoint_template(updates[key])
             if 'generatecontent' in endpoint.lower() and '{model}' not in endpoint:
-                return f"{key} 必须保留 {{model}}，推荐填写 {RECOMMENDED_AI_ENDPOINT}"
+                return f"{key} 必须保留 {{model}}"
             updates[key] = endpoint
 
     provider_pairs = (
@@ -372,12 +376,19 @@ def _validate_ai_updates(updates: dict, payload: dict) -> str:
         model = str(updates.get(model_key) or getattr(config, model_key, '') or '').strip().lower()
         endpoint = str(updates.get(endpoint_key) or getattr(config, endpoint_key, '') or '').strip().lower()
         looks_gemini_model = 'gemini' in model
-        looks_openai_model = bool(re.match(r'^(gpt|o\d|dall-e|gpt-image)', model))
+        looks_openai_text_model = bool(re.match(r'^(gpt|o\d)', model))
+        looks_openai_image_model = bool(re.match(r'^(dall-e|gpt-image|image)', model))
         uses_gemini_endpoint = 'generatecontent' in endpoint
+        uses_responses_endpoint = '/responses' in endpoint
+        uses_image_endpoint = '/images/' in endpoint
         if looks_gemini_model and not uses_gemini_endpoint:
-            return f"{label}模型看起来是 Gemini，但接口格式不是 generateContent；请点“一键恢复推荐”或改回 {RECOMMENDED_AI_ENDPOINT}"
-        if looks_openai_model and uses_gemini_endpoint:
+            return f"{label}模型看起来是 Gemini，但接口格式不是 generateContent；请同步模型和接口格式后再保存"
+        if (looks_openai_text_model or looks_openai_image_model) and uses_gemini_endpoint:
             return f"{label}模型看起来是 OpenAI/GPT，但接口格式仍是 Gemini generateContent；请同步模型和接口格式后再保存"
+        if label == '文字' and looks_openai_text_model and not uses_responses_endpoint:
+            return f"{label}模型推荐走 Responses API，请填写 {RECOMMENDED_TEXT_ENDPOINT}"
+        if label == '图片' and looks_openai_image_model and not uses_image_endpoint:
+            return f"{label}模型推荐走图片接口，请填写 {RECOMMENDED_IMAGE_ENDPOINT}"
 
     customer_mode = str(payload.get('mode') or payload.get('ai_config_mode') or '').strip().lower()
     if customer_mode in {'simple', 'recommended', 'customer'}:
@@ -1548,9 +1559,15 @@ def _format_submit_issues(result_entry: dict) -> str:
 
     for issue in issues:
         if isinstance(issue, dict):
+            annotate_amazon_issue(issue)
             severity = str(issue.get('severity', '') or '').strip().upper()
             code = str(issue.get('code', '') or '').strip()
-            message = str(issue.get('message', '') or issue.get('details', '') or '').strip()
+            message = str(
+                issue.get('display_message', '')
+                or issue.get('message', '')
+                or issue.get('details', '')
+                or ''
+            ).strip()
             prefix_parts = [part for part in (severity, code) if part]
             prefix = f"[{'/'.join(prefix_parts)}] " if prefix_parts else ''
             if message:
@@ -1746,12 +1763,20 @@ def _normalize_diagnostic_issue(issue: dict, source: str) -> dict:
     categories = issue.get('categories') or []
     if isinstance(categories, str):
         categories = [categories]
+    message = str(issue.get('message', '') or issue.get('details', '') or '').strip()
+    note = explain_amazon_issue(issue, fallback_message=message)
     return {
         'source': source,
         'level': level,
         'severity': severity,
         'code': str(issue.get('code', '') or '').strip(),
-        'message': str(issue.get('message', '') or issue.get('details', '') or '').strip(),
+        'message': message,
+        'message_en': str(issue.get('message_en', '') or note.get('message_en', '') or message).strip(),
+        'message_zh': str(issue.get('message_zh', '') or note.get('message_zh', '') or '').strip(),
+        'seller_hint': str(issue.get('seller_hint', '') or note.get('seller_hint', '') or '').strip(),
+        'display_message': str(issue.get('display_message', '') or note.get('display_message', '') or message).strip(),
+        'hint': str(issue.get('hint', '') or '').strip(),
+        'fix': str(issue.get('fix', '') or '').strip(),
         'attributeNames': [str(attr).strip() for attr in attrs if str(attr).strip()],
         'categories': [str(cat).strip().upper() for cat in categories if str(cat).strip()],
     }
@@ -1835,9 +1860,14 @@ def _extract_listing_asin(payload: dict) -> str:
 
 def _infer_submission_route(product: dict | None = None, listing_payload: dict | None = None) -> str:
     product = product or {}
+    explicit_route = str(product.get('submission_route', '') or '').strip().lower()
+    if explicit_route in {'existing_asin', 'asin', 'offer_only', 'match_existing_asin'}:
+        return 'existing_asin'
+    if explicit_route in {'new_listing', 'new', 'full_listing', 'listing'}:
+        return 'new_listing'
+
     hinted_asin = str(
-        product.get('asin', '')
-        or product.get('merchant_suggested_asin', '')
+        product.get('merchant_suggested_asin', '')
         or product.get('source_asin', '')
         or ''
     ).strip()
@@ -3167,21 +3197,75 @@ def create_sample_excel():
         wb = Workbook()
         ws = wb.active
         ws.title = 'demo'
-        ws.append([
-            'SKU', 'item_name', 'brand', 'main_image_url', 'standard_price', 'quantity',
-            'condition_type', 'product_type', 'country_of_origin',
-        ])
-        ws.append([
-            'DEMO-SKU-001',
-            'Demo Stainless Steel Water Bottle',
-            'DemoBrand',
-            'https://m.media-amazon.com/images/I/61vJtKbAssL._AC_SL1500_.jpg',
-            '19.99',
-            '10',
-            'new_new',
-            'WATER_BOTTLE',
-            'US',
-        ])
+        headers = [
+            'SKU', 'item_name', 'brand', 'manufacturer', 'model_number',
+            'product_type', 'item_type_keyword', 'product_identity_mode',
+            'main_image_url', 'standard_price', 'list_price', 'currency',
+            'quantity', 'condition_type', 'fulfillment_channel',
+            'bullet_point_1', 'bullet_point_2', 'bullet_point_3',
+            'bullet_point_4', 'bullet_point_5', 'description',
+            'generic_keywords', 'material', 'color', 'size', 'capacity',
+            'included_components', 'care_instructions', 'special_feature',
+            'number_of_items', 'unit_count', 'unit_count_type',
+            'item_weight', 'item_weight_unit', 'item_length', 'item_width',
+            'item_height', 'dimension_unit', 'package_weight',
+            'package_weight_unit', 'package_length', 'package_width',
+            'package_height', 'country_of_origin', 'batteries_required',
+            'batteries_included', 'supplier_declared_dg_hz_regulation',
+            'supplier_declared_has_product_identifier_exemption',
+        ]
+        demo_row = {
+            'SKU': 'DEMO-BOTTLE-001',
+            'item_name': 'DemoBrand 20 oz Stainless Steel Insulated Water Bottle with Leak Proof Lid, BPA Free Travel Tumbler, Matte Black',
+            'brand': 'DemoBrand',
+            'manufacturer': 'DemoBrand',
+            'model_number': 'DB-WB-20-BLK',
+            'product_type': 'BOTTLE',
+            'item_type_keyword': 'bottles',
+            'product_identity_mode': 'gtin_exemption',
+            'main_image_url': 'https://m.media-amazon.com/images/I/61vJtKbAssL._AC_SL1500_.jpg',
+            'standard_price': '19.99',
+            'list_price': '24.99',
+            'currency': 'USD',
+            'quantity': '25',
+            'condition_type': 'new_new',
+            'fulfillment_channel': 'DEFAULT',
+            'bullet_point_1': 'Double wall stainless steel insulation helps keep drinks cold or hot during daily travel.',
+            'bullet_point_2': 'Leak proof screw lid is designed for commuting, school, gym, hiking, and office use.',
+            'bullet_point_3': 'BPA free lid and reusable bottle body support everyday hydration with a durable build.',
+            'bullet_point_4': 'Matte black exterior offers a clean, modern look and fits most standard cup holders.',
+            'bullet_point_5': 'Wide mouth opening makes it easier to add ice cubes, refill water, and hand wash.',
+            'description': 'DemoBrand 20 oz insulated water bottle is built for daily hydration at home, work, school, the gym, or outdoors. The stainless steel body, leak proof lid, and wide mouth design make it easy to carry cold or hot drinks through a full day.',
+            'generic_keywords': 'stainless steel water bottle insulated bottle leak proof travel tumbler reusable bottle',
+            'material': 'Stainless Steel',
+            'color': 'Matte Black',
+            'size': '20 Ounces',
+            'capacity': '20 fluid ounces',
+            'included_components': 'Water bottle, screw lid',
+            'care_instructions': 'Hand Wash Only',
+            'special_feature': 'Leak Proof, Double Wall Insulated, BPA Free',
+            'number_of_items': '1',
+            'unit_count': '1',
+            'unit_count_type': 'Count',
+            'item_weight': '0.75',
+            'item_weight_unit': 'pounds',
+            'item_length': '3',
+            'item_width': '3',
+            'item_height': '10',
+            'dimension_unit': 'inches',
+            'package_weight': '1',
+            'package_weight_unit': 'pounds',
+            'package_length': '3.5',
+            'package_width': '3.5',
+            'package_height': '10.5',
+            'country_of_origin': 'CN',
+            'batteries_required': 'No',
+            'batteries_included': 'No',
+            'supplier_declared_dg_hz_regulation': 'not_applicable',
+            'supplier_declared_has_product_identifier_exemption': 'Yes',
+        }
+        ws.append(headers)
+        ws.append([demo_row.get(header, '') for header in headers])
         wb.save(filepath)
         wb.close()
         invalidate_excel_cache(filepath)
@@ -3417,9 +3501,12 @@ def manage_config():
 
         if 'text_endpoint_template' in data:
             endpoint = str(data.get('text_endpoint_template', '')).strip().lower()
-            updates['AI_TEXT_PROTOCOL'] = (
-                'gemini_generate_content' if 'generatecontent' in endpoint else 'openai_chat_completions'
-            )
+            if 'generatecontent' in endpoint:
+                updates['AI_TEXT_PROTOCOL'] = 'gemini_generate_content'
+            elif '/responses' in endpoint:
+                updates['AI_TEXT_PROTOCOL'] = 'openai_responses'
+            else:
+                updates['AI_TEXT_PROTOCOL'] = 'openai_chat_completions'
         if 'image_endpoint_template' in data:
             endpoint = str(data.get('image_endpoint_template', '')).strip().lower()
             updates['AI_IMAGE_PROTOCOL'] = (
@@ -3447,8 +3534,8 @@ def reset_recommended_ai_config():
         'config': {
             'text_api_base': RECOMMENDED_AI_BASE,
             'image_api_base': RECOMMENDED_AI_BASE,
-            'text_endpoint_template': RECOMMENDED_AI_ENDPOINT,
-            'image_endpoint_template': RECOMMENDED_AI_ENDPOINT,
+            'text_endpoint_template': RECOMMENDED_TEXT_ENDPOINT,
+            'image_endpoint_template': RECOMMENDED_IMAGE_ENDPOINT,
             'text_model': RECOMMENDED_TEXT_MODEL,
             'image_model': RECOMMENDED_IMAGE_MODEL,
         },
@@ -3675,6 +3762,23 @@ def open_runtime_folder():
         return err(f'打开文件夹失败：{exc}', 500, 'OPEN_FOLDER_FAIL')
 
 
+@app.route('/api/open-current-excel', methods=['POST'])
+def open_current_excel():
+    """Open the currently imported Excel workbook in the local desktop app."""
+    data = request.json or {}
+    filepath = data.get('file', '')
+    validated = _validate_file_path(filepath)
+    if not validated or not os.path.exists(validated):
+        return err('文件不存在或路径非法', 400, 'INVALID_FILE')
+    if not validated.lower().endswith(('.xlsx', '.xls')):
+        return err('仅支持打开当前导入的 Excel 文件', 400, 'INVALID_EXCEL_FILE')
+    try:
+        _open_path_in_file_manager(validated)
+        return ok({'path': validated})
+    except Exception as exc:
+        return err(f'打开 Excel 失败：{exc}', 500, 'OPEN_EXCEL_FAIL')
+
+
 # ===== 账号管理 API =====
 
 @app.route('/api/accounts', methods=['GET'])
@@ -3846,15 +3950,16 @@ def get_products():
 
         title_col = col_map.get('title', '')
         sku_col = col_map.get('sku', '')
+        parentage_col = col_map.get('parentage_level', '')
 
         # 检测父SKU列和变体主题列
-        parent_col = None
-        variation_col = None
+        parent_col = col_map.get('parent_sku', '') or None
+        variation_col = col_map.get('variation_theme', '') or None
         for h in headers:
             hl = str(h).lower()
-            if hl in ('parent_sku', '父sku', 'parent sku', 'parent_asin', '父asin'):
+            if not parent_col and hl in ('parent_sku', '父sku', 'parent sku', 'parent_asin', '父asin'):
                 parent_col = h
-            if hl in ('variation_theme', '变体主题'):
+            if not variation_col and hl in ('variation_theme', '变体主题'):
                 variation_col = h
 
         # 检测品牌、价格、主图列
@@ -3966,6 +4071,9 @@ def get_products():
                 'ai_text_error': str(item.get('AI文案最后错误', '') or '').strip(),
                 'color': str(item.get(col_map.get('color', ''), '') or '').strip(),
                 'size': str(item.get(col_map.get('size', ''), '') or '').strip(),
+                'parentage_level': str(item.get(parentage_col, '') or '').strip() if parentage_col else '',
+                'parent_sku': str(item.get(parent_col, '') or '').strip() if parent_col else '',
+                'variation_theme': variation_theme,
                 'item_weight': cell_text(item, col_map.get('weight', '')),
                 'item_weight_unit': cell_text(item, col_map.get('item_weight_unit', '')),
                 'item_length': cell_text(item, col_map.get('item_length', '')),
@@ -5214,9 +5322,35 @@ def api_template_recommend():
 def api_template_manual_search():
     """按官方类目关键词搜索 Amazon product type。"""
     data = request.json or {}
+    keyword = str(data.get('keyword', '') or '').strip()
     try:
+        if looks_like_product_type(keyword):
+            variation_mode = str(data.get('variation_mode', 'single') or 'single').strip().lower()
+            validation = validate_product_type_candidate(
+                product_type=keyword,
+                marketplace=DEFAULT_MARKETPLACE,
+                variation_mode=variation_mode,
+            )
+            candidate = {
+                'product_type': keyword,
+                'display_name': keyword,
+                'score': 1.0,
+                'source': 'direct_product_type',
+            }
+            return jsonify({
+                'success': True,
+                'query': keyword,
+                'title': keyword,
+                'source': 'direct_product_type',
+                'marketplace': DEFAULT_MARKETPLACE,
+                'warning': '' if validation.get('usable') else validation.get('message', ''),
+                'confidence': 'high' if validation.get('usable') else 'low',
+                'needs_manual_selection': not bool(validation.get('usable')),
+                'candidates': [candidate] if validation.get('usable') else [],
+                'validation': validation,
+            })
         result = manual_search_product_types(
-            keyword=str(data.get('keyword', '') or '').strip(),
+            keyword=keyword,
             marketplace=DEFAULT_MARKETPLACE,
         )
         return jsonify({'success': True, **result})
@@ -5237,6 +5371,96 @@ def api_template_validate():
         return jsonify({'success': True, **result})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+def _template_field_preview(template_definition: dict, limit: int = 18) -> dict:
+    columns = list((template_definition or {}).get('columns', []) or [])
+
+    def pick(level: str):
+        items = []
+        for column in columns:
+            if str(column.get('level', '') or '').strip() != level:
+                continue
+            items.append({
+                'key': str(column.get('key', '') or '').strip(),
+                'label_zh': str(column.get('label_zh', '') or '').strip(),
+                'label_en': str(column.get('label_en', '') or '').strip(),
+                'source_attribute': str(column.get('source_attribute', '') or '').strip(),
+            })
+            if len(items) >= limit:
+                break
+        return items
+
+    return {
+        'required': pick('required'),
+        'recommended': pick('recommended'),
+        'column_count': len(columns),
+    }
+
+
+@app.route('/api/templates/import-official', methods=['POST'])
+def api_templates_import_official():
+    """上传 Seller Central 官方 xlsm/xlsx，自动识别 product_type 并匹配 2.8 模板。"""
+    if 'file' not in request.files:
+        return jsonify({'error': '请选择 Amazon 官方模板文件'}), 400
+
+    upload = request.files['file']
+    original_filename = upload.filename or ''
+    if not original_filename.lower().endswith(('.xlsm', '.xlsx')):
+        return jsonify({'error': '仅支持 Amazon 官方 .xlsm 或 .xlsx 模板'}), 400
+
+    content = upload.read()
+    if not content:
+        return jsonify({'error': '模板文件为空'}), 400
+
+    try:
+        official = parse_official_amazon_template(BytesIO(content), filename=original_filename)
+    except Exception as exc:
+        return jsonify({'error': f'解析 Amazon 官方模板失败: {exc}'}), 400
+
+    product_type = str(official.get('product_type', '') or '').strip()
+    if not product_type:
+        return jsonify({
+            'error': '没有从官方模板中识别到 product_type，请确认这是 Seller Central 下载的商品电子表格。',
+            'official_template': official,
+        }), 400
+
+    requested_variation = str(request.form.get('variation_mode', '') or '').strip().lower()
+    variation_mode = 'variation' if requested_variation == 'variation' else str(
+        official.get('suggested_variation_mode') or 'single'
+    ).strip().lower()
+    variation_mode = 'variation' if variation_mode == 'variation' else 'single'
+    marketplace = str(official.get('marketplace', DEFAULT_MARKETPLACE) or DEFAULT_MARKETPLACE).strip().upper()
+
+    validation = validate_product_type_candidate(
+        product_type=product_type,
+        marketplace=marketplace,
+        variation_mode=variation_mode,
+    )
+    definition = None
+    field_preview = {'required': [], 'recommended': [], 'column_count': 0}
+    if validation.get('usable'):
+        try:
+            definition = ensure_template_definition(
+                product_type=product_type,
+                marketplace=marketplace,
+                variation_mode=variation_mode,
+            )
+            field_preview = _template_field_preview(definition)
+        except Exception as exc:
+            validation = {
+                **validation,
+                'usable': False,
+                'message': f"已识别 product_type，但生成字段预览失败: {exc}",
+            }
+
+    return jsonify({
+        'success': True,
+        'official_template': official,
+        'validation': validation,
+        'template': template_definition_summary(definition),
+        'field_preview': field_preview,
+    })
 
 
 @app.route('/api/templates/generate', methods=['POST'])

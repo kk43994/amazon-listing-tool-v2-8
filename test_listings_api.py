@@ -70,6 +70,53 @@ def test_put_listings_item_flattens_top_level_errors(monkeypatch):
     assert result['http_status'] == 400
     assert result['issues'][0]['code'] == 'InvalidInput'
     assert result['issues'][0]['severity'] == 'ERROR'
+    assert result['issues'][0]['message_en'] == 'Unable to Retrieve Media Content'
+    assert 'Amazon 无法读取图片' in result['issues'][0]['message_zh']
+    assert 'Unable to Retrieve Media Content（' in result['issues'][0]['display_message']
+
+
+def test_put_listings_item_adds_chinese_note_for_generic_invalid_input(monkeypatch):
+    def fake_put(url, params=None, headers=None, json=None, timeout=None):
+        return _FakeResponse(400, {
+            'errors': [{
+                'code': 'InvalidInput',
+                'message': 'Invalid parameters provided.',
+            }]
+        })
+
+    monkeypatch.setattr('amazon.listings.requests.put', fake_put)
+
+    api = ListingsAPI(auth=_FakeAuth(), seller_id='SELLER', marketplace_id='ATVPDKIKX0DER')
+    result = api.put_listings_item('SKU-1', {'sku': 'SKU-1', 'product_type': 'PRODUCT'}, preview=True)
+
+    issue = result['issues'][0]
+    assert issue['message'] == 'Invalid parameters provided.'
+    assert issue['message_en'] == 'Invalid parameters provided.'
+    assert '参数无效' in issue['message_zh']
+    assert issue['display_message'].startswith('Invalid parameters provided.（参数无效')
+
+
+def test_put_listings_item_adds_note_for_title_image_mismatch(monkeypatch):
+    def fake_put(url, params=None, headers=None, json=None, timeout=None):
+        return _FakeResponse(200, {
+            'status': 'INVALID',
+            'issues': [{
+                'severity': 'ERROR',
+                'code': '100239',
+                'message': "The title and the Main image that you provided on this SKU don't seem to represent the same product.",
+                'attributeNames': ['item_name', 'main_product_image_locator'],
+            }]
+        })
+
+    monkeypatch.setattr('amazon.listings.requests.put', fake_put)
+
+    api = ListingsAPI(auth=_FakeAuth(), seller_id='SELLER', marketplace_id='ATVPDKIKX0DER')
+    result = api.put_listings_item('SKU-1', {'sku': 'SKU-1', 'product_type': 'PRODUCT'}, preview=True)
+
+    issue = result['issues'][0]
+    assert issue['code'] == '100239'
+    assert '标题和主图不匹配' in issue['message_zh']
+    assert 'item_name' in issue['message_zh']
 
 
 def test_submit_listings_blocks_when_preview_returns_error_status(monkeypatch):

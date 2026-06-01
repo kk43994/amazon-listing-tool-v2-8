@@ -300,6 +300,30 @@ class AccountManager:
                         code='AMAZON_LISTINGS_FAIL',
                     )
 
+                if status_code == 400 and 'Invalid parameters provided' in listings_message:
+                    checks.append(_account_test_check(
+                        'listings_api',
+                        'Listings API',
+                        'fail',
+                        f'{listings_message}。这通常表示 Seller ID 与授权 Token/站点不匹配，不能用于预览或提交。',
+                        'AMAZON_SELLER_SCOPE_INVALID',
+                    ))
+                    checks.append(_account_test_check(
+                        'permission',
+                        '账号权限',
+                        'fail',
+                        '请核对 Seller ID 是否来自同一个 Seller Central 账号；如果不确定，重新走授权并复制对应 Merchant Token。',
+                        'AMAZON_PERMISSION_FAIL',
+                    ))
+                    return finish(
+                        False,
+                        'Listings API 无法访问：Seller ID 可能与授权 Token 或站点不匹配',
+                        token_ok=True,
+                        probe_status=status_code,
+                        readiness='failed',
+                        code='AMAZON_SELLER_SCOPE_INVALID',
+                    )
+
                 checks.append(_account_test_check(
                     'listings_api',
                     'Listings API',

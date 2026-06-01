@@ -2,8 +2,10 @@ import os
 import json
 import time
 import threading
+import base64
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from openpyxl import Workbook, load_workbook
@@ -38,6 +40,45 @@ def _build_xls_bytes():
         ws.write(0, col_idx, header)
     for col_idx, value in enumerate(values):
         ws.write(1, col_idx, value)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _build_official_amazon_template_bytes(product_type='INSTRUMENT_PARTS_AND_ACCESSORIES', example_product_type='ACCESSORY'):
+    wb = Workbook()
+    wb.active.title = 'Changes to the template'
+    wb.create_sheet('Instructions')
+    wb.create_sheet('Data Definitions')
+    ws = wb.create_sheet('Template')
+    wb.create_sheet('Browse Data')
+    valid = wb.create_sheet('Valid Values')
+    wb.create_sheet('Dropdown Lists')
+    attr_map = wb.create_sheet('AttributePTDMAP')
+
+    encoded_ptds = quote(base64.b64encode(product_type.encode('utf-8')).decode('ascii'))
+    ws['A1'] = (
+        'settings=feedType=256&primaryMarketplaceId=amzn1.mp.o.ATVPDKIKX0DER'
+        f'&labelRow=4&attributeRow=5&dataRow=7&ptds={encoded_ptds}'
+    )
+    ws.append([])
+    ws.append(['Listing Identity', None, None, 'Variations'])
+    ws.append(['SKU', 'Product Type', 'Listing Action', 'Parentage Level', 'Parent SKU', 'Variation Theme Name', 'Item Name'])
+    ws.append([
+        'contribution_sku#1.value',
+        'product_type#1.value',
+        '::record_action',
+        'parentage_level[marketplace_id=ATVPDKIKX0DER]#1.value',
+        'child_parent_sku_relationship[marketplace_id=ATVPDKIKX0DER]#1.parent_sku',
+        'variation_theme#1.name',
+        'item_name[marketplace_id=ATVPDKIKX0DER][language_tag=en_US]#1.value',
+    ])
+    ws.append(['ABC123', example_product_type, '(Default) Create or Replace', 'Parent', 'ABC123', 'Size/Color', 'Demo title'])
+    valid.cell(row=2, column=2, value='Product Type - [  ]')
+    valid.cell(row=2, column=3, value=product_type)
+    attr_map.cell(row=1, column=1, value=product_type)
 
     buffer = BytesIO()
     wb.save(buffer)
@@ -123,6 +164,47 @@ def test_web_upload_endpoint_accepts_uppercase_extension(monkeypatch):
     finally:
         if uploaded_path.exists():
             uploaded_path.unlink()
+
+
+def test_open_current_excel_endpoint_opens_valid_import(monkeypatch):
+    input_dir = Path(web_config.INPUT_DIR).resolve()
+    input_dir.mkdir(parents=True, exist_ok=True)
+    input_path = input_dir / f'test_open_current_{uuid4().hex[:8]}.xlsx'
+    opened = []
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['SKU', 'item_name', 'main_image_url'])
+    ws.append(['SKU-1', 'Demo Product', 'https://example.com/demo.jpg'])
+    wb.save(input_path)
+    wb.close()
+
+    monkeypatch.setattr(web_app, '_open_path_in_file_manager', lambda path, reveal=False: opened.append((path, reveal)))
+
+    try:
+        client = app.test_client()
+        response = client.post('/api/open-current-excel', json={'file': str(input_path)})
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload['success'] is True
+        assert payload['path'] == str(input_path)
+        assert opened == [(str(input_path), False)]
+    finally:
+        if input_path.exists():
+            input_path.unlink()
+
+
+def test_open_current_excel_endpoint_rejects_outside_path(monkeypatch):
+    opened = []
+    monkeypatch.setattr(web_app, '_open_path_in_file_manager', lambda path, reveal=False: opened.append((path, reveal)))
+
+    client = app.test_client()
+    response = client.post('/api/open-current-excel', json={'file': '/etc/passwd'})
+
+    assert response.status_code == 400
+    assert response.get_json()['code'] == 'INVALID_FILE'
+    assert opened == []
 
 
 def test_web_upload_endpoint_reads_xls(monkeypatch):
@@ -269,6 +351,30 @@ def test_template_manual_search_endpoint_returns_candidates(monkeypatch):
     assert payload['candidates'][0]['product_type'] == 'STORAGE_RACK'
 
 
+def test_template_manual_search_direct_product_type_validates(monkeypatch):
+    monkeypatch.setattr(web_app, 'validate_product_type_candidate', lambda **kwargs: {
+        'usable': True,
+        'message': '已通过 Amazon 官方模板检查，可以直接生成模板。',
+        'template_id': 'us_instrument_parts_and_accessories_single',
+        'product_type': kwargs['product_type'],
+        'marketplace': kwargs.get('marketplace', 'US'),
+        'variation_mode': kwargs.get('variation_mode', 'single'),
+        'required_total': 13,
+        'recommended_total': 7,
+        'column_count': 122,
+    })
+
+    client = app.test_client()
+    response = client.post('/api/templates/manual-search', json={'keyword': 'INSTRUMENT_PARTS_AND_ACCESSORIES'})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['success'] is True
+    assert payload['source'] == 'direct_product_type'
+    assert payload['candidates'][0]['product_type'] == 'INSTRUMENT_PARTS_AND_ACCESSORIES'
+    assert payload['validation']['usable'] is True
+
+
 def test_template_validate_endpoint_returns_usable_status(monkeypatch):
     monkeypatch.setattr(web_app, 'validate_product_type_candidate', lambda **kwargs: {
         'usable': True,
@@ -290,6 +396,56 @@ def test_template_validate_endpoint_returns_usable_status(monkeypatch):
     assert payload['success'] is True
     assert payload['usable'] is True
     assert payload['template_id'] == 'us_storage_rack_single'
+
+
+def test_templates_import_official_xlsm_identifies_product_type(monkeypatch):
+    monkeypatch.setattr(web_app, 'validate_product_type_candidate', lambda **kwargs: {
+        'usable': True,
+        'message': '已通过 Amazon 官方模板检查，可以直接生成模板。',
+        'template_id': 'us_instrument_parts_and_accessories_single',
+        'product_type': kwargs['product_type'],
+        'marketplace': kwargs.get('marketplace', 'US'),
+        'variation_mode': kwargs.get('variation_mode', 'single'),
+        'required_total': 2,
+        'recommended_total': 1,
+        'column_count': 4,
+    })
+    monkeypatch.setattr(web_app, 'ensure_template_definition', lambda **kwargs: {
+        'template_id': 'us_instrument_parts_and_accessories_single',
+        'product_type': kwargs['product_type'],
+        'marketplace': kwargs.get('marketplace', 'US'),
+        'variation_mode': kwargs.get('variation_mode', 'single'),
+        'required_total': 2,
+        'recommended_total': 1,
+        'columns': [
+            {'key': 'sku', 'label_zh': 'SKU', 'label_en': 'Seller SKU', 'level': 'required'},
+            {'key': 'item_name', 'label_zh': '产品名称', 'label_en': 'Item Name', 'level': 'required'},
+            {'key': 'brand', 'label_zh': '品牌', 'label_en': 'Brand', 'level': 'recommended'},
+        ],
+    })
+
+    client = app.test_client()
+    response = client.post(
+        '/api/templates/import-official',
+        data={
+            'variation_mode': 'single',
+            'file': (
+                _build_official_amazon_template_bytes(),
+                f'INSTRUMENT_PARTS_AND_ACCESSORIES_{uuid4().hex[:6]}.xlsm',
+            ),
+        },
+        content_type='multipart/form-data',
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    official = payload['official_template']
+    assert payload['success'] is True
+    assert official['product_type'] == 'INSTRUMENT_PARTS_AND_ACCESSORIES'
+    assert official['product_type_column_example'] == 'ACCESSORY'
+    assert payload['validation']['usable'] is True
+    assert payload['field_preview']['required'][0]['key'] == 'sku'
+    assert 'ACCESSORY' in official['warning']
 
 
 def test_templates_generate_route_creates_task_and_downloadable_workbook(monkeypatch):
@@ -830,8 +986,12 @@ def test_recommended_ai_endpoint_resets_customer_safe_fields(monkeypatch):
         assert 'AI_IMAGE_API_KEY=keep-image' in text
         assert 'AI_TEXT_API_BASE=https://api.kk666.best' in text
         assert 'AI_IMAGE_API_BASE=https://api.kk666.best' in text
-        assert 'AI_TEXT_ENDPOINT_TEMPLATE=/v1beta/models/{model}:generateContent' in text
-        assert 'AI_IMAGE_PROTOCOL=gemini_generate_content' in text
+        assert 'AI_TEXT_ENDPOINT_TEMPLATE=/v1/responses' in text
+        assert 'AI_IMAGE_ENDPOINT_TEMPLATE=/v1/images/generations' in text
+        assert 'AI_TEXT_PROTOCOL=openai_responses' in text
+        assert 'AI_IMAGE_PROTOCOL=openai_images' in text
+        assert 'AI_TEXT_MODEL=gpt-5.5' in text
+        assert 'AI_IMAGE_MODEL=gpt-image-2' in text
     finally:
         for key, value in original_env.items():
             if value is None:
@@ -1925,6 +2085,44 @@ def test_submit_endpoint_blocks_when_precheck_fails(monkeypatch):
             input_path.unlink()
 
 
+def test_persist_bulk_row_updates_creates_missing_submit_columns(tmp_path):
+    input_path = tmp_path / 'submit_missing_columns.xlsx'
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(['产品身份', '', ''])
+    ws.append(['SKU', 'item_name', 'submission_id'])
+    ws.append(['SKU-1', 'Demo Product', ''])
+    wb.save(input_path)
+    wb.close()
+
+    web_app._persist_bulk_row_updates(
+        str(input_path),
+        {
+            'SKU-1': {
+                'submit_status': 'ACCEPTED',
+                'submission_id': 'SUB-XYZ',
+                'submit_time': '2026-06-01 14:10:00',
+                'submit_message': 'ok',
+            }
+        },
+    )
+
+    wb2 = load_workbook(input_path)
+    ws2 = wb2.active
+    header_row = web_app._detect_header_row(ws2)
+    headers = web_app._build_header_index(ws2, header_row)
+
+    assert headers['submit_status'] > headers['submission_id']
+    assert headers['submit_time'] > headers['submit_status']
+    assert headers['submit_message'] > headers['submit_time']
+    assert ws2.cell(row=header_row + 1, column=headers['submit_status']).value == 'ACCEPTED'
+    assert ws2.cell(row=header_row + 1, column=headers['submission_id']).value == 'SUB-XYZ'
+    assert ws2.cell(row=header_row + 1, column=headers['submit_time']).value == '2026-06-01 14:10:00'
+    assert ws2.cell(row=header_row + 1, column=headers['submit_message']).value == 'ok'
+    wb2.close()
+
+
 def test_submit_preview_persists_results_to_excel(monkeypatch):
     input_dir = Path(web_config.INPUT_DIR).resolve()
     filename = f'test_submit_preview_{uuid4().hex[:8]}.xlsx'
@@ -2522,9 +2720,14 @@ def test_submit_task_endpoint_returns_task_and_result(monkeypatch):
             input_path.unlink()
 
 
-def test_infer_submission_route_prefers_existing_asin_hint():
-    route = web_app._infer_submission_route({'asin': 'B0TEST123'}, {})
+def test_infer_submission_route_prefers_explicit_existing_asin_hint():
+    route = web_app._infer_submission_route({'submission_route': 'existing_asin', 'asin': 'B0TEST123'}, {})
     assert route == 'existing_asin'
+
+
+def test_infer_submission_route_does_not_treat_persisted_asin_as_existing_hint():
+    route = web_app._infer_submission_route({'asin': 'B0TEST123'}, {})
+    assert route == 'unknown'
 
 
 def test_listing_status_endpoint_summarizes_listing_payload(monkeypatch):
@@ -2684,7 +2887,7 @@ def test_account_manager_test_connection_uses_listings_probe(monkeypatch):
             accounts_path.unlink()
 
 
-def test_account_manager_treats_probe_400_as_basic_connection_ok(monkeypatch):
+def test_account_manager_treats_probe_400_invalid_parameters_as_store_config_error(monkeypatch):
     output_dir = Path(web_config.OUTPUT_DIR).resolve()
     accounts_path = output_dir / f'test_accounts_soft_probe_{uuid4().hex[:8]}.json'
     accounts_path.write_text(json.dumps({
@@ -2716,14 +2919,15 @@ def test_account_manager_treats_probe_400_as_basic_connection_ok(monkeypatch):
         manager = AccountManager(str(accounts_path))
         result = manager.test_connection('SELLER-1')
 
-        assert result['success'] is True
-        assert result['readiness'] == 'basic_ok'
-        assert result['code'] == 'AMAZON_BASIC_OK_LISTINGS_PENDING'
+        assert result['success'] is False
+        assert result['readiness'] == 'failed'
+        assert result['code'] == 'AMAZON_SELLER_SCOPE_INVALID'
         assert result['probe_status'] == 400
-        assert any(check['name'] == 'listings_api' and check['status'] == 'warn' for check in result['checks'])
+        assert 'Seller ID' in result['message']
+        assert any(check['name'] == 'listings_api' and check['status'] == 'fail' for check in result['checks'])
         listed = manager.list_accounts()[0]
-        assert listed['last_test_success'] is True
-        assert listed['last_test_readiness'] == 'basic_ok'
+        assert listed['last_test_success'] is False
+        assert listed['last_test_readiness'] == 'failed'
     finally:
         if accounts_path.exists():
             accounts_path.unlink()
@@ -2785,6 +2989,19 @@ def test_sp_client_get_schema_falls_back_without_seller_id():
     assert len(calls) == 2
     assert calls[0][1]['sellerId'] == 'SELLER-1'
     assert 'sellerId' not in calls[1][1]
+
+
+def test_normalize_diagnostic_issue_adds_bilingual_invalid_input_note():
+    issue = web_app._normalize_diagnostic_issue({
+        'severity': 'ERROR',
+        'code': 'InvalidInput',
+        'message': 'Invalid parameters provided.',
+    }, 'amazon_preview')
+
+    assert issue['message'] == 'Invalid parameters provided.'
+    assert issue['message_en'] == 'Invalid parameters provided.'
+    assert '参数无效' in issue['message_zh']
+    assert issue['display_message'].startswith('Invalid parameters provided.（参数无效')
 
 
 def test_build_listing_api_context_skips_placeholder_credentials(monkeypatch):

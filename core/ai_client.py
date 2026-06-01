@@ -21,6 +21,7 @@ from config import get_config
 logger = logging.getLogger(__name__)
 
 GEMINI_PROTOCOL = "gemini_generate_content"
+OPENAI_RESPONSES_PROTOCOL = "openai_responses"
 OPENAI_TEXT_PROTOCOL = "openai_chat_completions"
 OPENAI_IMAGE_PROTOCOL = "openai_images"
 
@@ -47,6 +48,19 @@ def _build_openai_client(api_key: str, base_url: str) -> OpenAI:
         timeout=cfg.OPENAI_TIMEOUT,
         max_retries=cfg.OPENAI_MAX_RETRIES,
     )
+
+
+def _image_endpoint_url(base_url: str, endpoint_template: str, model: str, operation: str) -> str:
+    endpoint = str(endpoint_template or "").strip()
+    if operation == "edit":
+        if "/images/edits" not in endpoint.lower():
+            if "/images/generations" in endpoint.lower():
+                endpoint = re.sub(r"/images/generations\b", "/images/edits", endpoint, flags=re.IGNORECASE)
+            else:
+                endpoint = "/v1/images/edits"
+    elif not endpoint:
+        endpoint = "/v1/images/generations"
+    return _build_endpoint_url(base_url, endpoint, model)
 
 
 def _build_gemini_headers(api_key: str) -> dict:
@@ -102,6 +116,64 @@ def _gemini_generate_content(
         return response.json()
 
 
+def _extract_responses_text(response_data: dict) -> str:
+    """提取 Responses API 的文本输出，兼容代理返回的常见结构。"""
+    output_text = response_data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    texts = []
+    for item in response_data.get("output", []) or []:
+        for content in item.get("content", []) or []:
+            text = content.get("text")
+            if text:
+                texts.append(str(text).strip())
+    if texts:
+        return "\n".join(text for text in texts if text).strip()
+
+    return _extract_text_content(response_data)
+
+
+def _openai_responses(
+    *,
+    api_key: str,
+    base_url: str,
+    endpoint_template: str,
+    model: str,
+    system_prompt: str,
+    prompt: str,
+    temperature: float,
+    max_tokens: int,
+) -> dict:
+    cfg = get_config()
+    url = _build_endpoint_url(base_url, endpoint_template, model)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": prompt}],
+            },
+        ],
+        "temperature": temperature,
+        "max_output_tokens": max_tokens,
+    }
+
+    with httpx.Client(timeout=cfg.OPENAI_TIMEOUT) as client:
+        response = client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
 AMAZON_SYSTEM_PROMPT = (
     "You are an expert Amazon product listing copywriter and SEO specialist. "
     "You produce content that is original, conversion-focused, and compliant with Amazon's listing policies. "
@@ -121,12 +193,25 @@ def ai_text(
     """
     AI 文本生成。
 
-    根据配置自动走 OpenAI 兼容 chat.completions 或 Gemini generateContent。
+    根据配置自动走 OpenAI Responses / chat.completions 或 Gemini generateContent。
     system_prompt 为空时使用默认 Amazon 专家角色。
     """
     cfg = get_config()
     system = system_prompt or AMAZON_SYSTEM_PROMPT
     try:
+        if cfg.AI_TEXT_PROTOCOL == OPENAI_RESPONSES_PROTOCOL:
+            result = _openai_responses(
+                api_key=cfg.AI_TEXT_API_KEY,
+                base_url=cfg.AI_TEXT_API_BASE,
+                endpoint_template=cfg.AI_TEXT_ENDPOINT_TEMPLATE,
+                model=cfg.AI_TEXT_MODEL,
+                system_prompt=system,
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return _extract_responses_text(result)
+
         if cfg.AI_TEXT_PROTOCOL == GEMINI_PROTOCOL:
             combined_prompt = f"{system}\n\n{prompt}"
             result = _gemini_generate_content(
@@ -218,8 +303,12 @@ def _ai_image_edit(image_data: bytes, prompt: str, size: str = "auto",
                 raise
             return None
 
-    base_url = cfg.AI_IMAGE_API_BASE.rstrip("/")
-    url = f"{base_url}/images/edits"
+    url = _image_endpoint_url(
+        cfg.AI_IMAGE_API_BASE,
+        cfg.AI_IMAGE_ENDPOINT_TEMPLATE,
+        cfg.AI_IMAGE_MODEL,
+        "edit",
+    )
     headers = {
         "Authorization": f"Bearer {cfg.AI_IMAGE_API_KEY}",
         "Accept": "application/json",
@@ -345,8 +434,12 @@ def _ai_image_generate(prompt: str, size: str = "1024x1024", raise_on_error: boo
                 raise
             return None
 
-    base_url = cfg.AI_IMAGE_API_BASE.rstrip("/")
-    url = f"{base_url}/images/generations"
+    url = _image_endpoint_url(
+        cfg.AI_IMAGE_API_BASE,
+        cfg.AI_IMAGE_ENDPOINT_TEMPLATE,
+        cfg.AI_IMAGE_MODEL,
+        "generate",
+    )
     headers = {
         "Authorization": f"Bearer {cfg.AI_IMAGE_API_KEY}",
         "Content-Type": "application/json",

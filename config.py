@@ -24,6 +24,8 @@ def _infer_protocol(endpoint_template: str, default: str) -> str:
     template = str(endpoint_template or "").strip().lower()
     if "generatecontent" in template:
         return "gemini_generate_content"
+    if "/responses" in template:
+        return "openai_responses"
     if "/chat/completions" in template:
         return "openai_chat_completions"
     if "/images/" in template:
@@ -80,18 +82,18 @@ class Config:
 
         self.AI_API_KEY = raw_ai_api_key
         self.AI_API_BASE = _normalize_base_url(raw_ai_api_base, 'https://api.openai.com/v1')
-        self.AI_TEXT_MODEL = os.getenv('AI_TEXT_MODEL', 'gpt-4o')
-        self.AI_IMAGE_MODEL = os.getenv('AI_IMAGE_MODEL', 'gpt-4o')
+        self.AI_TEXT_MODEL = os.getenv('AI_TEXT_MODEL', 'gpt-5.5')
+        self.AI_IMAGE_MODEL = os.getenv('AI_IMAGE_MODEL', 'gpt-image-2')
 
         self.AI_TEXT_API_KEY = os.getenv('AI_TEXT_API_KEY', raw_ai_api_key).strip()
         self.AI_TEXT_API_BASE = _normalize_base_url(
             os.getenv('AI_TEXT_API_BASE', '').strip() or raw_ai_api_base,
             'https://api.openai.com/v1',
         )
-        self.AI_TEXT_ENDPOINT_TEMPLATE = os.getenv('AI_TEXT_ENDPOINT_TEMPLATE', '/chat/completions').strip()
+        self.AI_TEXT_ENDPOINT_TEMPLATE = os.getenv('AI_TEXT_ENDPOINT_TEMPLATE', '/v1/responses').strip()
         self.AI_TEXT_PROTOCOL = os.getenv(
             'AI_TEXT_PROTOCOL',
-            _infer_protocol(self.AI_TEXT_ENDPOINT_TEMPLATE, 'openai_chat_completions'),
+            _infer_protocol(self.AI_TEXT_ENDPOINT_TEMPLATE, 'openai_responses'),
         ).strip()
 
         self.AI_IMAGE_API_KEY = os.getenv('AI_IMAGE_API_KEY', raw_ai_api_key).strip()
@@ -99,7 +101,7 @@ class Config:
             os.getenv('AI_IMAGE_API_BASE', '').strip() or raw_ai_api_base,
             'https://api.openai.com/v1',
         )
-        self.AI_IMAGE_ENDPOINT_TEMPLATE = os.getenv('AI_IMAGE_ENDPOINT_TEMPLATE', '').strip()
+        self.AI_IMAGE_ENDPOINT_TEMPLATE = os.getenv('AI_IMAGE_ENDPOINT_TEMPLATE', '/v1/images/generations').strip()
         self.AI_IMAGE_PROTOCOL = os.getenv(
             'AI_IMAGE_PROTOCOL',
             _infer_protocol(self.AI_IMAGE_ENDPOINT_TEMPLATE, 'openai_images'),

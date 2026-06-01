@@ -5,7 +5,7 @@ const i18n = {
   en: {
     workspace:'Workspace', settings:'Settings', total_products:'Total',
     ai_processed:'AI Done', pending:'Pending', errors:'Errors',
-    upload_excel:'1 Import Excel', download_template:'Template', export:'Export',
+    upload_excel:'1 Import Excel', download_template:'Template', open_excel:'View Excel', export:'Export',
     batch_ai_copy:'2 Batch AI Copy', batch_ai_image:'2 Batch AI Image',
     validate_all:'3 Validate', submit_amazon:'5 Submit',
     rewrite_title:'Rewrite Title', rewrite_bullets:'Rewrite Bullets', rewrite_all:'Rewrite All',
@@ -77,7 +77,7 @@ const i18n = {
   zh: {
     workspace:'工作台', settings:'设置', total_products:'总商品',
     ai_processed:'AI已处理', pending:'待处理', errors:'校验错误',
-    upload_excel:'1 导入Excel', download_template:'下载模板', export:'导出',
+    upload_excel:'1 导入Excel', download_template:'下载模板', open_excel:'查看Excel', export:'导出',
     batch_ai_copy:'2 批量AI文案', batch_ai_image:'2 批量AI生图',
     validate_all:'3 校验', submit_amazon:'5 提交上架',
     rewrite_title:'仿写标题', rewrite_bullets:'仿写卖点', rewrite_all:'全部仿写',
@@ -205,6 +205,7 @@ let templatePanelCollapsed = false;
 let variantGeneratorSkuRule = 'parent-values';
 let templateRecommendationState = null;
 let templateSelectionValidation = null;
+let officialTemplateImportState = null;
 const MAX_SUBMISSION_PRICE = 10000;
 let recentSubmitHighlights = new Set();
 let recentSubmitToastTaskIds = new Set();
@@ -217,9 +218,10 @@ let settingsActiveSection = localStorage.getItem('amazon28_settingsSection') || 
 
 const RECOMMENDED_AI_CONFIG = {
   baseUrl: 'https://api.kk666.best',
-  endpoint: '/v1beta/models/{model}:generateContent',
-  textModel: 'gemini-3.1-flash-lite-preview',
-  imageModel: 'gemini-3.1-flash-image-preview',
+  textEndpoint: '/v1/responses',
+  imageEndpoint: '/v1/images/generations',
+  textModel: 'gpt-5.5',
+  imageModel: 'gpt-image-2',
 };
 
 const COMMON_FIELD_LABELS_ZH = {
@@ -1014,7 +1016,7 @@ function formatTemplateFieldText(text, product = null) {
 }
 
 function formatIssueMessageWithFields(product, issue, fallbackText = '') {
-  const base = formatTemplateFieldText(String(issue?.message || fallbackText || '').trim(), product);
+  const base = formatTemplateFieldText(String(issue?.message_en || issue?.message || fallbackText || '').trim(), product);
   const attrs = (issue?.attributeNames || []).map(item => String(item || '').trim()).filter(Boolean);
   if (!attrs.length) return base;
   if (attrs.some(name => base.includes(name))) return base;
@@ -1024,7 +1026,9 @@ function formatIssueMessageWithFields(product, issue, fallbackText = '') {
 }
 
 function explainIssueForMerchant(product, issue, fallbackText = '') {
-  const rawMessage = String(issue?.message || fallbackText || '').trim();
+  const explicitNote = String(issue?.message_zh || issue?.seller_hint || '').trim();
+  if (explicitNote) return explicitNote;
+  const rawMessage = String(issue?.message_en || issue?.message || fallbackText || '').trim();
   const code = String(issue?.code || '').trim();
   const attrs = (issue?.attributeNames || []).map(item => String(item || '').trim()).filter(Boolean);
   const fieldsText = attrs.length > 0
@@ -1032,6 +1036,9 @@ function explainIssueForMerchant(product, issue, fallbackText = '') {
     : '';
   const appendFields = text => fieldsText ? `${text} 关联字段：${fieldsText}` : text;
 
+  if (/invalidinput/i.test(code) || /invalid parameters provided/i.test(rawMessage)) {
+    return appendFields('参数无效：Amazon 拒绝了本次请求，但没有指出具体字段。优先检查商品类型是否适用于当前站点/账号、必填字段是否齐全、图片 URL 是否可访问、商品编码或免码设置是否正确。');
+  }
   if (/merchant suggested asin/i.test(rawMessage) || /merchant_suggested_asin/i.test(rawMessage)) {
     return appendFields('系统没拿到可直接匹配的 ASIN。先确认这是新建商品还是已有商品跟卖；如果是已有商品，请补 ASIN。');
   }
@@ -1074,6 +1081,9 @@ function explainIssueForMerchant(product, issue, fallbackText = '') {
   if (/unable to retrieve media content/i.test(rawMessage) || /image file type isn't supported/i.test(rawMessage)) {
     return appendFields('亚马逊无法读取你的图片。先检查图片链接能否直接打开、图片格式是否正确，以及是否会 404。');
   }
+  if (code === '100239' || /title and the main image .*same product/i.test(rawMessage) || /main image .*same product/i.test(rawMessage)) {
+    return appendFields('标题和主图不匹配：Amazon 认为标题描述的商品与主图不是同一个商品。请换成与标题一致的主图，或把标题改成主图实际展示的商品。');
+  }
   if (/discoverable/i.test(rawMessage)) {
     return appendFields('这是上架后的结果状态信息，说明系统正在跟踪商品是否已经可被亚马逊前台发现。');
   }
@@ -1088,11 +1098,14 @@ function explainIssueForMerchant(product, issue, fallbackText = '') {
 }
 
 function buildMerchantIssueView(product, issue, fallbackText = '') {
+  const display = String(issue?.display_message || '').trim();
+  if (display) return { primary: display, secondary: '' };
   const raw = formatIssueMessageWithFields(product, issue, fallbackText);
   const explained = explainIssueForMerchant(product, issue, fallbackText);
   if (!explained) return { primary: raw, secondary: '' };
-  if (!raw || explained === raw) return { primary: explained, secondary: '' };
-  return { primary: explained, secondary: raw };
+  if (!raw) return { primary: explained, secondary: '' };
+  if (explained === raw) return { primary: raw, secondary: '' };
+  return { primary: `${raw}（${explained}）`, secondary: '' };
 }
 
 function formatShortMerchantIssue(product, issue, fallbackText = '') {
@@ -1103,7 +1116,7 @@ function formatShortMerchantIssue(product, issue, fallbackText = '') {
 function summarizeTechnicalIssue(issue, fallbackText = '') {
   const code = String(issue?.code || '').trim();
   const severity = String(issue?.severity || issue?.level || '').trim().toUpperCase();
-  const raw = String(issue?.message || fallbackText || '').trim();
+  const raw = String(issue?.message_en || issue?.message || fallbackText || '').trim();
   const parts = [];
   if (severity) parts.push(severity);
   if (code) parts.push(code);
@@ -2012,6 +2025,8 @@ function renderTemplateRecommendationSummary() {
     url_title: '页面标题',
     url_slug: '链接关键词',
     manual_search: '手动搜索',
+    direct_product_type: '直接使用 product_type',
+    official_xlsm: 'Amazon 官方模板',
     heuristic: '兜底猜测',
     empty: '未识别',
   }[state.source] || state.source || '未识别';
@@ -2027,6 +2042,14 @@ function renderTemplateRecommendationSummary() {
     <div class="template-hint-title">${escHtml(headline)}</div>
     <div class="template-hint-body">${bodyParts.map(part => `<div>${escHtml(part)}</div>`).join('')}</div>
   </div>`;
+}
+
+function looksLikeOfficialProductType(value) {
+  const raw = String(value || '').trim();
+  const normalized = raw.toUpperCase();
+  return raw === normalized
+    && /^[A-Z][A-Z0-9_]{2,}$/.test(normalized)
+    && (normalized.includes('_') || normalized.length >= 5);
 }
 
 function renderTemplateSelectionStatus() {
@@ -2061,15 +2084,57 @@ function renderTemplateSelectionStatus() {
   </div>`;
 }
 
+function renderOfficialTemplateImportSummary(data = officialTemplateImportState) {
+  const el = document.getElementById('officialTemplateImportSummary');
+  if (!el) return;
+  if (!data) {
+    el.innerHTML = '';
+    return;
+  }
+  const official = data.official_template || {};
+  const validation = data.validation || {};
+  const preview = data.field_preview || {};
+  const required = (preview.required || []).slice(0, 10);
+  const recommended = (preview.recommended || []).slice(0, 8);
+  const warning = official.warning || data.warning || '';
+  const tone = validation.usable ? 'success' : 'warn';
+  const facts = [
+    `识别到 product_type：${official.product_type || '-'}`,
+    `官方模板页：${official.template_sheet || 'Template'}，数据从第 ${official.data_row || 7} 行开始`,
+    `官方表头列数：${official.column_count || 0}`,
+  ];
+  if (official.product_type_column_example) facts.push(`表格 Product Type 示例值：${official.product_type_column_example}`);
+  if (official.has_variation_columns) facts.push('检测到官方模板包含变体字段；有颜色/尺码款时请选择“父子变体模板”。');
+  if (validation.required_total !== undefined) facts.push(`2.8 系统模板必填字段数：${validation.required_total}`);
+  const requiredHtml = required.length
+    ? `<div>必填预览：${required.map(item => escHtml(`${item.label_zh || item.label_en || item.key} (${item.key})`)).join('、')}</div>`
+    : '';
+  const recommendedHtml = recommended.length
+    ? `<div>建议补充：${recommended.map(item => escHtml(`${item.label_zh || item.label_en || item.key} (${item.key})`)).join('、')}</div>`
+    : '';
+  el.innerHTML = `<div class="template-hint-card ${tone}">
+    <div class="template-hint-title">${validation.usable ? '已识别 Amazon 官方模板，可生成 2.8 模板' : '已读取官方模板，但还需要确认 product_type'}</div>
+    <div class="template-hint-body">
+      ${facts.map(part => `<div>${escHtml(part)}</div>`).join('')}
+      ${warning ? `<div>${escHtml(warning)}</div>` : ''}
+      ${validation.message ? `<div>${escHtml(validation.message)}</div>` : ''}
+      ${requiredHtml}
+      ${recommendedHtml}
+    </div>
+  </div>`;
+}
+
 function resetTemplateRecommendationState() {
   templateRecommendationState = null;
   templateCandidates = [];
   templateManualCandidates = [];
   selectedTemplateType = '';
   templateSelectionValidation = null;
+  officialTemplateImportState = null;
   const input = document.getElementById('templateProductTypeInput');
   if (input) input.value = '';
   renderTemplateRecommendationSummary();
+  renderOfficialTemplateImportSummary();
   renderTemplateCandidates();
   renderTemplateSelectionStatus();
   refreshTemplateFlowUi();
@@ -2083,6 +2148,33 @@ function chooseTemplateCandidate(productType) {
   renderTemplateCandidates();
   renderTemplateSelectionStatus();
   refreshTemplateFlowUi();
+}
+
+async function useManualInputAsProductType() {
+  const manualInput = document.getElementById('templateManualSearchInput');
+  const raw = ((manualInput && manualInput.value) || '').trim();
+  if (!raw) return showToast('warning', '请先输入 product_type，例如 INSTRUMENT_PARTS_AND_ACCESSORIES');
+  const productType = raw.toUpperCase().replace(/[^A-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  if (!looksLikeOfficialProductType(productType)) {
+    return showToast('warning', '这个内容更像关键词；请点“按关键词搜索”，或填写大写下划线格式的官方模板ID');
+  }
+  selectedTemplateType = productType;
+  templateCandidates = [];
+  templateManualCandidates = [];
+  const productInput = document.getElementById('templateProductTypeInput');
+  if (productInput) productInput.value = productType;
+  templateRecommendationState = {
+    query: productType,
+    title: productType,
+    source: 'direct_product_type',
+    marketplace: 'US',
+    candidates: [{ product_type: productType, display_name: productType, score: 1 }],
+    confidence: 'high'
+  };
+  renderTemplateRecommendationSummary();
+  renderTemplateCandidates();
+  refreshTemplateFlowUi();
+  return validateSelectedTemplate();
 }
 
 function renderTemplateTaskStatus(task) {
@@ -2224,11 +2316,15 @@ async function recommendTemplate() {
 async function searchOfficialTemplate() {
   const keyword = (document.getElementById('templateManualSearchInput') || {}).value || '';
   if (!keyword.trim()) return showToast('warning', '请先输入官方类目关键词');
+  if (looksLikeOfficialProductType(keyword.trim())) {
+    return useManualInputAsProductType();
+  }
   try {
+    const variationMode = ((document.getElementById('templateVariationMode') || {}).value || 'single').trim();
     const response = await fetch('/api/templates/manual-search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword })
+      body: JSON.stringify({ keyword, variation_mode: variationMode })
     });
     const data = await response.json();
     if (data.error) throw new Error(data.error);
@@ -2245,6 +2341,60 @@ async function searchOfficialTemplate() {
     }
   } catch (e) {
     showToast('error', '官方类目搜索失败: ' + e.message);
+  }
+}
+
+async function importOfficialAmazonTemplate() {
+  const fileInput = document.getElementById('officialTemplateFileInput');
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+  if (!file) return showToast('warning', '请先选择 Amazon 官方 .xlsm 模板');
+  const lowerName = String(file.name || '').toLowerCase();
+  if (!lowerName.endsWith('.xlsm') && !lowerName.endsWith('.xlsx')) {
+    return showToast('warning', '请上传 Amazon 官方 .xlsm 或 .xlsx 模板');
+  }
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const variationMode = ((document.getElementById('templateVariationMode') || {}).value || 'single').trim();
+    fd.append('variation_mode', variationMode);
+    showToast('info', '正在识别 Amazon 官方模板...');
+    const response = await fetch('/api/templates/import-official', { method: 'POST', body: fd });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error);
+
+    officialTemplateImportState = data;
+    const official = data.official_template || {};
+    const validation = data.validation || {};
+    const productType = String(official.product_type || validation.product_type || '').trim();
+    if (productType) {
+      selectedTemplateType = productType;
+      const input = document.getElementById('templateProductTypeInput');
+      if (input) input.value = productType;
+    }
+    if (validation.variation_mode) {
+      const variationInput = document.getElementById('templateVariationMode');
+      if (variationInput) variationInput.value = validation.variation_mode;
+    }
+    templateSelectionValidation = validation;
+    templateRecommendationState = {
+      query: productType,
+      title: file.name || productType,
+      source: 'official_xlsm',
+      marketplace: official.marketplace || 'US',
+      warning: official.warning || '',
+      candidates: productType ? [{ product_type: productType, display_name: productType, score: 1 }] : [],
+      confidence: validation.usable ? 'high' : 'medium'
+    };
+    templateCandidates = [];
+    templateManualCandidates = [];
+    renderOfficialTemplateImportSummary(data);
+    renderTemplateRecommendationSummary();
+    renderTemplateCandidates();
+    renderTemplateSelectionStatus();
+    refreshTemplateFlowUi();
+    showToast(validation.usable ? 'success' : 'warning', validation.usable ? '已识别官方模板，可直接生成 2.8 模板' : (validation.message || '已识别官方模板，请确认 product_type'));
+  } catch (e) {
+    showToast('error', '官方模板识别失败: ' + e.message);
   }
 }
 
@@ -2682,6 +2832,7 @@ function enableToolbar(enabled) {
     btnBatchImg: enabled && aiReady ? '' : (enabled ? 'AI 还没配置好：去设置页填 Key 并保存' : '先导入 Excel'),
     btnValidate: enabled ? '' : '先导入 Excel',
     btnListingCheck: enabled && amazonReady ? '' : (enabled ? 'Amazon 账号还没配置好：先添加账号' : '先导入 Excel'),
+    btnOpenExcel: enabled ? '' : '先导入 Excel',
     btnExport: enabled ? '' : '先导入 Excel',
     btnComparison: enabled ? '' : '先导入 Excel',
   };
@@ -5039,11 +5190,15 @@ function renderDiagnosticsTab(p) {
   `;
   const previewMessages = previewIssues.map(issue => {
     const prefix = [issue.severity || issue.level || '', issue.code || ''].filter(Boolean).join('/');
-    return prefix ? `[${prefix}] ${issue.message || ''}` : (issue.message || '');
+    const view = buildMerchantIssueView(p, issue, issue.message || '');
+    const text = view.primary || issue.display_message || issue.message || '';
+    return prefix ? `[${prefix}] ${text}` : text;
   }).filter(Boolean);
   const listingMessages = listingIssues.map(issue => {
     const prefix = [issue.severity || issue.level || '', issue.code || ''].filter(Boolean).join('/');
-    return prefix ? `[${prefix}] ${issue.message || ''}` : (issue.message || '');
+    const view = buildMerchantIssueView(p, issue, issue.message || '');
+    const text = view.primary || issue.display_message || issue.message || '';
+    return prefix ? `[${prefix}] ${text}` : text;
   }).filter(Boolean);
   const mediaMessages = mediaChecks.map(item => {
     const prefix = item.ok ? 'OK' : 'FAIL';
@@ -5614,6 +5769,12 @@ function normalizeSchemaDiagnosticIssue(issue, defaultSource = 'amazon_preview')
     severity,
     code: String(issue.code || '').trim(),
     message: String(issue.message || issue.details || '').trim(),
+    message_en: String(issue.message_en || issue.message || issue.details || '').trim(),
+    message_zh: String(issue.message_zh || '').trim(),
+    seller_hint: String(issue.seller_hint || issue.hint || '').trim(),
+    display_message: String(issue.display_message || '').trim(),
+    hint: String(issue.hint || '').trim(),
+    fix: String(issue.fix || '').trim(),
     attributeNames: attrs.map(item => String(item || '').trim()).filter(Boolean),
     categories: categories.map(item => String(item || '').trim().toUpperCase()).filter(Boolean),
   };
@@ -5771,7 +5932,7 @@ function appendFieldLinkedIssue(target, key, issue) {
     issue.source || '',
     issue.level || '',
     issue.code || '',
-    issue.message || '',
+    issue.display_message || issue.message || '',
   ].join('|');
   if (target[normalizedKey].some(item => item.signature === signature)) return;
   target[normalizedKey].push({
@@ -5781,6 +5942,10 @@ function appendFieldLinkedIssue(target, key, issue) {
     code: issue.code || '',
     severity: issue.severity || '',
     message: issue.message || '',
+    message_en: issue.message_en || '',
+    message_zh: issue.message_zh || '',
+    seller_hint: issue.seller_hint || '',
+    display_message: issue.display_message || '',
   });
 }
 
@@ -5838,7 +6003,7 @@ function buildSchemaFocusStateForField(p, schema, feedback, fieldKey, fallbackMe
   const sectionKey = buildSchemaFieldSectionLookup(schema).get(String(fieldKey || '').trim()) || '';
   const linkedIssue = (feedback?.fieldLinkedIssues?.[fieldKey] || [])[0] || null;
   const fieldMessage = linkedIssue
-    ? `${getSchemaIssueSourceLabel(linkedIssue.source)}: ${linkedIssue.message || linkedIssue.code || fieldKey}`
+    ? `${getSchemaIssueSourceLabel(linkedIssue.source)}: ${formatShortMerchantIssue(product, linkedIssue, linkedIssue.message || linkedIssue.code || fieldKey)}`
     : (feedback?.fieldErrors?.[fieldKey] || feedback?.fieldWarnings?.[fieldKey] || fallbackMessage || fieldKey);
   const sectionTitles = sectionKey ? [getSchemaSectionLabel(schema, sectionKey)] : [];
   return {
@@ -5972,7 +6137,6 @@ function renderFieldLinkedIssues(feedback, key) {
       return `<div class="field-linked-issue ${tone}">
         <span class="field-linked-source ${tone}">${escHtml(label + code)}</span>
         <span class="field-linked-message">${escHtml(view.primary || issue.message)}</span>
-        ${view.secondary ? `<span class="field-linked-raw">${escHtml(view.secondary)}</span>` : ''}
         <span class="field-linked-tech">${escHtml(tech)}</span>
       </div>`;
     }).join('')}
@@ -6805,16 +6969,18 @@ function showListingCheckReport(results) {
       const code = issue.code ? `[${escHtml(issue.code)}] ` : '';
       const attrs = (issue.attributeNames || []).length > 0 ? ` (${escHtml(issue.attributeNames.join(', '))})` : '';
       const color = issue.level === 'error' ? 'var(--danger)' : 'var(--warning)';
-      const hint = issue.hint ? `<div style="margin-left:20px;font-size:11px;color:var(--text-muted)">${escHtml(issue.hint)}</div>` : '';
+      const view = buildMerchantIssueView(product, issue, issue.message || '');
+      const hint = issue.hint && !String(view.primary || '').includes(issue.hint) ? `<div style="margin-left:20px;font-size:11px;color:var(--text-muted)">${escHtml(issue.hint)}</div>` : '';
       const fix = issue.fix ? `<div style="margin-left:20px;font-size:11px;color:var(--primary)">${escHtml(issue.fix)}</div>` : '';
-      return `<div class="diagnostic-list-item"><span style="color:${color}">${issueIcon(issue.level)} ${code}${escHtml(issue.message || '')}${attrs}</span>${hint}${fix}</div>`;
+      return `<div class="diagnostic-list-item"><span style="color:${color}">${issueIcon(issue.level)} ${code}${escHtml(view.primary || issue.message || '')}${attrs}</span>${hint}${fix}</div>`;
     }).join('');
 
     // Listing 后台 issues
     const listingIssues = (listing.issues || []).map(issue => {
       const code = issue.code ? `[${escHtml(issue.code)}] ` : '';
       const color = issue.level === 'error' ? 'var(--danger)' : 'var(--warning)';
-      return `<div class="diagnostic-list-item"><span style="color:${color}">${issueIcon(issue.level)} ${code}${escHtml(issue.message || '')}</span></div>`;
+      const view = buildMerchantIssueView(product, issue, issue.message || '');
+      return `<div class="diagnostic-list-item"><span style="color:${color}">${issueIcon(issue.level)} ${code}${escHtml(view.primary || issue.message || '')}</span></div>`;
     }).join('');
 
     // 媒体连通性
@@ -7298,6 +7464,22 @@ function downloadTemplate() {
   window.location.href = '/api/download-template';
 }
 
+async function openCurrentExcel() {
+  if (!currentFile) return showToast('warning', '先导入 Excel');
+  try {
+    const response = await fetch('/api/open-current-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: currentFile })
+    });
+    const data = await response.json();
+    if (data.error) return showToast('error', data.error);
+    showToast('success', '已打开当前 Excel');
+  } catch (e) {
+    showToast('error', '打开 Excel 失败: ' + e.message);
+  }
+}
+
 function createSampleExcel() {
   showToast('info', '正在生成示例 Excel...');
   fetch('/api/sample-excel', {
@@ -7521,11 +7703,11 @@ async function submitToAmazon(mode) {
 }
 
 function confirmSubmitAccount() {
-  if (!pendingSubmitPayload) return;
+  const payload = pendingSubmitPayload;
+  if (!payload) return;
   const checked = document.querySelector('input[name="submitAccountRadio"]:checked');
   if (!checked) return showToast('warning', '请选择一个账号');
   setSelectedAmazonAccount(checked.value, { toast: payload.mode === 'submit', refreshUi: true });
-  const payload = pendingSubmitPayload;
   pendingSubmitPayload = null;
   closeModal();
   if (payload.skipPreflight || !payload.plan) {
@@ -7755,8 +7937,10 @@ function setFieldValidity(id, ok, message = '') {
 
 function validateAiConfigFields() {
   const baseOk = value => String(value || '').trim().replace(/\/$/, '') === RECOMMENDED_AI_CONFIG.baseUrl;
-  const endpointOk = value => /\{model\}/.test(String(value || '')) && /generateContent/i.test(String(value || ''));
-  const provider = model => /gemini/i.test(String(model || '')) ? 'gemini' : (/^(gpt|o\d|dall-e|gpt-image)/i.test(String(model || '').trim()) ? 'openai' : '');
+  const geminiEndpointOk = value => /\{model\}/.test(String(value || '')) && /generateContent/i.test(String(value || ''));
+  const responsesEndpointOk = value => /\/responses\b/i.test(String(value || ''));
+  const imageEndpointOk = value => /\/images\/(generations|edits)\b/i.test(String(value || ''));
+  const provider = model => /gemini/i.test(String(model || '')) ? 'gemini' : (/^(gpt|o\d|dall-e|image)/i.test(String(model || '').trim()) ? 'openai' : '');
   const keyOk = id => {
     const el = document.getElementById(id);
     return !!el?.value || String(el?.placeholder || '').startsWith('***');
@@ -7769,8 +7953,8 @@ function validateAiConfigFields() {
   setFieldValidity('cfgImageApiKey', keyOk('cfgImageApiKey'), '图片 Key 不能为空');
   setFieldValidity('cfgTextBaseUrl', baseOk(document.getElementById('cfgTextBaseUrl')?.value), 'Base URL 固定填 https://api.kk666.best');
   setFieldValidity('cfgImageBaseUrl', baseOk(document.getElementById('cfgImageBaseUrl')?.value), 'Base URL 固定填 https://api.kk666.best');
-  setFieldValidity('cfgTextEndpoint', textProvider === 'openai' ? !/generateContent/i.test(textEndpoint) : endpointOk(textEndpoint), '接口格式必须和文字模型类型一致');
-  setFieldValidity('cfgImageEndpoint', imageProvider === 'openai' ? !/generateContent/i.test(imageEndpoint) : endpointOk(imageEndpoint), '接口格式必须和图片模型类型一致');
+  setFieldValidity('cfgTextEndpoint', textProvider === 'openai' ? responsesEndpointOk(textEndpoint) : geminiEndpointOk(textEndpoint), '接口格式必须和文字模型类型一致');
+  setFieldValidity('cfgImageEndpoint', imageProvider === 'openai' ? imageEndpointOk(imageEndpoint) : geminiEndpointOk(imageEndpoint), '接口格式必须和图片模型类型一致');
   setFieldValidity('cfgTextModel', !(textProvider === 'openai' && /generateContent/i.test(textEndpoint)), 'GPT/OpenAI 模型不能配 Gemini 接口');
   setFieldValidity('cfgImageModel', !(imageProvider === 'openai' && /generateContent/i.test(imageEndpoint)), 'GPT/OpenAI 图片模型不能配 Gemini 接口');
 }
@@ -7781,11 +7965,11 @@ function syncAiEndpointForModel(kind, options = {}) {
   if (!modelEl || !endpointEl) return;
   const model = String(modelEl.value || '').trim();
   if (/gemini/i.test(model)) {
-    endpointEl.value = RECOMMENDED_AI_CONFIG.endpoint;
+    endpointEl.value = '/v1beta/models/{model}:generateContent';
+  } else if (/^(gpt-image|dall-e|image)/i.test(model)) {
+    endpointEl.value = RECOMMENDED_AI_CONFIG.imageEndpoint;
   } else if (/^(gpt|o\d)/i.test(model)) {
-    endpointEl.value = '/v1/chat/completions';
-  } else if (/^(dall-e|gpt-image)/i.test(model)) {
-    endpointEl.value = '/v1/images/edits';
+    endpointEl.value = RECOMMENDED_AI_CONFIG.textEndpoint;
   }
   validateAiConfigFields();
   if (!options.silent) showToast('info', '已根据模型类型同步接口格式；保存前可以点“测试连接”确认');
@@ -7796,8 +7980,8 @@ function fillRecommendedAiConfig() {
   const fields = {
     cfgTextBaseUrl: RECOMMENDED_AI_CONFIG.baseUrl,
     cfgImageBaseUrl: RECOMMENDED_AI_CONFIG.baseUrl,
-    cfgTextEndpoint: RECOMMENDED_AI_CONFIG.endpoint,
-    cfgImageEndpoint: RECOMMENDED_AI_CONFIG.endpoint,
+    cfgTextEndpoint: RECOMMENDED_AI_CONFIG.textEndpoint,
+    cfgImageEndpoint: RECOMMENDED_AI_CONFIG.imageEndpoint,
     cfgTextModel: RECOMMENDED_AI_CONFIG.textModel,
     cfgImageModel: RECOMMENDED_AI_CONFIG.imageModel,
   };
@@ -8031,9 +8215,12 @@ function getAccountTestTitle(result) {
 function showAccountTestResult(result) {
   const checks = Array.isArray(result?.checks) ? result.checks : [];
   const tone = getAccountTestTone(result);
-  const summaryText = result?.readiness === 'basic_ok'
+  let summaryText = result?.readiness === 'basic_ok'
     ? '系统已确认 LWA Token 和站点基础通信正常；Listings 上架能力会在导入真实商品后的预览/提交阶段继续校验。'
     : '系统会分别检查：LWA Token、站点映射、Listings API、账号权限。失败时按红色项处理。';
+  if (result?.code === 'AMAZON_SELLER_SCOPE_INVALID') {
+    summaryText = 'Amazon 返回 Listings API 400 Invalid parameters provided。请重点检查店铺 Seller ID / Merchant Token 是否填错，是否和 Refresh Token 属于同一个店铺，以及站点是否选对。';
+  }
   const checkHtml = checks.length > 0
     ? checks.map(check => {
         const [label, tone] = formatAccountCheckStatus(check.status);
